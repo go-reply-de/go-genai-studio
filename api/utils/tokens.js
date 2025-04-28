@@ -206,6 +206,7 @@ const maxTokensMap = {
   [EModelEndpoint.agents]: aggregateModels,
   [EModelEndpoint.custom]: aggregateModels,
   [EModelEndpoint.google]: googleModels,
+  [EModelEndpoint.goreply]: googleModels,
   [EModelEndpoint.anthropic]: anthropicModels,
   [EModelEndpoint.bedrock]: bedrockModels,
 };

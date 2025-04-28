@@ -17,6 +17,7 @@ export enum EModelEndpoint {
   azureOpenAI = 'azureOpenAI',
   openAI = 'openAI',
   google = 'google',
+  goreply = 'goreply',
   anthropic = 'anthropic',
   assistants = 'assistants',
   azureAssistants = 'azureAssistants',
@@ -37,6 +38,7 @@ export const paramEndpoints = new Set<EModelEndpoint | string>([
   EModelEndpoint.anthropic,
   EModelEndpoint.custom,
   EModelEndpoint.google,
+  EModelEndpoint.goreply,
 ]);
 
 export enum BedrockProviders {
@@ -252,6 +254,39 @@ export const googleSettings = {
   },
 };
 
+export const goreplySettings = {
+  model: {
+    default: 'gemini-1.5-flash-latest' as const,
+  },
+  maxOutputTokens: {
+    min: 1 as const,
+    max: 65535 as const,
+    step: 1 as const,
+    default: 8192 as const,
+  },
+  temperature: {
+    min: 0 as const,
+    max: 2 as const,
+    step: 0.01 as const,
+    default: 1 as const,
+  },
+  topP: {
+    min: 0 as const,
+    max: 1 as const,
+    step: 0.01 as const,
+    default: 0.95 as const,
+  },
+  topK: {
+    min: 1 as const,
+    max: 40 as const,
+    step: 1 as const,
+    default: 40 as const,
+  },
+  isGrounded : false,
+  groundingPath: '',
+  groundingOption: "Google Search",
+};
+
 const ANTHROPIC_MAX_OUTPUT = 128000 as const;
 const DEFAULT_MAX_OUTPUT = 8192 as const;
 const LEGACY_ANTHROPIC_MAX_OUTPUT = 4096 as const;
@@ -373,6 +408,7 @@ export const agentsSettings = {
 export const endpointSettings = {
   [EModelEndpoint.openAI]: openAISettings,
   [EModelEndpoint.google]: googleSettings,
+  [EModelEndpoint.goreply]: goreplySettings,
   [EModelEndpoint.anthropic]: anthropicSettings,
   [EModelEndpoint.agents]: agentsSettings,
   [EModelEndpoint.bedrock]: agentsSettings,
@@ -576,6 +612,9 @@ export const tConversationSchema = z.object({
   /* google */
   context: z.string().nullable().optional(),
   examples: z.array(tExampleSchema).optional(),
+  isGrounded : z.boolean().optional(),
+  groundingPath : z.string().optional(),
+  groundingOption : z.string().optional(),
   /* DB */
   tags: z.array(z.string()).optional(),
   createdAt: z.string(),
@@ -585,6 +624,10 @@ export const tConversationSchema = z.object({
   file_ids: z.array(z.string()).optional(),
   /* vision */
   imageDetail: eImageDetailSchema.optional(),
+  negativePrompt: z.string().nullable().optional(),
+  visionResults: z.number().nullable().optional(),
+  aspectRatio: z.string().nullable().optional(),
+  visionSafety: z.string().nullable().optional(),
   /* OpenAI: o1 only */
   reasoning_effort: eReasoningEffortSchema.optional(),
   /* assistant */
@@ -766,6 +809,32 @@ export const googleSchema = tConversationSchema
   })
   .transform((obj: Partial<TConversation>) => removeNullishValues(obj))
   .catch(() => ({}));
+
+  export const goreplyeSchema = tConversationSchema
+    .pick({
+      model: true,
+      modelLabel: true,
+      promptPrefix: true,
+      examples: true,
+      temperature: true,
+      maxOutputTokens: true,
+      artifacts: true,
+      topP: true,
+      topK: true,
+      iconURL: true,
+      greeting: true,
+      spec: true,
+      maxContextTokens: true,
+      isGrounded: true,
+      groundingPath: true,
+      groundingOption: true,
+      aspectRatio: true,
+      visionResults: true,
+      visionSafety: true,
+      negativePrompt: true
+    })
+    .transform((obj: Partial<TConversation>) => removeNullishValues(obj))
+    .catch(() => ({}));
 
 /**
    * TODO: Map the following fields:

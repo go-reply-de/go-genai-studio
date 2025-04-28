@@ -137,5 +137,9 @@
       "admin/",
       "packages/"
     ]
+  },
+  "dependencies": {
+    "@google-cloud/storage": "^7.15.1",
+    "@google-cloud/vertexai": "^1.9.3"
   }
 }
