@@ -110,6 +110,7 @@ const AppService = async (app) => {
   const endpointKeys = [
     EModelEndpoint.openAI,
     EModelEndpoint.google,
+    EModelEndpoint.goreply,
     EModelEndpoint.bedrock,
     EModelEndpoint.anthropic,
     EModelEndpoint.gptPlugins,

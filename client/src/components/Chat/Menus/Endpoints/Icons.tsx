@@ -15,6 +15,7 @@ import {
 } from '~/components/svg';
 import UnknownIcon from './UnknownIcon';
 import { cn } from '~/utils';
+import GoReplyMinimalIcon from '~/components/svg/GoReplyMinimalIcon';
 
 const AssistantAvatar = ({
   className = '',
@@ -67,6 +68,7 @@ export const icons: IconsRecord = {
   [EModelEndpoint.anthropic]: AnthropicIcon,
   [EModelEndpoint.chatGPTBrowser]: LightningIcon,
   [EModelEndpoint.google]: GoogleMinimalIcon,
+  [EModelEndpoint.goreply]: GoReplyMinimalIcon,
   [EModelEndpoint.custom]: CustomMinimalIcon,
   [EModelEndpoint.assistants]: AssistantAvatar,
   [EModelEndpoint.azureAssistants]: AssistantAvatar,

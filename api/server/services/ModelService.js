@@ -316,6 +316,15 @@ const getGoogleModels = () => {
   return models;
 };
 
+const getGoreplyModels = () => {
+  let models = defaultModels[EModelEndpoint.goreply];
+  if (process.env.GOOGLE_MODELS) {
+    models = splitAndTrim(process.env.GOOGLE_MODELS);
+  }
+
+  return models;
+};
+
 const getBedrockModels = () => {
   let models = defaultModels[EModelEndpoint.bedrock];
   if (process.env.BEDROCK_AWS_MODELS) {
@@ -333,4 +342,5 @@ module.exports = {
   getChatGPTBrowserModels,
   getAnthropicModels,
   getGoogleModels,
+  getGoreplyModels,
 };

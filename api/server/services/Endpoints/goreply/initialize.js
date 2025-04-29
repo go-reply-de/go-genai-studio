@@ -2,7 +2,7 @@ const { EModelEndpoint, AuthKeys } = require('librechat-data-provider');
 const { getUserKey, checkUserKeyExpiry } = require('~/server/services/UserService');
 const { getLLMConfig } = require('~/server/services/Endpoints/google/llm');
 const { isEnabled } = require('~/server/utils');
-const { GoogleClient } = require('~/app');
+const { GoReplyClient } = require('~/app');
 
 const initializeClient = async ({ req, res, endpointOption, overrideModel, optionsOnly }) => {
   const { GOOGLE_KEY, GOOGLE_REVERSE_PROXY, GOOGLE_AUTH_HEADER, PROXY } = process.env;
@@ -34,7 +34,7 @@ const initializeClient = async ({ req, res, endpointOption, overrideModel, optio
   /** @type {undefined | TBaseEndpoint} */
   const allConfig = req.app.locals.all;
   /** @type {undefined | TBaseEndpoint} */
-  const googleConfig = req.app.locals[EModelEndpoint.google];
+  const googleConfig = req.app.locals[EModelEndpoint.goreply];
 
   if (googleConfig) {
     clientOptions.streamRate = googleConfig.streamRate;
@@ -68,7 +68,7 @@ const initializeClient = async ({ req, res, endpointOption, overrideModel, optio
     return getLLMConfig(credentials, clientOptions);
   }
 
-  const client = new GoogleClient(credentials, clientOptions);
+  const client = new GoReplyClient(credentials, clientOptions);
 
   return {
     client,

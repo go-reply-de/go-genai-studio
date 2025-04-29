@@ -414,7 +414,23 @@ export const endpointSettings = {
   [EModelEndpoint.bedrock]: agentsSettings,
 };
 
+export const visionSettings = {
+  aspectRatio: {
+    default: '1:1',
+  },
+  results: {
+    min: 1,
+    max: 4,
+    step: 1,
+    default: 2,
+  },
+  visionSafety: {
+    default: 'allow_adult',
+  },
+};
+
 const google = endpointSettings[EModelEndpoint.google];
+const goreply = endpointSettings[EModelEndpoint.goreply];
 
 export const eModelEndpointSchema = z.nativeEnum(EModelEndpoint);
 
@@ -810,7 +826,7 @@ export const googleSchema = tConversationSchema
   .transform((obj: Partial<TConversation>) => removeNullishValues(obj))
   .catch(() => ({}));
 
-  export const goreplyeSchema = tConversationSchema
+  export const goreplySchema = tConversationSchema
     .pick({
       model: true,
       modelLabel: true,
@@ -833,8 +849,51 @@ export const googleSchema = tConversationSchema
       visionSafety: true,
       negativePrompt: true
     })
-    .transform((obj: Partial<TConversation>) => removeNullishValues(obj))
-    .catch(() => ({}));
+    .transform((obj) => {
+      return {
+        ...obj,
+        model: obj.model ?? goreply.model.default,
+        modelLabel: obj.modelLabel ?? null,
+        promptPrefix: obj.promptPrefix ?? null,
+        examples: obj.examples ?? [{ input: { content: '' }, output: { content: '' } }],
+        temperature: obj.temperature ?? goreply.temperature.default,
+        maxOutputTokens: obj.maxOutputTokens ?? goreply.maxOutputTokens.default,
+        topP: obj.topP ?? goreply.topP.default,
+        topK: obj.topK ?? goreply.topK.default,
+        iconURL: obj.iconURL ?? undefined,
+        greeting: obj.greeting ?? undefined,
+        spec: obj.spec ?? undefined,
+        maxContextTokens: obj.maxContextTokens ?? undefined,
+        isGrounded: obj.isGrounded ?? goreply.isGrounded,
+        groundingPath: obj.groundingPath ?? goreply.groundingPath,
+        groundingOption: obj.groundingOption ?? goreply.groundingOption,
+        aspectRatio: obj.aspectRatio ?? visionSettings.aspectRatio.default,
+        visionResults: obj.visionResults ?? visionSettings.results.default,
+        visionSafety: obj.visionSafety ?? visionSettings.visionSafety.default,
+        negativePrompt: obj.negativePrompt ?? null
+      };
+    })
+    .catch(() => ({
+      model: goreply.model.default,
+      modelLabel: null,
+      promptPrefix: null,
+      examples: [{ input: { content: '' }, output: { content: '' } }],
+      temperature: goreply.temperature.default,
+      maxOutputTokens: goreply.maxOutputTokens.default,
+      topP: goreply.topP.default,
+      topK: goreply.topK.default,
+      iconURL: undefined,
+      greeting: undefined,
+      spec: undefined,
+      maxContextTokens: undefined,
+      isGrounded: goreply.isGrounded,
+      groundingOption : goreply.groundingOption,
+      groundingPath : goreply.groundingPath,
+      aspectRatio: visionSettings.aspectRatio.default,
+      visionResults: visionSettings.results.default,
+      visionSafety: visionSettings.visionSafety.default,
+      negativePrompt: null
+    }));
 
 /**
    * TODO: Map the following fields:
@@ -1108,6 +1167,49 @@ export const compactGoogleSchema = tConversationSchema
     if (newObj.topK === google.topK.default) {
       delete newObj.topK;
     }
+
+    return removeNullishValues(newObj);
+  })
+  .catch(() => ({}));
+
+  export const compactGoreplySchema = tConversationSchema
+  .pick({
+    model: true,
+    modelLabel: true,
+    promptPrefix: true,
+    examples: true,
+    temperature: true,
+    maxOutputTokens: true,
+    artifacts: true,
+    topP: true,
+    topK: true,
+    iconURL: true,
+    greeting: true,
+    spec: true,
+    maxContextTokens: true,
+    isGrounded: true,
+    groundingPath: true,
+    groundingOption: true,
+    aspectRatio: true,
+    visionResults: true,
+    visionSafety: true,
+    negativePrompt: true
+  })
+  .transform((obj) => {
+    const newObj: Partial<TConversation> = { ...obj };
+    if (newObj.temperature === goreply.temperature.default) {
+      delete newObj.temperature;
+    }
+    if (newObj.maxOutputTokens === goreply.maxOutputTokens.default) {
+      delete newObj.maxOutputTokens;
+    }
+    if (newObj.topP === goreply.topP.default) {
+      delete newObj.topP;
+    }
+    if (newObj.topK === goreply.topK.default) {
+      delete newObj.topK;
+    }
+
 
     return removeNullishValues(newObj);
   })

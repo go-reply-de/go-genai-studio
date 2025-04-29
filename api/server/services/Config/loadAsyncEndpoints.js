@@ -27,6 +27,7 @@ async function loadAsyncEndpoints(req) {
   }
 
   const google = serviceKey || googleKey ? { userProvide: googleUserProvides } : false;
+  const goreply = serviceKey || googleKey ? { userProvide: googleUserProvides } : false;
 
   const useAzure = req.app.locals[EModelEndpoint.azureOpenAI]?.plugins;
   const gptPlugins =
@@ -42,7 +43,7 @@ async function loadAsyncEndpoints(req) {
       }
       : false;
 
-  return { google, gptPlugins };
+  return { google, goreply, gptPlugins };
 }
 
 module.exports = loadAsyncEndpoints;

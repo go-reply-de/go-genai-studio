@@ -3,6 +3,7 @@ const { useAzurePlugins } = require('~/server/services/Config/EndpointService').
 const {
   getOpenAIModels,
   getGoogleModels,
+  getGoreplyModels,
   getBedrockModels,
   getAnthropicModels,
 } = require('~/server/services/ModelService');
@@ -24,6 +25,7 @@ async function loadDefaultModels(req) {
       assistants,
       azureAssistants,
       google,
+      goreply,
       bedrock,
     ] = await Promise.all([
       getOpenAIModels({ user: req.user.id }).catch((error) => {
@@ -56,6 +58,10 @@ async function loadDefaultModels(req) {
         logger.error('Error getting Google models:', error);
         return [];
       }),
+      Promise.resolve(getGoreplyModels()).catch((error) => {
+        logger.error('Error getting GO Reply models:', error);
+        return [];
+      }),
       Promise.resolve(getBedrockModels()).catch((error) => {
         logger.error('Error getting Bedrock models:', error);
         return [];
@@ -66,6 +72,7 @@ async function loadDefaultModels(req) {
       [EModelEndpoint.openAI]: openAI,
       [EModelEndpoint.agents]: openAI,
       [EModelEndpoint.google]: google,
+      [EModelEndpoint.goreply]: goreply,
       [EModelEndpoint.anthropic]: anthropic,
       [EModelEndpoint.gptPlugins]: gptPlugins,
       [EModelEndpoint.azureOpenAI]: azureOpenAI,

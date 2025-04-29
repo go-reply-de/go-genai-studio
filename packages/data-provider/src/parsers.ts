@@ -6,6 +6,7 @@ import { ContentTypes } from './types/runs';
 import {
   openAISchema,
   googleSchema,
+  goreplySchema,
   EModelEndpoint,
   anthropicSchema,
   assistantSchema,
@@ -13,6 +14,7 @@ import {
   // agentsSchema,
   compactAgentsSchema,
   compactGoogleSchema,
+  compactGoreplySchema,
   compactChatGPTSchema,
   chatGPTBrowserSchema,
   compactPluginsSchema,
@@ -25,6 +27,7 @@ import { alternateName } from './config';
 type EndpointSchema =
   | typeof openAISchema
   | typeof googleSchema
+  | typeof goreplySchema
   | typeof anthropicSchema
   | typeof chatGPTBrowserSchema
   | typeof gptPluginsSchema
@@ -37,6 +40,7 @@ const endpointSchemas: Record<EModelEndpoint, EndpointSchema> = {
   [EModelEndpoint.azureOpenAI]: openAISchema,
   [EModelEndpoint.custom]: openAISchema,
   [EModelEndpoint.google]: googleSchema,
+  [EModelEndpoint.goreply]: goreplySchema,
   [EModelEndpoint.anthropic]: anthropicSchema,
   [EModelEndpoint.chatGPTBrowser]: chatGPTBrowserSchema,
   [EModelEndpoint.gptPlugins]: gptPluginsSchema,
@@ -59,6 +63,7 @@ export function getEnabledEndpoints() {
     EModelEndpoint.azureAssistants,
     EModelEndpoint.azureOpenAI,
     EModelEndpoint.google,
+    EModelEndpoint.goreply,
     EModelEndpoint.chatGPTBrowser,
     EModelEndpoint.gptPlugins,
     EModelEndpoint.anthropic,
@@ -281,6 +286,22 @@ export const getResponseSender = (endpointOption: t.TEndpointOption): string => 
     return 'PaLM2';
   }
 
+  if (endpoint === EModelEndpoint.goreply) {
+    if (modelLabel) {
+      return modelLabel;
+    } else if (model && model.includes('gemini')) {
+      return 'Gemini';
+    } else if (model && model.includes('code')) {
+      return 'Codey';
+    } else if (model && model.includes('imagen')) {
+      return 'Imagen';
+    } else if (model && model.includes('medlm')) {
+      return 'MedLM';
+    }
+
+    return 'PaLM2';
+  }
+
   if (endpoint === EModelEndpoint.custom || endpointType === EModelEndpoint.custom) {
     if (modelLabel) {
       return modelLabel;
@@ -308,6 +329,7 @@ type CompactEndpointSchema =
   | typeof compactAssistantSchema
   | typeof compactAgentsSchema
   | typeof compactGoogleSchema
+  | typeof compactGoreplySchema
   | typeof anthropicSchema
   | typeof compactChatGPTSchema
   | typeof bedrockInputSchema
@@ -321,6 +343,7 @@ const compactEndpointSchemas: Record<string, CompactEndpointSchema> = {
   [EModelEndpoint.azureAssistants]: compactAssistantSchema,
   [EModelEndpoint.agents]: compactAgentsSchema,
   [EModelEndpoint.google]: compactGoogleSchema,
+  [EModelEndpoint.goreply]: compactGoogleSchema,
   [EModelEndpoint.bedrock]: bedrockInputSchema,
   [EModelEndpoint.anthropic]: anthropicSchema,
   [EModelEndpoint.chatGPTBrowser]: compactChatGPTSchema,

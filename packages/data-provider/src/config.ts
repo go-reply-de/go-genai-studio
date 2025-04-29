@@ -570,6 +570,7 @@ export const configSchema = z.object({
       all: baseEndpointSchema.optional(),
       [EModelEndpoint.openAI]: baseEndpointSchema.optional(),
       [EModelEndpoint.google]: baseEndpointSchema.optional(),
+      [EModelEndpoint.goreply]: baseEndpointSchema.optional(),
       [EModelEndpoint.anthropic]: baseEndpointSchema.optional(),
       [EModelEndpoint.gptPlugins]: baseEndpointSchema.optional(),
       [EModelEndpoint.azureOpenAI]: azureEndpointSchema.optional(),
@@ -628,6 +629,7 @@ export const defaultEndpoints: EModelEndpoint[] = [
   EModelEndpoint.chatGPTBrowser,
   EModelEndpoint.gptPlugins,
   EModelEndpoint.google,
+  EModelEndpoint.goreply,
   EModelEndpoint.anthropic,
   EModelEndpoint.custom,
   EModelEndpoint.bedrock,
@@ -642,6 +644,7 @@ export const alternateName = {
   [EModelEndpoint.chatGPTBrowser]: 'ChatGPT',
   [EModelEndpoint.gptPlugins]: 'Plugins',
   [EModelEndpoint.google]: 'Google',
+  [EModelEndpoint.goreply]: 'GO Reply',
   [EModelEndpoint.anthropic]: 'Anthropic',
   [EModelEndpoint.custom]: 'Custom',
   [EModelEndpoint.bedrock]: 'AWS Bedrock',
@@ -744,6 +747,21 @@ export const defaultModels = {
     // Gemini 1.0 Models
     'gemini-1.0-pro-001',
   ],
+  [EModelEndpoint.goreply]: [
+    // Shared Google Models between Vertex AI & Gen AI
+    // Gemini 2.0 Models
+    'gemini-2.0-flash-001',
+    'gemini-2.0-flash-exp',
+    'gemini-2.0-flash-lite',
+    'gemini-2.0-pro-exp-02-05',
+    // Gemini 1.5 Models
+    'gemini-1.5-flash-001',
+    'gemini-1.5-flash-002',
+    'gemini-1.5-pro-001',
+    'gemini-1.5-pro-002',
+    // Gemini 1.0 Models
+    'gemini-1.0-pro-001',
+  ],
   [EModelEndpoint.anthropic]: sharedAnthropicModels,
   [EModelEndpoint.openAI]: [
     ...sharedOpenAIModels,
@@ -770,6 +788,7 @@ export const initialModelsConfig: TModelsConfig = {
   [EModelEndpoint.azureOpenAI]: openAIModels,
   [EModelEndpoint.chatGPTBrowser]: ['text-davinci-002-render-sha'],
   [EModelEndpoint.google]: defaultModels[EModelEndpoint.google],
+  [EModelEndpoint.goreply]: defaultModels[EModelEndpoint.goreply],
   [EModelEndpoint.anthropic]: defaultModels[EModelEndpoint.anthropic],
   [EModelEndpoint.bedrock]: defaultModels[EModelEndpoint.bedrock],
 };
@@ -777,6 +796,7 @@ export const initialModelsConfig: TModelsConfig = {
 export const EndpointURLs: { [key in EModelEndpoint]: string } = {
   [EModelEndpoint.openAI]: `/api/ask/${EModelEndpoint.openAI}`,
   [EModelEndpoint.google]: `/api/ask/${EModelEndpoint.google}`,
+  [EModelEndpoint.goreply]: `/api/ask/${EModelEndpoint.goreply}`,
   [EModelEndpoint.custom]: `/api/ask/${EModelEndpoint.custom}`,
   [EModelEndpoint.anthropic]: `/api/ask/${EModelEndpoint.anthropic}`,
   [EModelEndpoint.gptPlugins]: `/api/ask/${EModelEndpoint.gptPlugins}`,
@@ -792,6 +812,7 @@ export const modularEndpoints = new Set<EModelEndpoint | string>([
   EModelEndpoint.gptPlugins,
   EModelEndpoint.anthropic,
   EModelEndpoint.google,
+  EModelEndpoint.goreply,
   EModelEndpoint.openAI,
   EModelEndpoint.azureOpenAI,
   EModelEndpoint.custom,

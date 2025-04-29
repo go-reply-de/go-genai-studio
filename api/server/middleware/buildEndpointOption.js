@@ -1,4 +1,4 @@
-const { parseCompactConvo, EModelEndpoint, isAgentsEndpoint } = require('librechat-data-provider');
+const { parseCompactConvo, EModelEndpoint, isAgentsEndpoint, goreplySchema } = require('librechat-data-provider');
 const { getModelsConfig } = require('~/server/controllers/ModelController');
 const azureAssistants = require('~/server/services/Endpoints/azureAssistants');
 const assistants = require('~/server/services/Endpoints/assistants');
@@ -10,12 +10,14 @@ const openAI = require('~/server/services/Endpoints/openAI');
 const agents = require('~/server/services/Endpoints/agents');
 const custom = require('~/server/services/Endpoints/custom');
 const google = require('~/server/services/Endpoints/google');
+const goreply = require('~/server/services/Endpoints/goreply');
 const { getConvoFiles } = require('~/models/Conversation');
 const { handleError } = require('~/server/utils');
 
 const buildFunction = {
   [EModelEndpoint.openAI]: openAI.buildOptions,
   [EModelEndpoint.google]: google.buildOptions,
+  [EModelEndpoint.goreply]: goreply.buildOptions,
   [EModelEndpoint.custom]: custom.buildOptions,
   [EModelEndpoint.agents]: agents.buildOptions,
   [EModelEndpoint.bedrock]: bedrock.buildOptions,
@@ -28,6 +30,7 @@ const buildFunction = {
 
 async function buildEndpointOption(req, res, next) {
   const { endpoint, endpointType } = req.body;
+  console.log("req_body: ", req.body)
   let parsedBody;
   try {
     parsedBody = parseCompactConvo({ endpoint, endpointType, conversation: req.body });

@@ -13,6 +13,7 @@ const getBedrockOptions = require('~/server/services/Endpoints/bedrock/options')
 const initOpenAI = require('~/server/services/Endpoints/openAI/initialize');
 const initCustom = require('~/server/services/Endpoints/custom/initialize');
 const initGoogle = require('~/server/services/Endpoints/google/initialize');
+const initGoreply = require('~/server/services/Endpoints/goreply/initialize');
 const generateArtifactsPrompt = require('~/app/clients/prompts/artifacts');
 const { getCustomEndpointConfig } = require('~/server/services/Config');
 const { loadAgentTools } = require('~/server/services/ToolService');
@@ -28,6 +29,7 @@ const providerConfigMap = {
   [Providers.OPENROUTER]: initCustom,
   [EModelEndpoint.openAI]: initOpenAI,
   [EModelEndpoint.google]: initGoogle,
+  [EModelEndpoint.goreply]: initGoreply,
   [EModelEndpoint.azureOpenAI]: initOpenAI,
   [EModelEndpoint.anthropic]: initAnthropic,
   [EModelEndpoint.bedrock]: getBedrockOptions,

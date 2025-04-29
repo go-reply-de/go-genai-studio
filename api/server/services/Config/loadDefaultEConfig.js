@@ -8,7 +8,7 @@ const { config } = require('./EndpointService');
  * @returns {Promise<Object.<string, EndpointWithOrder>>} An object whose keys are endpoint names and values are objects that contain the endpoint configuration and an order.
  */
 async function loadDefaultEndpointsConfig(req) {
-  const { google, gptPlugins } = await loadAsyncEndpoints(req);
+  const { google, goreply, gptPlugins } = await loadAsyncEndpoints(req);
   const { assistants, azureAssistants, azureOpenAI, chatGPTBrowser } = config;
 
   const enabledEndpoints = getEnabledEndpoints();
@@ -20,6 +20,7 @@ async function loadDefaultEndpointsConfig(req) {
     [EModelEndpoint.azureAssistants]: azureAssistants,
     [EModelEndpoint.azureOpenAI]: azureOpenAI,
     [EModelEndpoint.google]: google,
+    [EModelEndpoint.goreply]: goreply,
     [EModelEndpoint.chatGPTBrowser]: chatGPTBrowser,
     [EModelEndpoint.gptPlugins]: gptPlugins,
     [EModelEndpoint.anthropic]: config[EModelEndpoint.anthropic],

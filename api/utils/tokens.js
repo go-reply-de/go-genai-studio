@@ -68,6 +68,8 @@ const googleModels = {
   /* PaLM2, -5 from max: 8192 */
   'text-': 8187,
   'chat-': 8187,
+  /* Imagen NOTE: this is equal gemini-pro-vision since we have no information on the correct count */
+  'imagen-': 12288
 };
 
 const anthropicModels = {

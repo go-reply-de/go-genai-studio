@@ -3,6 +3,8 @@ const { ChatVertexAI } = require('@langchain/google-vertexai');
 const { ChatGoogleGenerativeAI } = require('@langchain/google-genai');
 const { GoogleGenerativeAI: GenAI } = require('@google/generative-ai');
 const { HumanMessage, SystemMessage } = require('@langchain/core/messages');
+const GoogleClient = require('./GoogleClient');
+const ImagenClient = require('./ImagenClient');
 const {
   validateVisionModel,
   getResponseSender,
@@ -14,7 +16,7 @@ const { encodeAndFormat } = require('~/server/services/Files/images');
 const { getModelMaxTokens } = require('~/utils');
 const { sleep } = require('~/server/utils');
 const { logger } = require('~/config');
-const GoogleClient = require('./GoogleClient');
+const { saveBufferToGCS, getGSUrl, getHTTPUrl } = require('~/server/services/Files/GCS');
 
 const loc = process.env.GOOGLE_LOC || 'us-central1';
 
@@ -139,6 +141,50 @@ class GoReplyClient extends GoogleClient {
     if (this.isVisionModel && !attachments && this.modelOptions.model.includes('gemini-pro')) {
       this.modelOptions.model = 'gemini-pro';
       this.isVisionModel = false;
+    }
+  }
+
+  // Imagen Image Generation
+  async generateAndFormatImages(responseData, userId) {
+    let formattedImages = "";
+    let uploadPromises = [];
+
+    (responseData.predictions || []).forEach((item) => {
+      if (item?.mimeType && item?.bytesBase64Encoded) {
+        const base64Bytes = item.bytesBase64Encoded;
+        const buffer = Buffer.from(base64Bytes, "base64");
+        const fileName = `${Date.now()}-${Math.random()}.png`;
+        const uploadPromise = saveBufferToGCS({ userId, buffer, fileName, basePath: 'generatedImages' })
+          .then(async (imageUrl) => {
+            formattedImages += `![Generated Image](${imageUrl})`;
+          })
+          .catch((uploadError) => {
+            throw new Error("Error: Failed to upload base64 image: ", uploadError);
+          });
+        uploadPromises.push(uploadPromise);
+      }
+      else if (item?.mimeType && item?.gcsUri) {
+        const storageUri = getGSUrl({ userId, fileName: '', basePath: 'generatedImages' });
+        const imageFileName = item.gcsUri.replace(storageUri, '');
+        const uploadPromise = getHTTPUrl({ userId, fileName: imageFileName, basePath: 'generatedImages' })
+        .then(async (imageUrl) => {
+          formattedImages += `![Generated Image](${imageUrl})`;
+        })
+        .catch((uploadError) => {
+          throw new Error(`Error: Can't access GCS storage: ${uploadError}`);
+        });
+        uploadPromises.push(uploadPromise);
+      }
+    });
+
+    // Wait for all uploads to complete
+    await Promise.all(uploadPromises);
+
+    if (Boolean(formattedImages)) {
+      return formattedImages;
+    } else {
+      logger.error("Failed to generate any Images.");
+      throw new Error("Failed to generate any Images.");
     }
   }
 
@@ -317,8 +363,8 @@ class GoReplyClient extends GoogleClient {
   async handleImagenModel(modelClient, messages, userId, visionParams) {
     try {
       const headers = {
-        'Authorization': "Bearer " + await this.getAccessToken(),
-        'Content-Type': 'application/json; charset=utf-8',
+        "Authorization": "Bearer " + await this.getAccessToken(),
+        "Content-Type": "application/json; charset=utf-8",
       }
       const responseData = await modelClient.generateImages(messages, headers, visionParams, userId);
       const formattedImages = await this.generateAndFormatImages(responseData, userId);
