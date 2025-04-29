@@ -141,5 +141,8 @@
       "admin/",
       "packages/"
     ]
+  },
+  "dependencies": {
+    "@google-cloud/vertexai": "^1.10.0"
   }
 }

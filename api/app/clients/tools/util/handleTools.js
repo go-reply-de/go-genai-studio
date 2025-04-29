@@ -8,6 +8,7 @@ const {
   manifestToolMap,
   // Basic Tools
   GoogleSearchAPI,
+  GoogleVertexAI,
   // Structured Tools
   DALLE3,
   FluxAPI,
@@ -149,6 +150,7 @@ const loadTools = async ({
     flux: FluxAPI,
     calculator: Calculator,
     google: GoogleSearchAPI,
+    vertex_ai: GoogleVertexAI,
     open_weather: OpenWeather,
     wolfram: StructuredWolfram,
     'stable-diffusion': StructuredSD,
