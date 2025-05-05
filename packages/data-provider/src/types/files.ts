@@ -3,6 +3,7 @@ import { EToolResources } from './assistants';
 export enum FileSources {
   local = 'local',
   firebase = 'firebase',
+  gcs = 'gcs',
   azure = 'azure',
   azure_blob = 'azure_blob',
   openai = 'openai',

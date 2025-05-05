@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: rag
+
+  name: rag
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rag
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: rag
+    spec:
+      containers:
+        - env:
+            - name: DB_HOST
+              value: vectordb-dev-service
+            - name: DB_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  key: POSTGRES_DB
+                  name: librechat-credentials-env
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  key: POSTGRES_USER
+                  name: librechat-credentials-env
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: POSTGRES_PASSWORD
+                  name: librechat-credentials-env
+            - name: OPENAI_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  key: OPENAI_API_KEY
+                  name: env
+            - name: EMBEDDINGS_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  key: EMBEDDINGS_MODEL
+                  name: env
+            - name: EMBEDDINGS_PROVIDER
+              valueFrom:
+                configMapKeyRef:
+                  key: EMBEDDINGS_PROVIDER
+                  name: env
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: /var/secrets/google/sa_credentials.json
+          image: 192.168.49.2:5000/go-genai-studio-rag-api:bdae521a
+          resources:
+            requests:
+              cpu: 10m
+              memory: 512Mi
+          name: rag
+          volumeMounts:
+            - name: gcp-service-account
+              mountPath: /var/secrets/google
+              readOnly: true
+          ports:
+            - containerPort: 8000
+              protocol: TCP
+      volumes:
+      - name: gcp-service-account
+        secret:
+          secretName: gcp-service-account
+          items:
+          - key: key.json
+            path: sa_credentials.json
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: rag-dev-service
+  name: rag-dev-service
+
+spec:
+  ports:
+    - name: "8000"
+      port: 8000
+      targetPort: 8000
+  selector:
+    app: rag

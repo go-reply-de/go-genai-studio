@@ -1,0 +1,484 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: meilisearch
+  name: meilisearch
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: meilisearch
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: meilisearch
+    spec:
+      containers:
+        - env:
+            - name: ALLOW_EMAIL_LOGIN
+              valueFrom:
+                configMapKeyRef:
+                  key: ALLOW_EMAIL_LOGIN
+                  name: env
+            - name: ALLOW_PASSWORD_RESET
+              valueFrom:
+                configMapKeyRef:
+                  key: ALLOW_PASSWORD_RESET
+                  name: env
+            - name: ALLOW_REGISTRATION
+              valueFrom:
+                configMapKeyRef:
+                  key: ALLOW_REGISTRATION
+                  name: env
+            - name: ALLOW_SOCIAL_LOGIN
+              valueFrom:
+                configMapKeyRef:
+                  key: ALLOW_SOCIAL_LOGIN
+                  name: env
+            - name: ALLOW_SOCIAL_REGISTRATION
+              valueFrom:
+                configMapKeyRef:
+                  key: ALLOW_SOCIAL_REGISTRATION
+                  name: env
+            - name: ALLOW_UNVERIFIED_EMAIL_LOGIN
+              valueFrom:
+                configMapKeyRef:
+                  key: ALLOW_UNVERIFIED_EMAIL_LOGIN
+                  name: env
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  key: ANTHROPIC_API_KEY
+                  name: env
+            - name: APP_TITLE
+              valueFrom:
+                configMapKeyRef:
+                  key: APP_TITLE
+                  name: env
+            - name: ASSISTANTS_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  key: ASSISTANTS_API_KEY
+                  name: env
+            - name: AZURE_AI_SEARCH_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  key: AZURE_AI_SEARCH_API_KEY
+                  name: env
+            - name: AZURE_AI_SEARCH_API_VERSION
+              valueFrom:
+                configMapKeyRef:
+                  key: AZURE_AI_SEARCH_API_VERSION
+                  name: env
+            - name: AZURE_AI_SEARCH_INDEX_NAME
+              valueFrom:
+                configMapKeyRef:
+                  key: AZURE_AI_SEARCH_INDEX_NAME
+                  name: env
+            - name: AZURE_AI_SEARCH_SEARCH_OPTION_QUERY_TYPE
+              valueFrom:
+                configMapKeyRef:
+                  key: AZURE_AI_SEARCH_SEARCH_OPTION_QUERY_TYPE
+                  name: env
+            - name: AZURE_AI_SEARCH_SEARCH_OPTION_SELECT
+              valueFrom:
+                configMapKeyRef:
+                  key: AZURE_AI_SEARCH_SEARCH_OPTION_SELECT
+                  name: env
+            - name: AZURE_AI_SEARCH_SEARCH_OPTION_TOP
+              valueFrom:
+                configMapKeyRef:
+                  key: AZURE_AI_SEARCH_SEARCH_OPTION_TOP
+                  name: env
+            - name: AZURE_AI_SEARCH_SERVICE_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  key: AZURE_AI_SEARCH_SERVICE_ENDPOINT
+                  name: env
+            - name: BAN_DURATION
+              valueFrom:
+                configMapKeyRef:
+                  key: BAN_DURATION
+                  name: env
+            - name: BAN_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  key: BAN_INTERVAL
+                  name: env
+            - name: BAN_VIOLATIONS
+              valueFrom:
+                configMapKeyRef:
+                  key: BAN_VIOLATIONS
+                  name: env
+            - name: BINGAI_TOKEN
+              valueFrom:
+                configMapKeyRef:
+                  key: BINGAI_TOKEN
+                  name: env
+            - name: CHECK_BALANCE
+              valueFrom:
+                configMapKeyRef:
+                  key: CHECK_BALANCE
+                  name: env
+            - name: CONCURRENT_MESSAGE_MAX
+              valueFrom:
+                configMapKeyRef:
+                  key: CONCURRENT_MESSAGE_MAX
+                  name: env
+            - name: CONCURRENT_VIOLATION_SCORE
+              valueFrom:
+                configMapKeyRef:
+                  key: CONCURRENT_VIOLATION_SCORE
+                  name: env
+            - name: CONSOLE_JSON
+              valueFrom:
+                configMapKeyRef:
+                  key: CONSOLE_JSON
+                  name: env
+            - name: CREDS_IV
+              valueFrom:
+                secretKeyRef:
+                  key: CREDS_IV
+                  name: librechat-credentials-env
+            - name: CREDS_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: CREDS_KEY
+                  name: librechat-credentials-env
+            - name: DEBUG_CONSOLE
+              valueFrom:
+                configMapKeyRef:
+                  key: DEBUG_CONSOLE
+                  name: env
+            - name: DEBUG_LOGGING
+              valueFrom:
+                configMapKeyRef:
+                  key: DEBUG_LOGGING
+                  name: env
+            - name: DEBUG_OPENAI
+              valueFrom:
+                configMapKeyRef:
+                  key: DEBUG_OPENAI
+                  name: env
+            - name: DEBUG_PLUGINS
+              valueFrom:
+                configMapKeyRef:
+                  key: DEBUG_PLUGINS
+                  name: env
+            - name: DOMAIN_CLIENT
+              valueFrom:
+                configMapKeyRef:
+                  key: DOMAIN_CLIENT
+                  name: env
+            - name: DOMAIN_SERVER
+              valueFrom:
+                configMapKeyRef:
+                  key: DOMAIN_SERVER
+                  name: env
+            - name: EMAIL_ALLOW_SELFSIGNED
+              valueFrom:
+                configMapKeyRef:
+                  key: EMAIL_ALLOW_SELFSIGNED
+                  name: env
+            - name: EMAIL_ENCRYPTION
+              valueFrom:
+                configMapKeyRef:
+                  key: EMAIL_ENCRYPTION
+                  name: env
+            - name: EMAIL_ENCRYPTION_HOSTNAME
+              valueFrom:
+                configMapKeyRef:
+                  key: EMAIL_ENCRYPTION_HOSTNAME
+                  name: env
+            - name: EMAIL_FROM
+              valueFrom:
+                configMapKeyRef:
+                  key: EMAIL_FROM
+                  name: env
+            - name: EMAIL_FROM_NAME
+              valueFrom:
+                configMapKeyRef:
+                  key: EMAIL_FROM_NAME
+                  name: env
+            - name: EMAIL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  key: EMAIL_HOST
+                  name: env
+            - name: EMAIL_PASSWORD
+              valueFrom:
+                configMapKeyRef:
+                  key: EMAIL_PASSWORD
+                  name: env
+            - name: EMAIL_PORT
+              valueFrom:
+                configMapKeyRef:
+                  key: EMAIL_PORT
+                  name: env
+            - name: EMAIL_SERVICE
+              valueFrom:
+                configMapKeyRef:
+                  key: EMAIL_SERVICE
+                  name: env
+            - name: EMAIL_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  key: EMAIL_USERNAME
+                  name: env
+            - name: GOOGLE_CALLBACK_URL
+              valueFrom:
+                configMapKeyRef:
+                  key: GOOGLE_CALLBACK_URL
+                  name: env
+            - name: GOOGLE_SEARCH_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  key: GOOGLE_SEARCH_API_KEY
+                  name: env
+            - name: HELP_AND_FAQ_URL
+              valueFrom:
+                configMapKeyRef:
+                  key: HELP_AND_FAQ_URL
+                  name: env
+            - name: HOST
+              valueFrom:
+                configMapKeyRef:
+                  key: HOST
+                  name: env
+            - name: ILLEGAL_MODEL_REQ_SCORE
+              valueFrom:
+                configMapKeyRef:
+                  key: ILLEGAL_MODEL_REQ_SCORE
+                  name: env
+            - name: JWT_REFRESH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  key: JWT_REFRESH_SECRET
+                  name: librechat-credentials-env
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  key: JWT_SECRET
+                  name: librechat-credentials-env
+            - name: LDAP_BIND_CREDENTIALS
+              valueFrom:
+                configMapKeyRef:
+                  key: LDAP_BIND_CREDENTIALS
+                  name: env
+            - name: LDAP_BIND_DN
+              valueFrom:
+                configMapKeyRef:
+                  key: LDAP_BIND_DN
+                  name: env
+            - name: LDAP_CA_CERT_PATH
+              valueFrom:
+                configMapKeyRef:
+                  key: LDAP_CA_CERT_PATH
+                  name: env
+            - name: LDAP_SEARCH_FILTER
+              valueFrom:
+                configMapKeyRef:
+                  key: LDAP_SEARCH_FILTER
+                  name: env
+            - name: LDAP_URL
+              valueFrom:
+                configMapKeyRef:
+                  key: LDAP_URL
+                  name: env
+            - name: LDAP_USER_SEARCH_BASE
+              valueFrom:
+                configMapKeyRef:
+                  key: LDAP_USER_SEARCH_BASE
+                  name: env
+            - name: LIMIT_CONCURRENT_MESSAGES
+              valueFrom:
+                configMapKeyRef:
+                  key: LIMIT_CONCURRENT_MESSAGES
+                  name: env
+            - name: LIMIT_MESSAGE_IP
+              valueFrom:
+                configMapKeyRef:
+                  key: LIMIT_MESSAGE_IP
+                  name: env
+            - name: LIMIT_MESSAGE_USER
+              valueFrom:
+                configMapKeyRef:
+                  key: LIMIT_MESSAGE_USER
+                  name: env
+            - name: LOGIN_MAX
+              valueFrom:
+                configMapKeyRef:
+                  key: LOGIN_MAX
+                  name: env
+            - name: LOGIN_VIOLATION_SCORE
+              valueFrom:
+                configMapKeyRef:
+                  key: LOGIN_VIOLATION_SCORE
+                  name: env
+            - name: LOGIN_WINDOW
+              valueFrom:
+                configMapKeyRef:
+                  key: LOGIN_WINDOW
+                  name: env
+            - name: MEILI_HOST
+              valueFrom:
+                configMapKeyRef:
+                  key: MEILI_HOST
+                  name: env
+            - name: MEILI_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: MEILI_MASTER_KEY
+                  name: librechat-credentials-env
+            - name: MEILI_NO_ANALYTICS
+              valueFrom:
+                configMapKeyRef:
+                  key: MEILI_NO_ANALYTICS
+                  name: env
+            - name: MESSAGE_IP_MAX
+              valueFrom:
+                configMapKeyRef:
+                  key: MESSAGE_IP_MAX
+                  name: env
+            - name: MESSAGE_IP_WINDOW
+              valueFrom:
+                configMapKeyRef:
+                  key: MESSAGE_IP_WINDOW
+                  name: env
+            - name: MESSAGE_USER_MAX
+              valueFrom:
+                configMapKeyRef:
+                  key: MESSAGE_USER_MAX
+                  name: env
+            - name: MESSAGE_USER_WINDOW
+              valueFrom:
+                configMapKeyRef:
+                  key: MESSAGE_USER_WINDOW
+                  name: env
+            - name: MESSAGE_VIOLATION_SCORE
+              valueFrom:
+                configMapKeyRef:
+                  key: MESSAGE_VIOLATION_SCORE
+                  name: env
+            - name: MONGO_URI
+              valueFrom:
+                configMapKeyRef:
+                  key: MONGO_URI
+                  name: env
+            - name: NON_BROWSER_VIOLATION_SCORE
+              valueFrom:
+                configMapKeyRef:
+                  key: NON_BROWSER_VIOLATION_SCORE
+                  name: env
+            - name: NO_INDEX
+              valueFrom:
+                configMapKeyRef:
+                  key: NO_INDEX
+                  name: env
+            - name: OPENAI_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  key: OPENAI_API_KEY
+                  name: env
+            - name: OPENAI_MODERATION
+              valueFrom:
+                configMapKeyRef:
+                  key: OPENAI_MODERATION
+                  name: env
+            - name: OPENAI_MODERATION_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  key: OPENAI_MODERATION_API_KEY
+                  name: env
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  key: PORT
+                  name: env
+            - name: PROXY
+              valueFrom:
+                configMapKeyRef:
+                  key: PROXY
+                  name: env
+            - name: REFRESH_TOKEN_EXPIRY
+              valueFrom:
+                configMapKeyRef:
+                  key: REFRESH_TOKEN_EXPIRY
+                  name: env
+            - name: REGISTER_MAX
+              valueFrom:
+                configMapKeyRef:
+                  key: REGISTER_MAX
+                  name: env
+            - name: REGISTER_WINDOW
+              valueFrom:
+                configMapKeyRef:
+                  key: REGISTER_WINDOW
+                  name: env
+            - name: REGISTRATION_VIOLATION_SCORE
+              valueFrom:
+                configMapKeyRef:
+                  key: REGISTRATION_VIOLATION_SCORE
+                  name: env
+            - name: SD_WEBUI_URL
+              valueFrom:
+                configMapKeyRef:
+                  key: SD_WEBUI_URL
+                  name: env
+            - name: SEARCH
+              valueFrom:
+                configMapKeyRef:
+                  key: SEARCH
+                  name: env
+            - name: SESSION_EXPIRY
+              valueFrom:
+                configMapKeyRef:
+                  key: SESSION_EXPIRY
+                  name: env
+          image: getmeili/meilisearch:v1.7.3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 1Gi
+          name: chat-meilisearch
+          volumeMounts:
+            - mountPath: /meili_data
+              name: meilisearch-claim0
+      restartPolicy: Always
+      volumes:
+        - name: meilisearch-claim0
+          persistentVolumeClaim:
+            claimName: meilisearch-claim0
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: meilisearch-service
+  name: meilisearch-service
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  ports:
+    - name: "tcp"
+      port: 7700
+      targetPort: 7700
+  selector:
+    app: meilisearch
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    io.kompose.service: meilisearch-claim0
+  name: meilisearch-claim0
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

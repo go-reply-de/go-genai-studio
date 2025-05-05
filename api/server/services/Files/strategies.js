@@ -22,6 +22,15 @@ const {
   getLocalFileStream,
 } = require('./Local');
 const {
+  deleteGCSFile,
+  prepareImageGCS,
+  getGCSUrl,
+  saveURLToGCS,
+  saveBufferToGCS,
+  uploadImageToGCS,
+  processGCSAvatar,
+} = require('./GCS');
+const {
   getS3URL,
   saveURLToS3,
   saveBufferToS3,
@@ -79,6 +88,24 @@ const localStrategy = () => ({
   prepareImagePayload: prepareImagesLocal,
   getDownloadStream: getLocalFileStream,
 });
+
+/**
+ * GCS Storage Strategy Functions
+ *
+ * */
+const gcsStrategy = () => ({
+  /** @type {typeof uploadVectors | null} */
+  handleFileUpload: null,
+  saveURL: saveURLToGCS,
+  getFileURL: getGCSUrl,
+  deleteFile: deleteGCSFile,
+  saveBuffer: saveBufferToGCS,
+  prepareImagePayload: prepareImageGCS,
+  processAvatar: processGCSAvatar,
+  handleImageUpload: uploadImageToGCS,
+  getDownloadStream: null,
+});
+
 
 /**
  * S3 Storage Strategy Functions
@@ -208,6 +235,8 @@ const getStrategyFunctions = (fileSource) => {
     return firebaseStrategy();
   } else if (fileSource === FileSources.local) {
     return localStrategy();
+  } else if (fileSource === FileSources.gcs) {
+    return gcsStrategy();
   } else if (fileSource === FileSources.openai) {
     return openAIStrategy();
   } else if (fileSource === FileSources.azure) {

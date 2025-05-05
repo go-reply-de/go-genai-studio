@@ -1,9 +1,7 @@
-import { TranslationKeys, useLocalize } from '~/hooks';
-import { BlinkAnimation } from './BlinkAnimation';
+import { ThemeSelector } from '~/components/ui';
+import { useLocalize } from '~/hooks';
 import { TStartupConfig } from 'librechat-data-provider';
 import SocialLoginRender from './SocialLoginRender';
-import { ThemeSelector } from '~/components/ui';
-import { Banner } from '../Banners';
 import Footer from './Footer';
 
 const ErrorRender = ({ children }: { children: React.ReactNode }) => (
@@ -17,6 +15,16 @@ const ErrorRender = ({ children }: { children: React.ReactNode }) => (
     </div>
   </div>
 );
+
+const circleStyle = {
+  position: 'absolute',
+  bottom: '0',
+  right: '0',
+  width: '150px',
+  height: '150px' /* Half the width for a semicircle */,
+  borderradius: '100px 100px 0 0' /* Top corners are rounded, bottom corners are flat */,
+  backgroundColor: 'blue',
+};
 
 function AuthLayout({
   children,
@@ -33,19 +41,24 @@ function AuthLayout({
   startupConfig: TStartupConfig | null | undefined;
   startupConfigError: unknown | null | undefined;
   pathname: string;
-  error: TranslationKeys | null;
+  error: string | null;
 }) {
   const localize = useLocalize();
 
-  const hasStartupConfigError = startupConfigError !== null && startupConfigError !== undefined;
+  const Description = () => (
+    <p className="mt-6 whitespace-pre-line text-xl/8 font-medium text-gray-950/75 dark:text-gray-200">
+      {localize('com_description')}
+    </p>
+  );
+
   const DisplayError = () => {
-    if (hasStartupConfigError) {
+    if (startupConfigError !== null && startupConfigError !== undefined) {
       return <ErrorRender>{localize('com_auth_error_login_server')}</ErrorRender>;
     } else if (error === 'com_auth_error_invalid_reset_token') {
       return (
         <ErrorRender>
           {localize('com_auth_error_invalid_reset_token')}{' '}
-          <a className="font-semibold text-green-600 hover:underline" href="/forgot-password">
+          <a className="font-semibold text-blue-600 hover:underline" href="/forgot-password">
             {localize('com_auth_click_here')}
           </a>{' '}
           {localize('com_auth_to_try_again')}
@@ -58,40 +71,54 @@ function AuthLayout({
   };
 
   return (
-    <div className="relative flex min-h-screen flex-col bg-white dark:bg-gray-900">
-      <Banner />
-      <BlinkAnimation active={isFetching}>
-        <div className="mt-6 h-10 w-full bg-cover">
-          <img
-            src="/assets/logo.svg"
-            className="h-full w-full object-contain"
-            alt={localize('com_ui_logo', { 0: startupConfig?.appTitle ?? 'LibreChat' })}
-          />
-        </div>
-      </BlinkAnimation>
-      <DisplayError />
-      <div className="absolute bottom-0 left-0 md:m-4">
-        <ThemeSelector />
-      </div>
+    <div className="parent relative flex min-h-screen w-screen flex-col px-2 pt-2">
+      <div className="w-full flex-wrap px-2 pb-20 pt-2 md:px-20  md:pb-20 md:pt-16 lg:px-32 lg:pb-20 lg:pt-16">
+        <nav className="flex justify-between py-3">
+          <div className="flex flex-wrap items-center gap-6">
+            <a href="/">
+              <img
+                src="/assets/Go Reply - LOGO RGB.png"
+                className="h-20 w-full object-contain"
+                alt="Logo"
+              />
+            </a>
+            <div className="rounded-full bg-blue-400 px-3 py-0.5 font-medium text-white dark:bg-blue-500">
+              {localize('com_header_description')}
+            </div>
+          </div>
+        </nav>
 
-      <div className="flex flex-grow items-center justify-center">
-        <div className="w-authPageWidth overflow-hidden bg-white px-6 py-4 dark:bg-gray-900 sm:max-w-md sm:rounded-lg">
-          {!hasStartupConfigError && !isFetching && (
-            <h1
-              className="mb-4 text-center text-3xl font-semibold text-black dark:text-white"
-              style={{ userSelect: 'none' }}
-            >
-              {header}
-            </h1>
-          )}
-          {children}
-          {!pathname.includes('2fa') &&
-            (pathname.includes('login') || pathname.includes('register')) && (
-            <SocialLoginRender startupConfig={startupConfig} />
-          )}
+        <div className="absolute bottom-0 left-0 md:m-4">
+          <ThemeSelector />
+        </div>
+
+        <div className="child w-full flex-1 items-center justify-center">
+          <div className="mb-20 mt-32">
+            {!startupConfigError && !isFetching && (
+              <h1
+                className="word-break: break-word text-5xl font-medium text-gray-950 dark:text-white md:text-5xl lg:text-9xl"
+                style={{ userSelect: 'none' }}
+              >
+                {header}.
+              </h1>
+            )}
+            <Description />
+            {children}
+            <div className="mt-12">
+              {(pathname.includes('login') || pathname.includes('register')) && (
+                <SocialLoginRender startupConfig={startupConfig} />
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="relative flex flex-col bg-white dark:bg-gray-900">
+          <DisplayError />
+        </div>
+        <div>
+          <Footer startupConfig={startupConfig} />
         </div>
       </div>
-      <Footer startupConfig={startupConfig} />
     </div>
   );
 }

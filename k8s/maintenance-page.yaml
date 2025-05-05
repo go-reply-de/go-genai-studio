@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: maintenance-page
+data:
+  maintenance.html: |-
+    <!--HTML GOES HERE-->
+    <!doctype html>
+    <title>Site Maintenance</title>
+    <link rel="stylesheet" href="maintenance.css">
+    <article>
+        <h1>We&rsquo;ll be back soon!</h1>
+        <div>
+            <p>Sorry for the inconvenience but we&rsquo;re performing some maintenance at the moment. If you need to you can always <a href="mailto:go.de.genai.studio@reply.de">contact us</a>, otherwise we&rsquo;ll be back online shortly!</p>
+            <p>&mdash; Go Reply Team</p>
+        </div>
+        <div><img width="400" src="https://miro.medium.com/v2/resize:fit:1400/1*17LjqQsr7ePLbXe902FAcQ.png"></div>
+    </article>
+  maintenance.css: |-
+    /* CSS GOES HERE */
+    body { text-align: center; padding: 150px; background-color: #D3D3D3;}
+    h1 { font-size: 50px; }
+    body { font: 20px Helvetica, sans-serif; color: #333; }
+    article { display: block; text-align: left; width: 650px; margin: 0 auto; }
+    a { color: #dc8100; text-decoration: none; }
+    a:hover { color: #333; text-decoration: none; }
+    img { border-radius: 50%; }
+  default.conf: |-
+    # NGINX CONFIGURATION GOES HERE
+    server {
+        listen 80 default_server;
+        server_name _;
+
+        location / {
+            root /usr/share/nginx/html/maintenance/;
+            try_files $uri /maintenance.html;
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maintenance-page
+  labels:
+    app: maintenance-page
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: maintenance-page
+  template:
+    metadata:
+      labels:
+        app: maintenance-page
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.23
+        ports:
+        - containerPort: 80
+        resources:
+            requests:
+              cpu: 1m
+              memory: 2Mi        
+        volumeMounts:
+        # Because no subPath is specified, all keys in configmap willb
+        # be mounted as files at the specified mountPath
+        - name: config-volume
+          mountPath: /usr/share/nginx/html/maintenance/
+        - name: config-volume
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+      volumes:
+        - name: config-volume
+          configMap:
+            name: maintenance-page
