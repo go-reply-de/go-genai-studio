@@ -77,6 +77,11 @@ async function encodeAndFormat(req, files, endpoint, mode) {
     const preparePayload = encodingMethods[source];
 
     /* Google & Anthropic don't support passing URLs to payload */
+    if (source == FileSources.gcs) {
+      const [_file, imageURL] = await preparePayload(req, file);
+      promises.push([_file, imageURL]);
+      continue;
+    }
     if (source !== FileSources.local && base64Only.has(endpoint)) {
       const [_file, imageURL] = await preparePayload(req, file);
       promises.push([_file, await fetchImageToBase64(imageURL)]);
@@ -126,14 +131,20 @@ async function encodeAndFormat(req, files, endpoint, mode) {
       continue;
     }
 
-    if (endpoint && endpoint === EModelEndpoint.google && mode === VisionModes.generative) {
+
+    const source = file.source ?? FileSources.local;
+    if (endpoint && endpoint === EModelEndpoint.google && source === FileSources.gcs) {
+      delete imagePart.image_url;
+      imagePart.fileData = {
+        mimeType: file.type,
+        fileUri: imageContent,
+      }
+    } else if (endpoint && endpoint === EModelEndpoint.google) {
       delete imagePart.image_url;
       imagePart.inlineData = {
         mimeType: file.type,
         data: imageContent,
       };
-    } else if (endpoint && endpoint === EModelEndpoint.google) {
-      imagePart.image_url = imagePart.image_url.url;
     } else if (endpoint && endpoint === EModelEndpoint.anthropic) {
       imagePart.type = 'image';
       imagePart.source = {

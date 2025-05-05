@@ -107,3 +107,25 @@ uploads/
 # owner
 release/
 !/client/src/@types/i18next.d.ts
+
+
+# for developement
+dev-compose.yml
+
+# k8s secrets
+dev-secrets.yaml
+
+# k8s secrets
+prod-secrets.yaml
+
+# sa and key creation
+service-account/*.json
+
+.scannerwork
+
+# Terraform
+.terraform
+**/tfplan.*
+
+# Terragrunt
+**/.terragrunt-cache

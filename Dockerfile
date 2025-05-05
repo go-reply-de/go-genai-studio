@@ -1,41 +1,57 @@
-# v0.7.7
+# v0.7.8
 
-# Base node image
-FROM node:20-alpine AS node
+# Build API, Client and Data Provider
+FROM --platform=linux/amd64 node:20-alpine AS base-min
 
-RUN apk --no-cache add curl
-
-RUN mkdir -p /app && chown node:node /app
 WORKDIR /app
+COPY package*.json ./
+COPY packages/data-provider/package*.json ./packages/data-provider/
+COPY packages/mcp/package*.json ./packages/mcp/
+COPY client/package*.json ./client/
+COPY api/package*.json ./api/
 
-USER node
+# Install all dependencies for every build
+FROM base-min AS base
+WORKDIR /app
+RUN npm ci
 
-COPY --chown=node:node . .
+# Build data-provider
+FROM base AS data-provider-build
+WORKDIR /app/packages/data-provider
+COPY ./packages/data-provider ./
+RUN npm run build
+RUN npm prune --production
 
-RUN \
-    # Allow mounting of these files, which have no default
-    touch .env ; \
-    # Create directories for the volumes to inherit the correct permissions
-    mkdir -p /app/client/public/images /app/api/logs ; \
-    npm config set fetch-retry-maxtimeout 600000 ; \
-    npm config set fetch-retries 5 ; \
-    npm config set fetch-retry-mintimeout 15000 ; \
-    npm install --no-audit; \
-    # React client build
-    NODE_OPTIONS="--max-old-space-size=2048" npm run frontend; \
-    npm prune --production; \
-    npm cache clean --force
+# Build mcp package
+FROM base AS mcp-build
+WORKDIR /app/packages/mcp
+COPY ./packages/mcp ./
+COPY --from=data-provider-build /app/packages/data-provider/dist /app/packages/data-provider/dist
+RUN npm run build
+RUN npm prune --production
 
-RUN mkdir -p /app/client/public/images /app/api/logs
+# React client build
+FROM base AS client-build
+WORKDIR /app/client
+COPY ./client/package*.json ./
+# Copy data-provider to client's node_modules
+COPY --from=data-provider-build /app/packages/data-provider/dist /app/packages/data-provider/dist
+COPY ./client/ ./
+ENV NODE_OPTIONS="--max-old-space-size=2048"
+RUN npm run build
+
 
 # Node API setup
+FROM base AS api-build
+WORKDIR /app
+COPY api/ ./api
+COPY config/ ./config
+# Copy data-provider to API's node_modules
+COPY --from=data-provider-build /app/packages/data-provider/dist /app/packages/data-provider/dist
+COPY --from=mcp-build /app/packages/mcp/dist /app/packages/mcp/dist
+COPY --from=client-build /app/client/dist /app/client/dist
+WORKDIR /app/api
+RUN npm prune --production
 EXPOSE 3080
 ENV HOST=0.0.0.0
-CMD ["npm", "run", "backend"]
-
-# Optional: for client with nginx routing
-# FROM nginx:stable-alpine AS nginx-client
-# WORKDIR /usr/share/nginx/html
-# COPY --from=node /app/client/dist /usr/share/nginx/html
-# COPY client/nginx.conf /etc/nginx/conf.d/default.conf
-# ENTRYPOINT ["nginx", "-g", "daemon off;"]
+CMD ["node", "server/index.js"]

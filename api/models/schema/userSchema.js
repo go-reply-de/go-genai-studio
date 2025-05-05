@@ -7,6 +7,15 @@ const { SystemRoles } = require('librechat-data-provider');
  */
 
 /**
+ * @typedef {Object} MongoCredentials
+ * @property {string} [access_token] - Access token.
+ * @property {number} [expiry_date] - Expiry date as timestamp.
+ * @property {string} [scope] - Scopes granted.
+ * @property {string} [token_type] - Type of token.
+ * @property {string} [id_token] - ID token.
+ */
+
+/**
  * @typedef {Object} MongoUser
  * @property {ObjectId} [_id] - MongoDB Document ID
  * @property {string} [name] - The user's name
@@ -26,6 +35,7 @@ const { SystemRoles } = require('librechat-data-provider');
  * @property {string} [appleId] - Optional Apple ID for the user
  * @property {Array} [plugins=[]] - List of plugins used by the user
  * @property {Array.<MongoSession>} [refreshToken] - List of sessions with refresh tokens
+ * @property {Array.<MongoCredentials>} [credentials] - List of credentials
  * @property {Date} [expiresAt] - Optional expiration date of the file
  * @property {Date} [createdAt] - Date when the user was created (added by timestamps)
  * @property {Date} [updatedAt] - Date when the user was last updated (added by timestamps)
@@ -37,6 +47,18 @@ const Session = mongoose.Schema({
     type: String,
     default: '',
   },
+});
+
+/** @type {MongooseSchema<MongoCredentials>} */
+const Credentials = mongoose.Schema({
+  access_token: {
+    type: String,
+    default: '',
+  },
+  expiry_date: { type: Number },
+  scope: { type: String },
+  token_type: { type: String },
+  id_token: { type: String },
 });
 
 const backupCodeSchema = mongoose.Schema({
@@ -138,6 +160,9 @@ const userSchema = mongoose.Schema(
     expiresAt: {
       type: Date,
       expires: 604800, // 7 days in seconds
+    },
+    credentials: {
+      type: Credentials,
     },
     termsAccepted: {
       type: Boolean,

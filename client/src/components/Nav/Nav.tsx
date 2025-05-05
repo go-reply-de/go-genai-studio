@@ -129,6 +129,13 @@ const Nav = ({
       >
         <div className="h-full w-[320px] md:w-[260px]">
           <div className="flex h-full min-h-0 flex-col">
+          <div className="mt-4 flex content-start">
+                <img
+                  src="/assets/Go Reply - LOGO RGB.png"
+                  className="ml-5 h-12 object-contain"
+                  alt="Logo"
+                />
+              </div>
             <div
               className={cn(
                 'flex h-full min-h-0 flex-col transition-opacity',

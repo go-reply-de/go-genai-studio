@@ -21,6 +21,15 @@ const {
   processLocalAvatar,
   getLocalFileStream,
 } = require('./Local');
+const {
+  deleteGCSFile,
+  prepareImageGCS,
+  getGCSUrl,
+  saveURLToGCS,
+  saveBufferToGCS,
+  uploadImageToGCS,
+  processGCSAvatar,
+} = require('./GCS');
 const { uploadOpenAIFile, deleteOpenAIFile, getOpenAIFileStream } = require('./OpenAI');
 const { getCodeOutputDownloadStream, uploadCodeEnvFile } = require('./Code');
 const { uploadVectors, deleteVectors } = require('./VectorDB');
@@ -56,6 +65,24 @@ const localStrategy = () => ({
   prepareImagePayload: prepareImagesLocal,
   getDownloadStream: getLocalFileStream,
 });
+
+/**
+ * GCS Storage Strategy Functions
+ *
+ * */
+const gcsStrategy = () => ({
+  /** @type {typeof uploadVectors | null} */
+  handleFileUpload: null,
+  saveURL: saveURLToGCS,
+  getFileURL: getGCSUrl,
+  deleteFile: deleteGCSFile,
+  saveBuffer: saveBufferToGCS,
+  prepareImagePayload: prepareImageGCS,
+  processAvatar: processGCSAvatar,
+  handleImageUpload: uploadImageToGCS,
+  getDownloadStream: null,
+});
+
 
 /**
  * VectorDB Storage Strategy Functions
@@ -133,6 +160,8 @@ const getStrategyFunctions = (fileSource) => {
     return firebaseStrategy();
   } else if (fileSource === FileSources.local) {
     return localStrategy();
+  } else if (fileSource === FileSources.gcs) {
+    return gcsStrategy();
   } else if (fileSource === FileSources.openai) {
     return openAIStrategy();
   } else if (fileSource === FileSources.azure) {

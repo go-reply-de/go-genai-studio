@@ -1,0 +1,165 @@
+steps:
+#- name: node:latest
+#  entrypoint: 'bash'
+#  args:
+#    - '-c'
+#    - |
+#      npm install -g npm &&
+#      npm ci &&
+#      npm run frontend:ci &&
+#      cd client &&
+#      npm run test:ci --verbose
+#  id: 'Run Regression Tests'
+
+- name: 'gcr.io/cloud-builders/gcloud'
+  entrypoint: 'bash'
+  args:
+  - -c
+  - |
+    sed -i "s/VERSION = 'v.*'/VERSION = '${_ENVIRONMENT} ${SHORT_SHA}'/" packages/data-provider/src/config.ts
+  id: 'Update Build Version'
+
+# Documentation: https://goreplyde.atlassian.net/wiki/spaces/GOR/pages/2940502076/Code+Quality+with+SonarQube
+- name: 'gcr.io/$PROJECT_ID/sonar-scanner:latest'
+  id: 'Run Sonarqube Analysis'
+  entrypoint: 'bash'
+  args:
+    - -c
+    - |
+      sonar_host=$(gcloud secrets versions access latest --secret="${_LIBRECHAT_CREDENTIALS_ENV_KEYS_PREFIX}SONAR_HOST" --format='value(payload.data)' | tr '_-' '/+' | base64 -d)
+      sonar_login=$(gcloud secrets versions access latest --secret="${_LIBRECHAT_CREDENTIALS_ENV_KEYS_PREFIX}SONAR_LOGIN" --format='value(payload.data)' | tr '_-' '/+' | base64 -d)
+      sonar-scanner \
+        -Dsonar.host.url="${sonar_host}" \
+        -Dsonar.login="${sonar_login}" \
+        -Dsonar.projectKey="${_REGISTRY_NAME}" \
+        -Dsonar.projectName="${_REGISTRY_NAME}" \
+        -Dsonar.sources=.
+
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', '$LOCATION-docker.pkg.dev/$PROJECT_ID/${_REGISTRY_NAME}/api:$SHORT_SHA', '.']
+  id: 'Build Docker Image'
+
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', '$LOCATION-docker.pkg.dev/$PROJECT_ID/${_REGISTRY_NAME}/api:$SHORT_SHA' ]
+  id: 'Push Docker Image'
+
+- name: 'gcr.io/cloud-builders/gcloud'
+  args: ['container', 'clusters', 'get-credentials', '${_GKE_CLUSTER_NAME}', '--zone', '$LOCATION']
+  id: 'GKE Get Credentials'
+
+- name: 'gcr.io/cloud-builders/kubectl'
+  id: 'Create K8S namespace'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    if kubectl get namespace ${_GKE_NAMESPACE}; then
+      echo "Namespace already exists"
+    else
+      kubectl create namespace ${_GKE_NAMESPACE}
+    fi
+
+- name: "gcr.io/cloud-builders/kubectl"
+  id: 'Modify K8S manifests'
+  entrypoint: 'bash'
+  args:
+    - '-c'
+    - |
+      find ./k8s -name "*.yaml" -print0 | while IFS= read -r -d $'\0' file; do
+        sed -i -e "s/###_REGISTRY_NAME###/$_REGISTRY_NAME/g" "$file"
+        sed -i -e "s/###ENVIRONMENT###/${_ENVIRONMENT}/g" "$file"
+        sed -i -e "s/###NODE_ENV###/${_NODE_ENV}/g" "$file"
+        sed -i -e "s/###LOCATION###/$LOCATION/g" "$file"
+        sed -i -e "s/###PROJECT_ID###/$PROJECT_ID/g" "$file"
+        sed -i -e "s/###API_SHORT_SHA###/$SHORT_SHA/g" "$file"
+        sed -i -e "s/###RAG_SHORT_SHA###/bdae521a/g" "$file"
+        sed -i -e "s/###_GKE_CLUSTER_NAME###/${_GKE_CLUSTER_NAME}/g" "$file"
+        sed -i -e "s/###_GKE_NAMESPACE###/${_GKE_NAMESPACE}/g" "$file"
+        sed -i -e "s/###GOOGLE_KEY###/${_GOOGLE_KEY}/g" "$file"
+        sed -i -e "s/###DOMAIN###/${_DOMAIN}/g" "$file"
+        sed -i -e "s/###IP_ADDRESS_ID###/${_IP_ADDRESS_ID}/g" "$file"
+        sed -i -e "s/###_SECURITY_POLICY###/${_SECURITY_POLICY}/g" "$file"
+      done
+
+- name: 'gcr.io/cloud-builders/gcloud'
+  id: 'Create K8S secrets'
+  entrypoint: 'bash'
+  args:
+  - -c
+  - |
+    ### Secret 1: "gcp-service-account"
+    gcloud secrets versions access latest --secret="${_K8S_SECRET_PRIVATE_KEY_NAME}" > key.json
+    kubectl delete secret gcp-service-account -n ${_GKE_NAMESPACE} || true
+    kubectl create secret generic gcp-service-account --from-file=key.json=./key.json --namespace=${_GKE_NAMESPACE}
+
+    ### Secret 2: "librechat-credentials-env"
+    kubectl delete secret librechat-credentials-env -n ${_GKE_NAMESPACE} || true
+    kubectl create secret generic librechat-credentials-env -n ${_GKE_NAMESPACE}
+
+    for secret_id in $(echo "${_LIBRECHAT_CREDENTIALS_ENV_KEYS}" | tr ',' '\n'); do
+      secret_value=$(gcloud secrets versions access latest --secret="${secret_id}" --format='get(payload.data)' | tr '_-' '/+' | base64 -d)
+      if [[ $? -ne 0 ]]; then
+        echo "Error retrieving secret: ${secret_id}" >&2
+        continue
+      fi
+
+      short_secret_id=$(echo "${secret_id}" | sed 's/${_LIBRECHAT_CREDENTIALS_ENV_KEYS_PREFIX}//')
+      # Escape any whitespaces and line breaks
+      escaped_secret_value=$(echo "${secret_value}" | tr -d '[:space:]')
+
+
+      kubectl patch secret librechat-credentials-env -n ${_GKE_NAMESPACE} --type=merge --patch "{\"stringData\": {\"${short_secret_id}\": \"${escaped_secret_value}\"}}"
+
+    done
+  env:
+    - 'CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}'  # If running on GKE
+    - 'CLOUDSDK_COMPUTE_REGION=${_GKE_REGION}' # If running on GKE
+
+
+- name: "gcr.io/cloud-builders/kubectl"
+  id: 'Apply K8S components'
+  args: ["apply", "-f", "./k8s/env.yaml", "-f", "./k8s/mongodb.yaml", "-f", "./k8s/meilisearch.yaml", "-f", "./k8s/maintenance-page.yaml", "--namespace=${_GKE_NAMESPACE}"]
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+- name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy RAG API'
+  args: ["apply", "-f", "./k8s/vectordb.yaml", "-f", "./k8s/rag.yaml", "--namespace=${_GKE_NAMESPACE}"]
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+- name: 'google/cloud-sdk:latest'
+  id: 'Deploy API'
+  entrypoint: 'bash'
+  args:
+  - -c
+  - |
+    set -e 
+
+    find ./deploy -name "*.yaml" -print0 | while IFS= read -r -d $'\0' file; do
+      sed -i -e "s/###ENVIRONMENT###/${_ENVIRONMENT}/g" "$file"
+      sed -i -e "s/###NODE_ENV###/${_NODE_ENV}/g" "$file"
+      sed -i -e "s/###LOCATION###/$LOCATION/g" "$file"
+      sed -i -e "s/###PROJECT_ID###/$PROJECT_ID/g" "$file"
+      sed -i -e "s/###_GKE_CLUSTER_NAME###/${_GKE_CLUSTER_NAME}/g" "$file"
+    done
+
+    gcloud deploy apply --file deploy/pipeline.yaml --region=$LOCATION
+    gcloud deploy apply --file deploy/deploy-to-genai-studio-cluster.yaml --region=$LOCATION
+
+    gcloud deploy releases create "genai-${SHORT_SHA}-$(echo $BUILD_ID | cut -c1-7)-release" \
+      --delivery-pipeline=${_DELIVERY_PIPELINE_NAME} \
+      --region=$LOCATION \
+      --from-k8s-manifest=./k8s/api.yaml
+
+- name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy ingress'
+  args: ["apply", "-f", "./k8s/ingress.yaml", "--namespace=${_GKE_NAMESPACE}"]
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+options:
+  logging: CLOUD_LOGGING_ONLY

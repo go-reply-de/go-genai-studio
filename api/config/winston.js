@@ -132,10 +132,28 @@ if (useDebugConsole) {
   );
 }
 
-const logger = winston.createLogger({
+let logger;
+
+// For GCP Logging Winston use the Env variable GCP_LOGGING=true
+// This will log to the console and to GCP Logging
+const { GCP_LOGGING } = process.env;
+const useGcpLogging =
+  (typeof GCP_LOGGING === 'string' && GCP_LOGGING?.toLowerCase() === 'true') ||
+  GCP_LOGGING === true;
+if (useGcpLogging) {
+  const level = (NODE_ENV === 'production') ? 'warn' : 'debug';
+  logger = winston.createLogger({
+    level,
+    transports: [
+      new winston.transports.Console(),
+    ],
+  });
+} else {
+  logger = winston.createLogger({
   level: level(),
   levels,
   transports,
 });
+}
 
 module.exports = logger;
