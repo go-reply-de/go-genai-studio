@@ -24,7 +24,6 @@ const checkBan = require('./checkBan');
 const noIndex = require('./noIndex');
 const roles = require('./roles');
 
-
 module.exports = {
   ...abortMiddleware,
   ...validate,

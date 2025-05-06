@@ -80,7 +80,6 @@ const localStrategy = () => ({
   getDownloadStream: getLocalFileStream,
 });
 
-
 /**
  * S3 Storage Strategy Functions
  *
