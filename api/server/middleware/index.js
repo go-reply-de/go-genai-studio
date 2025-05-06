@@ -23,7 +23,6 @@ const uaParser = require('./uaParser');
 const checkBan = require('./checkBan');
 const noIndex = require('./noIndex');
 const roles = require('./roles');
-const checkOAuthValid = require('./checkOAuthValid');
 
 
 module.exports = {
@@ -52,5 +51,4 @@ module.exports = {
   validateRegistration,
   validateImageRequest,
   validatePasswordReset,
-  checkOAuthValid,
 };
