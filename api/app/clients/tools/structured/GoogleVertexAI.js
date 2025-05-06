@@ -10,7 +10,7 @@ class GoogleVertexAI extends Tool {
         return field || process.env[envVar] || defaultValue;
     }
 
-    constructor(fields = {}) {
+    constructor(fields = {}, geminiModel) {
         super();
         this.name = 'vertex_ai';
         this.description =
@@ -23,7 +23,7 @@ class GoogleVertexAI extends Tool {
         try {
             serviceKey = require('~/data/auth.json');
         } catch (e) {
-            // Do nothing
+            logger.error("Please upload a service account to this path: ~/data/auth.json")
         }
 
         this.serviceKey =
@@ -98,7 +98,7 @@ class GoogleVertexAI extends Tool {
             const retrievalTool = this.createGroundingTool()
 
             this.generativeModel = this.vertexAI.preview.getGenerativeModel({
-                model: "gemini-2.0-flash-001",
+                model: geminiModel,
                 tools: [retrievalTool]
             });
 
