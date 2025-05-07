@@ -130,6 +130,8 @@ service-account/*.json
 
 .scannerwork
 
+.nvmrc
+
 # Terraform
 .terraform
 **/tfplan.*
