@@ -10,6 +10,7 @@ const StructuredACS = require('./structured/AzureAISearch');
 const StructuredSD = require('./structured/StableDiffusion');
 const GoogleSearchAPI = require('./structured/GoogleSearch');
 const GoogleVertexAI = require('./structured/GoogleVertexAI');
+const MedLM = require('./structured/MedLM');
 const TraversaalSearch = require('./structured/TraversaalSearch');
 const createOpenAIImageTools = require('./structured/OpenAIImageTools');
 const TavilySearchResults = require('./structured/TavilySearchResults');
@@ -39,6 +40,7 @@ module.exports = {
   StructuredACS,
   GoogleSearchAPI,
   GoogleVertexAI,
+  MedLM,
   TraversaalSearch,
   StructuredWolfram,
   createYouTubeTools,

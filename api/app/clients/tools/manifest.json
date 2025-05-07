@@ -215,5 +215,12 @@
         "description": "The ID of your Vertex AI Search data store."
       }
     ]
+  },
+  {
+    "name": "MedLM",
+    "pluginKey": "medlm",
+    "description": "Interact with Google's MedLM, a model designed for the medical domain, built to provide expert-level understanding and generation of healthcare-related text.",
+    "icon": "https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg",
+    "authConfig": []
   }
 ]
