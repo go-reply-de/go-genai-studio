@@ -68,7 +68,6 @@ resource "google_project_iam_member" "clouddeploy_operator" {
   role    = "roles/clouddeploy.operator"
   member  = "serviceAccount:${google_service_account.cloudbuild_service_account.email}"
 }
-#storage.buckets.create
 #storage.objects.create
 resource "google_project_iam_member" "cloudbuil_builder" {
   project = data.google_project.project.project_id

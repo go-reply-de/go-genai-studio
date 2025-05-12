@@ -1,6 +1,6 @@
 version: 1.0.8
 cache: true
-fileStrategy: gcs
+fileStrategy: local
 interface:
   privacyPolicy:
     externalUrl: https://www.reply.com/en/privacy-policy
