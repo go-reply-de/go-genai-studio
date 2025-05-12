@@ -197,7 +197,7 @@
     "name": "Vertex AI Search",
     "pluginKey": "vertex_ai",
     "description": "Search and interact with Google Vertex AI, grounding the model with information from a Vertex AI Search data store. Use this tool when you need to generate text, answer questions, or perform tasks grounded in specific documents.",
-    "icon": "https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg",
+    "icon": "/assets/vertexai.svg",
     "authConfig": [
       {
         "authField": "GOOGLE_CLOUD_PROJECT_ID",
@@ -215,5 +215,12 @@
         "description": "The ID of your Vertex AI Search data store."
       }
     ]
+  },
+  {
+    "name": "Google Search",
+    "pluginKey": "google_search",
+    "description": "Use Google Search to find information about the weather, news, sports, and more.",
+    "icon": "https://i.imgur.com/SMmVkNB.png",
+    "authConfig": []
   }
 ]
