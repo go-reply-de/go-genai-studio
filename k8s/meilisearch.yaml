@@ -381,7 +381,7 @@ spec:
                   name: env
             - name: OPENAI_API_KEY
               valueFrom:
-                configMapKeyRef:
+                secretKeyRef:
                   key: OPENAI_API_KEY
                   name: env
             - name: OPENAI_MODERATION

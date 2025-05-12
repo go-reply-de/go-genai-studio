@@ -87,7 +87,7 @@ module "gcs_bucket" {
 module "configmap" {
   source = "./modules/configmap"
 
-  yaml_file_path         = "../k8s/config.tf.tpl"
+  yaml_file_path         = "../k8s/librechat.tf.tpl"
   sign_in_domains        = var.sign_in_domains
   cluster_endpoint       = module.gke_cluster.cluster_endpoint
   cluster_ca_certificate = module.gke_cluster.cluster_ca_certificate
