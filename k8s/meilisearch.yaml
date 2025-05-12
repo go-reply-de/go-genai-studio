@@ -383,7 +383,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   key: OPENAI_API_KEY
-                  name: env
+                  name: librechat-credentials-env
             - name: OPENAI_MODERATION
               valueFrom:
                 configMapKeyRef:
