@@ -456,24 +456,24 @@ spec:
           name: ###_GKE_CLUSTER_NAME###
           imagePullPolicy: Always
           ports:
-            - containerPort: 80
+            - containerPort: 3080
           livenessProbe: # Add liveness probe
             tcpSocket:
-              port: 80
+              port: 3080
             initialDelaySeconds: 60 # Wait 30 seconds before starting probes
             periodSeconds: 10 # Check every 10 seconds
             failureThreshold: 3 # Fail after 3 consecutive failures
           readinessProbe: # Add readiness probe
             httpGet:
               path: /login # Check /login for readiness if the app is ready to receive requests
-              port: 80
+              port: 3080
             initialDelaySeconds: 60 # Wait 10 seconds before starting probes
             periodSeconds: 10 # Check every 5 seconds
             failureThreshold: 3 # Fail after 3 consecutive failures
           volumeMounts:
-            - mountPath: /app/config.yaml
+            - mountPath: /app/librechat.yaml
               name: config
-              subPath: config.yaml
+              subPath: librechat.yaml
             - mountPath: /app/client/public/images
               name: api-claim3
             - mountPath: /app/api/logs
@@ -486,12 +486,13 @@ spec:
       volumes:
         - configMap:
             items:
-              - key: config.yaml
-                path: config.yaml
+              - key: librechat.yaml
+                path: librechat.yaml
             name: config
           name: config
         - name: api-claim3
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: api-claim3
         - name: api-claim4
           emptyDir: {}
         - name: vertex-ai-sa-credentials
@@ -514,7 +515,21 @@ spec:
   ports:
     - protocol: TCP
       port: 80
-      targetPort: 80
+      targetPort: 3080
   type: NodePort
   selector:
     app: api
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    app: api-claim3
+  name: api-claim3
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

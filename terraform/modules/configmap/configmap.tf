@@ -14,7 +14,7 @@ resource "kubernetes_config_map" "config" {
     }
   }
   data = {
-    "config.yaml" = trimspace(local.config_content)
+    "librechat.yaml" = trimspace(local.config_content)
   }
 
   lifecycle {
