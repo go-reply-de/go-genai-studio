@@ -9,6 +9,7 @@ const {
   // Basic Tools
   GoogleSearchAPI,
   GoogleVertexAI,
+  Imagen,
   // Structured Tools
   DALLE3,
   FluxAPI,
@@ -180,6 +181,9 @@ const loadTools = async ({
       const authFields = getAuthFields('vertex_ai');
       const authValues = await loadAuthValues({ userId: user, authFields });
       return new GoogleVertexAI(authValues, agent?.model);
+    },
+    imagen_vertex: async (_toolContextMap) => { 
+      return new Imagen();
     },
     image_gen_oai: async (toolContextMap) => {
       const authFields = getAuthFields('image_gen_oai');
