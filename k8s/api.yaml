@@ -456,17 +456,17 @@ spec:
           name: ###_GKE_CLUSTER_NAME###
           imagePullPolicy: Always
           ports:
-            - containerPort: 3080
+            - containerPort: 80
           livenessProbe: # Add liveness probe
             tcpSocket:
-              port: 3080
+              port: 80
             initialDelaySeconds: 60 # Wait 30 seconds before starting probes
             periodSeconds: 10 # Check every 10 seconds
             failureThreshold: 3 # Fail after 3 consecutive failures
           readinessProbe: # Add readiness probe
             httpGet:
               path: /login # Check /login for readiness if the app is ready to receive requests
-              port: 3080
+              port: 80
             initialDelaySeconds: 60 # Wait 10 seconds before starting probes
             periodSeconds: 10 # Check every 5 seconds
             failureThreshold: 3 # Fail after 3 consecutive failures
@@ -515,7 +515,7 @@ spec:
   ports:
     - protocol: TCP
       port: 80
-      targetPort: 3080
+      targetPort: 80
   type: NodePort
   selector:
     app: api
