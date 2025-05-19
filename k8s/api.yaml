@@ -471,11 +471,11 @@ spec:
             periodSeconds: 10 # Check every 5 seconds
             failureThreshold: 3 # Fail after 3 consecutive failures
           volumeMounts:
-            - mountPath: /app/config.yaml
+            - mountPath: /app/librechat.yaml
               name: config
-              subPath: config.yaml
+              subPath: librechat.yaml
             - mountPath: /app/client/public/images
-              name: api-claim3
+              name: api-images
             - mountPath: /app/api/logs
               name: api-claim4
             - name: vertex-ai-sa-credentials
@@ -486,12 +486,13 @@ spec:
       volumes:
         - configMap:
             items:
-              - key: config.yaml
-                path: config.yaml
+              - key: librechat.yaml
+                path: librechat.yaml
             name: config
           name: config
-        - name: api-claim3
-          emptyDir: {}
+        - name: api-images
+          persistentVolumeClaim:
+            claimName: api-images
         - name: api-claim4
           emptyDir: {}
         - name: vertex-ai-sa-credentials
@@ -518,3 +519,17 @@ spec:
   type: NodePort
   selector:
     app: api
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    app: api-images
+  name: api-images
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
