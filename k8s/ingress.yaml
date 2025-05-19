@@ -22,7 +22,7 @@ spec:
     service:
       name: api-service
       port:
-        number: 3080
+        number: 80
 ---
 apiVersion: networking.gke.io/v1beta1
 kind: FrontendConfig
