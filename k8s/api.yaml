@@ -477,7 +477,7 @@ spec:
             - mountPath: /app/client/public/images
               name: api-images
             - mountPath: /app/api/logs
-              name: api-claim4
+              name: api-claim
             - name: vertex-ai-sa-credentials
               mountPath: /app/api/data/auth.json
               subPath: auth.json
@@ -493,8 +493,9 @@ spec:
         - name: api-images
           persistentVolumeClaim:
             claimName: api-images
-        - name: api-claim4
-          emptyDir: {}
+        - name: api-claim
+          persistentVolumeClaim:
+            claimName: api-claim
         - name: vertex-ai-sa-credentials
           secret:
             secretName: gcp-service-account
@@ -533,3 +534,17 @@ spec:
   resources:
     requests:
       storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    app: api-claim
+  name: api-claim
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
