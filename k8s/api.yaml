@@ -544,7 +544,7 @@ metadata:
   namespace: ###_GKE_NAMESPACE###
 spec:
   accessModes:
-    - ReadWriteMany
+    - ReadWriteOnce
   resources:
     requests:
       storage: 1Gi
