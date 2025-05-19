@@ -475,7 +475,7 @@ spec:
               name: config
               subPath: librechat.yaml
             - mountPath: /app/client/public/images
-              name: api-claim3
+              name: api-images
             - mountPath: /app/api/logs
               name: api-claim4
             - name: vertex-ai-sa-credentials
@@ -490,9 +490,9 @@ spec:
                 path: librechat.yaml
             name: config
           name: config
-        - name: api-claim3
+        - name: api-images
           persistentVolumeClaim:
-            claimName: api-claim3
+            claimName: api-images
         - name: api-claim4
           emptyDir: {}
         - name: vertex-ai-sa-credentials
@@ -524,8 +524,8 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   labels:
-    app: api-claim3
-  name: api-claim3
+    app: api-images
+  name: api-images
   namespace: ###_GKE_NAMESPACE###
 spec:
   accessModes:
