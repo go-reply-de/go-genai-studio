@@ -448,7 +448,7 @@ spec:
                 configMapKeyRef:
                   key: GCS_BUCKET_NAME
                   name: env
-          image: ghcr.io/danny-avila/librechat-dev:latest
+          image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
           resources:
             requests:
               cpu: 10m
