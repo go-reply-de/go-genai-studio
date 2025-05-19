@@ -530,10 +530,11 @@ metadata:
   namespace: ###_GKE_NAMESPACE###
 spec:
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteMany
   resources:
     requests:
       storage: 10Gi
+  storageClassName: standard-rwx
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -544,7 +545,8 @@ metadata:
   namespace: ###_GKE_NAMESPACE###
 spec:
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteMany
   resources:
     requests:
       storage: 1Gi
+  storageClassName: standard-rwx
