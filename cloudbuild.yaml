@@ -18,7 +18,7 @@ steps:
   - |
     set -e 
     set -u 
-    set -o
+    set -o pipefail
 
     VERSION_STRING=""
 
@@ -37,7 +37,7 @@ steps:
       VERSION_STRING="$(echo "$_ENVIRONMENT" | tr '[:lower:]' '[:upper:]') ${SHORT_SHA}"
       echo "Using Environment and SHA for version: ${VERSION_STRING}"
     fi
-    sed -i "s/VERSION = 'v.*'/VERSION = '${VERSION_STRING}'/" packages/data-provider/src/config.ts
+    sed -i "s/VERSION = 'v.*'/VERSION = '$${VERSION_STRING}'/" packages/data-provider/src/config.ts
 
   id: 'Update Build Version'
 
