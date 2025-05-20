@@ -19,4 +19,7 @@ inputs = {
   }
 
   user_group_mail = ["go-genai-studio-user@goreply.de"]
+  
+  # Cloud Armor configuration
+  enable_cloud_armor = true
 }
