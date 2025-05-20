@@ -215,14 +215,14 @@ spec:
                   name: librechat-credentials-env
             - name: GOOGLE_CSE_ID
               valueFrom:
-                configMapKeyRef:
+                secretKeyRef:
                   key: GOOGLE_CSE_ID
-                  name: env
+                  name: librechat-credentials-env
             - name: GOOGLE_SEARCH_API_KEY
               valueFrom:
-                configMapKeyRef:
+                secretKeyRef:
                   key: GOOGLE_SEARCH_API_KEY
-                  name: env
+                  name: librechat-credentials-env
             - name: GOOGLE_MODELS
               valueFrom:
                 configMapKeyRef:

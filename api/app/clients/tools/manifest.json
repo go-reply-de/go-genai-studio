@@ -17,18 +17,7 @@
     "pluginKey": "google",
     "description": "Use Google Search to find information about the weather, news, sports, and more.",
     "icon": "https://i.imgur.com/SMmVkNB.png",
-    "authConfig": [
-      {
-        "authField": "GOOGLE_CSE_ID",
-        "label": "Google CSE ID",
-        "description": "This is your Google Custom Search Engine ID. For instructions on how to obtain this, see <a href='https://github.com/danny-avila/LibreChat/blob/main/docs/features/plugins/google_search.md'>Our Docs</a>."
-      },
-      {
-        "authField": "GOOGLE_SEARCH_API_KEY",
-        "label": "Google API Key",
-        "description": "This is your Google Custom Search API Key. For instructions on how to obtain this, see <a href='https://github.com/danny-avila/LibreChat/blob/main/docs/features/plugins/google_search.md'>Our Docs</a>."
-      }
-    ]
+    "authConfig": []
   },
   {
     "name": "YouTube",
