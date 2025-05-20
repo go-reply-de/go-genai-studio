@@ -18,7 +18,7 @@ module "cloud_armor_policy" {
       description             = "OWASP ModSecurity CRS - Cross-Site Scripting (XSS)"
       action                  = "deny(502)"
       target_rule_set         = "xss-v33-stable"
-      exclude_target_rule_ids = ["owasp-crs-v030301-id942432-sqli", "owasp-crs-v030301-id942421-sqli"]
+      exclude_target_rule_ids = ["owasp-crs-v030301-id942432-sqli", "owasp-crs-v030301-id942421-sqli", "owasp-crs-v030301-id941330-xss"]
     }
     owasp_crs_lfi = {
       priority                = 1002
@@ -81,14 +81,14 @@ module "cloud_armor_policy" {
       description             = "OWASP ModSecurity CRS - Method Enforcement"
       action                  = "deny(502)"
       target_rule_set         = "methodenforcement-v33-stable"
-      exclude_target_rule_ids = []
+      exclude_target_rule_ids = ["owasp-crs-v030301-id911100-methodenforcement"]
     }
     owasp_crs_protocol_attack = {
       priority                = 1011
       description             = "OWASP ModSecurity CRS - Protocol Attack"
       action                  = "deny(502)"
       target_rule_set         = "protocolattack-v33-stable"
-      exclude_target_rule_ids = []
+      exclude_target_rule_ids = ["owasp-crs-v030301-id921150-protocolattack"]
     }
   }
 }
