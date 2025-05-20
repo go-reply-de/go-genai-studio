@@ -16,7 +16,29 @@ steps:
   args:
   - -c
   - |
-    sed -i "s/VERSION = 'v.*'/VERSION = '${_ENVIRONMENT} ${SHORT_SHA}'/" packages/data-provider/src/config.ts
+    set -e 
+    set -u 
+    set -o
+
+    VERSION_STRING=""
+
+    if [ "${_ENVIRONMENT}" = "prod" ]; then
+      echo "Production environment detected."
+      # Ensure TAG_NAME is set for prod builds; otherwise, this will be empty.
+      if [ -z "${TAG_NAME}" ]; then
+        echo "ERROR: _ENVIRONMENT is prod, but TAG_NAME is not set. Ensure this is a tag-triggered build for prod."
+        exit 1
+      fi
+      VERSION_STRING="${TAG_NAME}"
+      echo "Using Git Tag for version: ${VERSION_STRING}"
+    else
+      echo "Non-production environment (${_ENVIRONMENT}) detected."
+      # Uppercase the _ENVIRONMENT variable
+      VERSION_STRING="$(echo "$_ENVIRONMENT" | tr '[:lower:]' '[:upper:]') ${SHORT_SHA}"
+      echo "Using Environment and SHA for version: ${VERSION_STRING}"
+    fi
+    sed -i "s/VERSION = 'v.*'/VERSION = '${VERSION_STRING}'/" packages/data-provider/src/config.ts
+
   id: 'Update Build Version'
 
 # Documentation: https://goreplyde.atlassian.net/wiki/spaces/GOR/pages/2940502076/Code+Quality+with+SonarQube
