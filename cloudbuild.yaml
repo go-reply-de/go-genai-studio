@@ -16,28 +16,29 @@ steps:
   args:
   - -c
   - |
-    set -e 
-    set -u 
+    set -e
+    set -u
     set -o pipefail
 
-    VERSION_STRING=""
+    VERSION_STRING="" # Bash variable initialization
 
     if [ "${_ENVIRONMENT}" = "prod" ]; then
       echo "Production environment detected."
-      # Ensure TAG_NAME is set for prod builds; otherwise, this will be empty.
+      # ${_ENVIRONMENT} and ${TAG_NAME} are Cloud Build substitutions, so they are fine unescaped.
       if [ -z "${TAG_NAME}" ]; then
         echo "ERROR: _ENVIRONMENT is prod, but TAG_NAME is not set. Ensure this is a tag-triggered build for prod."
         exit 1
       fi
-      VERSION_STRING="${TAG_NAME}"
-      echo "Using Git Tag for version: ${VERSION_STRING}"
+      VERSION_STRING="${TAG_NAME}" # Assigning CB sub to Bash var
+      echo "Using Git Tag for version: $${VERSION_STRING}" # Escape $ for BASH variable
     else
       echo "Non-production environment (${_ENVIRONMENT}) detected."
-      # Uppercase the _ENVIRONMENT variable
-      VERSION_STRING="$(echo "$_ENVIRONMENT" | tr '[:lower:]' '[:upper:]') ${SHORT_SHA}"
-      echo "Using Environment and SHA for version: ${VERSION_STRING}"
+      # ${_ENVIRONMENT} and ${SHORT_SHA} are Cloud Build substitutions.
+      VERSION_STRING="$(echo "${_ENVIRONMENT}" | tr '[:lower:]' '[:upper:]') ${SHORT_SHA}"
+      echo "Using Environment and SHA for version: $${VERSION_STRING}" # Escape $ for BASH variable
     fi
-    sed -i "s/VERSION = 'v.*'/VERSION = '$${VERSION_STRING}'/" packages/data-provider/src/config.ts
+
+    sed -i "s/VERSION = 'v.*'/VERSION = '$${VERSION_STRING}'/" packages/data-provider/src/config.ts # Escape $ for BASH variable
 
   id: 'Update Build Version'
 
