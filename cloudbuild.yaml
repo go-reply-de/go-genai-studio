@@ -20,7 +20,7 @@ steps:
     set -u
     set -o pipefail
 
-    VERSION_STRING="" # Bash variable initialization
+    VERSION_STRING=""
 
     if [ "${_ENVIRONMENT}" = "prod" ]; then
       echo "Production environment detected."
@@ -30,15 +30,15 @@ steps:
         exit 1
       fi
       VERSION_STRING="${TAG_NAME}" # Assigning CB sub to Bash var
-      echo "Using Git Tag for version: $${VERSION_STRING}" # Escape $ for BASH variable
+      echo "Using Git Tag for version: $${VERSION_STRING}"
     else
       echo "Non-production environment (${_ENVIRONMENT}) detected."
       # ${_ENVIRONMENT} and ${SHORT_SHA} are Cloud Build substitutions.
       VERSION_STRING="$(echo "${_ENVIRONMENT}" | tr '[:lower:]' '[:upper:]') ${SHORT_SHA}"
-      echo "Using Environment and SHA for version: $${VERSION_STRING}" # Escape $ for BASH variable
+      echo "Using Environment and SHA for version: $${VERSION_STRING}"
     fi
 
-    sed -i "s/VERSION = 'v.*'/VERSION = '$${VERSION_STRING}'/" packages/data-provider/src/config.ts # Escape $ for BASH variable
+    sed -i "s/VERSION = 'v.*'/VERSION = '$${VERSION_STRING}'/" packages/data-provider/src/config.ts
 
   id: 'Update Build Version'
 
