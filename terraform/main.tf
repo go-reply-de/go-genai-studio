@@ -107,3 +107,12 @@ module "cloud_armor" {
   application            = var.application
   enable_cloud_armor     = var.enable_cloud_armor
 }
+
+module "backup" {
+  source = "./modules/backup"
+
+  gke_cluster_id         = module.gke_cluster.cluster_id
+  gcp_region             = var.gcp_region
+  environment            = var.environment
+  namespace              = "${var.application}-${var.environment}"
+}
