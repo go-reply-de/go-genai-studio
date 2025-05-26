@@ -6,14 +6,10 @@ const { logger } = require('~/config'); // Assuming logger is correctly set up
 const fs = require('fs').promises;
 const path = require('path');
 const os = require('os'); // For a temporary directory
-const { v4: uuidv4 } = require('uuid'); // For generating file_ids
+const { ContentTypes } = require('librechat-data-provider');
 
 // --- Define ContentTypes if not already available globally ---
 // This should match what your Langchain setup expects.
-const ContentTypes = {
-  IMAGE_URL: 'image_url',
-  TEXT: 'text',
-};
 
 // Default display message
 const DEFAULT_DISPLAY_MESSAGE = 'Image generated successfully by Vertex AI Imagen.';
@@ -38,6 +34,9 @@ class Imagen extends Tool {
       `Generates an image using Google Vertex AI Imagen based on a textual prompt. ` +
       `Returns the image content and a file ID. Use this for creating original images.`;
     this.returnDirect = false; // Standard for tools that return structured output
+
+    // *** CRITICAL FIX: Inform the LangChain runtime about the output format ***
+    this.responseFormat = 'content_and_artifact';
 
     this.override = fields.override ?? false;
 
@@ -125,7 +124,7 @@ class Imagen extends Tool {
 
   /**
    * The main method to generate an image.
-   * @param {object} data The input data matching the Zod schema.
+   * @param  data The input data matching the Zod schema.
    * @returns {Promise<Array>} An array with [textResponse, { content, file_ids }]
    */
   async _call(data) {
@@ -157,7 +156,8 @@ class Imagen extends Tool {
 
 
     const endpoint = `projects/${this.project_id}/locations/${this.location}/publishers/google/models/${this.modelId}`;
-    logger.debug(`[${this.name}] Generating image with prompt: "${prompt}" (n=${n}, quality=${quality}, aspectRatio=${size}) using endpoint: ${endpoint}`);
+    // *** FIX: Correct the logger.debug string concatenation ***
+    logger.debug(`[${this.name}] Generating image with prompt: "${prompt.substring(0, 100)}..." (n=${n}, quality=${quality}, aspectRatio=${size}) using endpoint: ${endpoint}`);
 
     try {
       const promptInstance = { prompt: prompt };
@@ -170,7 +170,7 @@ class Imagen extends Tool {
         aspectRatio: size,
         safetyFilterLevel: 'block_some',
         personGeneration: 'allow_adult',
-        addWatermark: true, 
+        addWatermark: true,
       };
       // Add quality if the model supports it.
       // For Imagen 3.0 models, 'quality' is a valid parameter ('standard', 'hd')
@@ -194,35 +194,25 @@ class Imagen extends Tool {
 
         if (prediction.bytesBase64Encoded) {
           const imageBase64 = prediction.bytesBase64Encoded;
-          const imageBuffer = Buffer.from(imageBase64, 'base64');
 
-          // --- Saving the image (optional, but kept from your example) ---
-          const outputDir = path.join(process.cwd(), 'images'); // Save to 'images' in current working dir
-          await fs.mkdir(outputDir, { recursive: true });
-          const safeQueryPart = prompt.substring(0, 20).replace(/[^a-zA-Z0-9]/g, '_');
-          const filename = `imagen_${this.modelId.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}_${safeQueryPart}.png`;
-          const outputPath = path.join(outputDir, filename);
-          await fs.writeFile(outputPath, imageBuffer);
-          logger.info(`[${this.name}] Image successfully generated and saved to ${outputPath}`);
-          // --- End saving ----
-
-          const content = [
+          let content = [
             {
               type: ContentTypes.IMAGE_URL,
               image_url: {
-                url: `data:image/png;base64,${imageBase64}`,
+                url: `data:image/png;base64,${imageBase64}`
               },
             },
           ];
-    
+
           const file_ids = [v4()];
-          const response = [
+          // *** FIX: Ensure the text response is correctly formatted as an array of objects ***
+          const textResponse = [
             {
               type: ContentTypes.TEXT,
               text: displayMessage + `\n\ngenerated_image_id: "${file_ids[0]}"`,
             },
           ];
-          return [response, { content, file_ids }];
+          return [textResponse, { content, file_ids }];
 
         } else if (prediction.error) {
           const errorMsg = `Error from Vertex AI: ${prediction.error.message || JSON.stringify(prediction.error)}.`;
@@ -251,7 +241,8 @@ class Imagen extends Tool {
         ];
       }
     } catch (error) {
-      logger.error(`[${this.name}] Image generation failed for prompt "${prompt}":`, error.message);
+      // *** FIX: Correct the logger.error string concatenation here as well ***
+      logger.error(`[${this.name}] Image generation failed for prompt "${prompt.substring(0, 100)}...": ${error.message}`);
       if (error.code) logger.error(`[${this.name}] gRPC error code: ${error.code}`);
       if (error.details) logger.error(`[${this.name}] Error details: ${error.details}`);
 
