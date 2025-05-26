@@ -12,23 +12,8 @@ resource "google_gke_backup_backup_plan" "genai_studio_backup_plan" {
   backup_config {
     include_volume_data = true
     include_secrets     = true
-    selected_applications {
-      namespaced_names {
-        name      = "api"
-        namespace = var.namespace
-      }
-      namespaced_names {
-        name      = "mongodb"
-        namespace = var.namespace
-      }
-      namespaced_names {
-        name      = "meilisearch"
-        namespace = var.namespace
-      }
-      namespaced_names {
-        name      = "vectordb-${var.environment}"
-        namespace = var.namespace
-      }
+    selected_namespaces {
+      namespaces = [var.namespace]
     }
   }
 
