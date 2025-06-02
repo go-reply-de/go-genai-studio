@@ -9,7 +9,7 @@ resource "google_gke_backup_restore_plan" "genai_studio_restore_plan" {
 
   restore_config {
     cluster_resource_conflict_policy = "USE_EXISTING_VERSION"
-    namespaced_resource_restore_mode = "FAIL_ON_CONFLICT"
+    namespaced_resource_restore_mode = "REPLACE_EXISTING_VERSION"
     volume_data_restore_policy       = "RESTORE_VOLUME_DATA_FROM_BACKUP"
     selected_namespaces {
       namespaces = [var.namespace]
