@@ -109,7 +109,7 @@ module "cloud_armor" {
 }
 
 module "backup" {
-  source = "./modules/backup"
+  source = "./modules/backup_restore"
 
   gke_cluster_id         = module.gke_cluster.cluster_id
   gcp_region             = var.gcp_region
