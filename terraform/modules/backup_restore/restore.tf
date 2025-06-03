@@ -12,28 +12,6 @@ resource "google_gke_backup_restore_plan" "genai_studio_restore_plan" {
     selected_namespaces {
       namespaces = [var.namespace]
     }
-
-    transformation_rules {
-      field_actions {
-        op   = "REMOVE"
-        path = "/"
-      }
-      resource_filter {
-        group_kinds {
-          resource_group = "networking.k8s.io"
-          resource_kind  = "Ingress"
-        }
-        group_kinds {
-          resource_group = "networking.gke.io"
-          resource_kind  = "ManagedCertificate"
-        }
-        group_kinds {
-          resource_group = "cloud.google.com"
-          resource_kind  = "BackendConfig"
-        }
-        namespaces = [var.namespace]
-      }
-    }
   }
 
   labels = {
