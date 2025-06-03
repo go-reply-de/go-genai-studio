@@ -3,16 +3,36 @@ resource "google_gke_backup_restore_plan" "genai_studio_restore_plan" {
   location    = var.gcp_region
   name        = "${var.environment}-genai-studio-restore-plan"
   description = "Restore plan for MongoDB, Postgres, and Meilisearch workloads."
-
-  # Reference the backup plan from which restore operations will source data.
   backup_plan = google_gke_backup_backup_plan.genai_studio_backup_plan.id
 
   restore_config {
     cluster_resource_conflict_policy = "USE_EXISTING_VERSION"
-    namespaced_resource_restore_mode = "REPLACE_EXISTING_VERSION"
+    namespaced_resource_restore_mode = "MERGE_SKIP_ON_CONFLICT"
     volume_data_restore_policy       = "RESTORE_VOLUME_DATA_FROM_BACKUP"
     selected_namespaces {
       namespaces = [var.namespace]
+    }
+
+    transformation_rules {
+      field_actions {
+        op   = "REMOVE"
+        path = "/"
+      }
+      resource_filter {
+        group_kinds {
+          resource_group = "networking.k8s.io"
+          resource_kind  = "Ingress"
+        }
+        group_kinds {
+          resource_group = "networking.gke.io"
+          resource_kind  = "ManagedCertificate"
+        }
+        group_kinds {
+          resource_group = "cloud.google.com"
+          resource_kind  = "BackendConfig"
+        }
+        namespaces = [var.namespace]
+      }
     }
   }
 
