@@ -1,9 +1,3 @@
-provider "kubernetes" {
-  host                   = var.cluster_endpoint
-  cluster_ca_certificate = base64decode(var.cluster_ca_certificate)
-  token                  = var.access_token
-}
-
 resource "kubernetes_config_map" "config" {
 
   metadata {

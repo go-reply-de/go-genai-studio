@@ -1,9 +1,3 @@
-provider "kubernetes" {
-  host                   = var.cluster_endpoint
-  cluster_ca_certificate = base64decode(var.cluster_ca_certificate)
-  token                  = var.access_token
-}
-
 # Creating K8s Namespace
 resource "kubernetes_namespace" "application_namespace" {
   metadata {

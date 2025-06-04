@@ -14,6 +14,12 @@ module "google_project_service" {
   ]
 }
 
+provider "kubernetes" {
+  host                   = module.gke_cluster.cluster_endpoint
+  cluster_ca_certificate = base64decode(module.gke_cluster.cluster_ca_certificate)
+  token                  = module.gke_cluster.access_token
+}
+
 module "gke_cluster" {
   source      = "./modules/gke_cluster"
   environment = var.environment
