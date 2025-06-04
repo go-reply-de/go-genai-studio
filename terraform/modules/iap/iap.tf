@@ -37,7 +37,7 @@ resource "google_iap_client" "project_client" {
 resource "kubernetes_secret" "iap_oauth_secret" {
   metadata {
     name      = "iap-oauth-credentials"
-    namespace = kubernetes_namespace.application_namespace.metadata.name
+    namespace = kubernetes_namespace.application_namespace.metadata[0].name
   }
   data = {
     client_id     = google_iap_client.project_client.client_id
@@ -52,7 +52,7 @@ resource "kubernetes_manifest" "iap_backend_config" {
     "kind"       = "BackendConfig"
     "metadata" = {
       "name"      = "genai-studio-managed-ingress-${var.environment}-backend-config"
-      "namespace" = kubernetes_namespace.application_namespace.metadata.name
+      "namespace" = kubernetes_namespace.application_namespace.metadata[0].name
     }
     "spec" = {
       "timeoutSec" = 300
