@@ -32,3 +32,13 @@ spec:
   redirectToHttps:
     enabled: true
     responseCodeName: "MOVED_PERMANENTLY_DEFAULT"
+---
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: genai-studio-managed-ingress-###ENVIRONMENT###-backend-config
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  timeoutSec: 300
+  securityPolicy:
+    name: ###_SECURITY_POLICY###
