@@ -30,8 +30,8 @@ add `"insecure-registries": ["192.168.49.2:5000"]` to your `~/.docker/daemon.jso
 
 ```
 cd YOUR_WORKSPACE
-git clone https://gitlab.com/goreplyde/internal/internal-projects/go-genai-studio-rag-api.git
-cd go-genai-studio-rag-api
+git clone https://github.com/go-reply-de/internal-internal-projects-go-genai-studio-rag-api.git
+cd internal-internal-projects-go-genai-studio-rag-api
 eval $(minikube docker-env)
 docker build -t $(minikube ip):5000/go-genai-studio-rag-api:bdae521a .
 docker push $(minikube ip):5000/go-genai-studio-rag-api:bdae521a
