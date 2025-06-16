@@ -28,20 +28,15 @@ module "gke_cluster" {
   application = var.application
 }
 
-#module "iap" {
-#  source                 = "./modules/iap"
-#  environment            = var.environment
-#  application            = var.application
-#  application_name       = var.application_name
-#  cluster_endpoint       = module.gke_cluster.cluster_endpoint
-#  cluster_ca_certificate = module.gke_cluster.cluster_ca_certificate
-#  access_token           = module.gke_cluster.access_token
-#  gcp_project_id         = var.gcp_project_id
-#  domain                 = var.domain
-#  iap_support_email      = var.application_email
-#  iap_group              = "go-genai-studio-user@goreply.de"
-#  security_policy_name   = var.enable_cloud_armor ? module.cloud_armor.security_policy_name : ""
-#}
+module "iap" {
+  source               = "./modules/iap"
+  environment          = var.environment
+  application          = var.application
+  iap_access_members   = ["group:go-genai-studio-user@goreply.de"]
+  security_policy_name = var.enable_cloud_armor ? module.cloud_armor.security_policy_name : ""
+  project_id           = var.gcp_project_id
+  prefix               = var.prefix
+}
 
 module "cloudbuild_v2_github" {
   source = "github.com/kasna-cloud/terraform-google-cloud-build-gen-2"

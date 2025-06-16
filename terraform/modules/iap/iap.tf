@@ -10,23 +10,23 @@ resource "kubernetes_namespace" "application_namespace" {
   }
 }
 
-resource "google_project_service" "iap_service" {
-  project = var.gcp_project_id
-  service = "iap.googleapis.com"
-}
-
-resource "google_iap_brand" "project_brand" {
-  project           = var.gcp_project_id
-  support_email     = var.iap_support_email
-  application_title = var.application_name
-  depends_on        = [google_project_service.iap_service]
-}
-
-resource "google_iap_client" "project_client" {
-  display_name = "${var.application_name} IAP Client"
-  brand        = google_iap_brand.project_brand.name
-  depends_on   = [google_iap_brand.project_brand]
-}
+#resource "google_project_service" "iap_service" {
+#  project = var.gcp_project_id
+#  service = "iap.googleapis.com"
+#}
+#
+#resource "google_iap_brand" "project_brand" {
+#  project           = var.gcp_project_id
+#  support_email     = var.iap_support_email
+#  application_title = var.application_name
+#  depends_on        = [google_project_service.iap_service]
+#}
+#
+#resource "google_iap_client" "project_client" {
+#  display_name = "${var.application_name} IAP Client"
+#  brand        = google_iap_brand.project_brand.name
+#  depends_on   = [google_iap_brand.project_brand]
+#}
 
 resource "kubernetes_secret" "iap_oauth_secret" {
   metadata {
@@ -34,8 +34,8 @@ resource "kubernetes_secret" "iap_oauth_secret" {
     namespace = kubernetes_namespace.application_namespace.metadata[0].name
   }
   data = {
-    client_id     = google_iap_client.project_client.client_id
-    client_secret = google_iap_client.project_client.secret
+    client_id     = local.oauth.client_id
+    client_secret = local.oauth.client_secret
   }
   type = "Opaque"
 }
@@ -62,4 +62,10 @@ resource "kubernetes_manifest" "iap_backend_config" {
     }
   }
   depends_on = [kubernetes_secret.iap_oauth_secret]
+}
+
+resource "google_project_iam_binding" "iap_binding" {
+  project             = var.project_id
+  role                = "roles/iap.httpsResourceAccessor"
+  members             = var.iap_access_members
 }
