@@ -9,8 +9,7 @@ module "google_project_service" {
     "file.googleapis.com",
     "secretmanager.googleapis.com",
     "aiplatform.googleapis.com",
-    "iap.googleapis.com",
-    "dns.googleapis.com"
+    "iap.googleapis.com"
   ]
 }
 
