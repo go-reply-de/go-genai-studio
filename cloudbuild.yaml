@@ -49,14 +49,19 @@ steps:
   args:
     - -c
     - |
-      sonar_host=$(gcloud secrets versions access latest --secret="${_LIBRECHAT_CREDENTIALS_ENV_KEYS_PREFIX}SONAR_HOST" --format='value(payload.data)' | tr '_-' '/+' | base64 -d)
-      sonar_login=$(gcloud secrets versions access latest --secret="${_LIBRECHAT_CREDENTIALS_ENV_KEYS_PREFIX}SONAR_LOGIN" --format='value(payload.data)' | tr '_-' '/+' | base64 -d)
-      sonar-scanner \
-        -Dsonar.host.url="${sonar_host}" \
-        -Dsonar.login="${sonar_login}" \
-        -Dsonar.projectKey="${_REGISTRY_NAME}" \
-        -Dsonar.projectName="${_REGISTRY_NAME}" \
-        -Dsonar.sources=.
+      if [ "${_EXECUTE_SONARQUBE_ANALYSIS}" = "true" ]; then
+        echo "Executing SonarQube Analysis as _EXECUTE_SONARQUBE_ANALYSIS is true."
+        sonar_host=$(gcloud secrets versions access latest --secret="${_LIBRECHAT_CREDENTIALS_ENV_KEYS_PREFIX}SONAR_HOST" --format='value(payload.data)' | tr '_-' '/+' | base64 -d)
+        sonar_login=$(gcloud secrets versions access latest --secret="${_LIBRECHAT_CREDENTIALS_ENV_KEYS_PREFIX}SONAR_LOGIN" --format='value(payload.data)' | tr '_-' '/+' | base64 -d)
+        sonar-scanner \
+          -Dsonar.host.url="${sonar_host}" \
+          -Dsonar.login="${sonar_login}" \
+          -Dsonar.projectKey="${_REGISTRY_NAME}" \
+          -Dsonar.projectName="${_REGISTRY_NAME}" \
+          -Dsonar.sources=.
+      else
+        echo "Skipping SonarQube Analysis as _EXECUTE_SONARQUBE_ANALYSIS is not 'true' (current value: '${_EXECUTE_SONARQUBE_ANALYSIS:-false}')."
+      fi
 
 - name: 'gcr.io/cloud-builders/docker'
   args: ['build', '-t', '$LOCATION-docker.pkg.dev/$PROJECT_ID/${_REGISTRY_NAME}/api:$SHORT_SHA', '.', '-f', 'Dockerfile.multi']
