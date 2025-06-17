@@ -174,9 +174,6 @@ steps:
       sed -i -e "s/###_GKE_CLUSTER_NAME###/${_GKE_CLUSTER_NAME}/g" "$file"
     done
 
-    gcloud deploy apply --file deploy/pipeline.yaml --region=$LOCATION
-    gcloud deploy apply --file deploy/deploy-to-genai-studio-cluster.yaml --region=$LOCATION
-
     gcloud deploy releases create "genai-${SHORT_SHA}-$(echo $BUILD_ID | cut -c1-7)" \
       --delivery-pipeline=${_DELIVERY_PIPELINE_NAME} \
       --region=$LOCATION \
