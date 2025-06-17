@@ -49,7 +49,7 @@ steps:
     - '-c'
     - |
       # Check if the _ENVIRONMENT variable starts with "uksh"
-      if [[ "${_ENVIRONMENT}" == "uksh"* ]]; then
+      if [[ "${_ENVIRONMENT}" == "pub"* ]]; then
         echo "UKSH environment detected ('${_ENVIRONMENT}'). Applying UKSH branding."
 
         # Ensure the script is executable and then run it.
