@@ -131,7 +131,7 @@ docker push europe-west3-docker.pkg.dev/$GCP_PROJECT_NAME/$GCP_ARTIFACTORY_REPO_
 - SONAR_LOGIN needs to be generated from [here](https://sonarqube.goreply.de/account/security) (please log in using the credentials in BitWarden)
 - SONAR_HOST refers to the URL that allows access to the SonarQube instance. So in our case it’s https://sonarqube.goreply.de/
 - For OPENAI_API_KEY, please use the API Key stored in our BitWarden (search for “GPT API Key for GenAI Studio Team”)
-- For GOOGLE_CSE_ID & GOOGLE_SEARCH_API_KEY, please follow the instructions in https://goreplyde.atlassian.net/browse/INT-1259
+- For GOOGLE_CSE_ID & GOOGLE_SEARCH_API_KEY, please follow the instructions found [here](https://goreplyde.atlassian.net/wiki/spaces/GOR/pages/3161423873/Google+Custom+Search+Engine)
 7. Trigger a deployment through running a CloudBuild (see [in the console](https://console.cloud.google.com/cloud-build/triggers))
 8. Set DNS record to the generated IP (see [in the console](https://console.cloud.google.com/networking/addresses/list))
 9. Wait until the TLS certificate gets provisioned (check with `kubectl describe ManagedCertificate genai-studio-managed-cert-dev | grep Status`)
