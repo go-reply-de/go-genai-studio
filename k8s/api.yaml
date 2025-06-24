@@ -497,6 +497,9 @@ spec:
         - name: api-images
           persistentVolumeClaim:
             claimName: api-images
+        - name: api-branding
+          persistentVolumeClaim:
+            claimName: api-branding-pvc
         - name: api-claim4
           emptyDir: {}
         - name: vertex-ai-sa-credentials
