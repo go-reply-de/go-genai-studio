@@ -16,6 +16,8 @@ spec:
       maxUnavailable: 0 # Don't allow any pods to be unavailable during update
   template:
     metadata:
+      annotations:
+        gke-gcsfuse/volumes: "true"
       labels:
         app: api
     spec:
@@ -443,10 +445,10 @@ spec:
                 configMapKeyRef:
                   key: GCS_PROJECT_ID
                   name: env
-            - name: GCS_BUCKET_NAME
+            - name: GCS_BRANDING_BUCKET_NAME
               valueFrom:
                 configMapKeyRef:
-                  key: GCS_BUCKET_NAME
+                  key: GCS_BRANDING_BUCKET_NAME
                   name: env
           image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
           resources:
@@ -476,6 +478,8 @@ spec:
               subPath: librechat.yaml
             - mountPath: /app/client/public/images
               name: api-images
+            - mountPath: /app/client/dist/assets
+              name: api-branding
             - mountPath: /app/api/logs
               name: api-claim4
             - name: vertex-ai-sa-credentials
@@ -533,3 +537,53 @@ spec:
   resources:
     requests:
       storage: 10Gi
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: api-branding-storageclass
+provisioner: gcsfuse.csi.storage.gke.io
+parameters:
+  bucketName: ###_BRANDING_BUCKET_NAME###
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: api-branding-pv
+spec:
+  accessModes:
+  - ReadWriteMany
+  capacity:
+    storage: 5Gi
+  storageClassName: api-branding-storageclass
+  mountOptions:
+    - implicit-dirs
+  csi:
+    driver: gcsfuse.csi.storage.gke.io
+    volumeHandle: ###_BRANDING_BUCKET_NAME###
+  claimRef:
+    name: api-branding-pvc
+    namespace: ###_GKE_NAMESPACE###
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: api-branding-pvc
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: api-branding-storageclass
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-service-account
+  namespace: ###_GKE_NAMESPACE###
+  annotations:
+    iam.gke.io/gcp-service-account: ###_K8S_SA###
