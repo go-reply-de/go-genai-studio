@@ -583,11 +583,3 @@ spec:
     requests:
       storage: 5Gi
   storageClassName: api-branding-storageclass
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: k8s-service-account
-  namespace: ###_GKE_NAMESPACE###
-  annotations:
-    iam.gke.io/gcp-service-account: ###_K8S_SA###
