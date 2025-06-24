@@ -21,6 +21,7 @@ spec:
       labels:
         app: api
     spec:
+      serviceAccountName: k8s-service-account
       containers:
         - env:
             - name: ALLOW_EMAIL_LOGIN
