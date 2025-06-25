@@ -578,3 +578,11 @@ spec:
   resources:
     requests:
       storage: 5Gi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-service-account
+  namespace: ###_GKE_NAMESPACE###
+  annotations:
+    iam.gke.io/gcp-service-account: ###_K8S_SA_EMAIL###
