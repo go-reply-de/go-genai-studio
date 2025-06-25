@@ -446,10 +446,10 @@ spec:
                 configMapKeyRef:
                   key: GCS_PROJECT_ID
                   name: env
-            - name: GCS_BRANDING_BUCKET_NAME
+            - name: GCS_BUCKET_NAME
               valueFrom:
                 configMapKeyRef:
-                  key: GCS_BRANDING_BUCKET_NAME
+                  key: GCS_BUCKET_NAME
                   name: env
           image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
           resources:
