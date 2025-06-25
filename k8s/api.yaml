@@ -22,6 +22,13 @@ spec:
         app: api
     spec:
       serviceAccountName: k8s-service-account
+      initContainers:
+        - name: copy-assets
+          image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
+          command: ["/bin/sh", "-c", "cp -r /app/client/dist/assets/. /default-assets/ || true"]
+          volumeMounts:
+            - name: api-branding
+              mountPath: /default-assets
       containers:
         - env:
             - name: ALLOW_EMAIL_LOGIN
