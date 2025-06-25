@@ -542,16 +542,6 @@ spec:
     requests:
       storage: 10Gi
 ---
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: api-branding-storageclass
-provisioner: gcsfuse.csi.storage.gke.io
-parameters:
-  bucketName: ###_BRANDING_BUCKET_NAME###
-volumeBindingMode: Immediate
-allowVolumeExpansion: true
----
 apiVersion: v1
 kind: PersistentVolume
 metadata:
@@ -561,7 +551,6 @@ spec:
   - ReadWriteMany
   capacity:
     storage: 5Gi
-  storageClassName: api-branding-storageclass
   mountOptions:
     - implicit-dirs
   csi:
@@ -582,4 +571,3 @@ spec:
   resources:
     requests:
       storage: 5Gi
-  storageClassName: api-branding-storageclass
