@@ -169,14 +169,6 @@ steps:
   - |
     set -e
 
-    find ./deploy -name "*.yaml" -print0 | while IFS= read -r -d $'\0' file; do
-      sed -i -e "s/###ENVIRONMENT###/${_ENVIRONMENT}/g" "$file"
-      sed -i -e "s/###NODE_ENV###/${_NODE_ENV}/g" "$file"
-      sed -i -e "s/###LOCATION###/$LOCATION/g" "$file"
-      sed -i -e "s/###PROJECT_ID###/$PROJECT_ID/g" "$file"
-      sed -i -e "s/###_GKE_CLUSTER_NAME###/${_GKE_CLUSTER_NAME}/g" "$file"
-    done
-
     gcloud deploy releases create "genai-${SHORT_SHA}-$(echo $BUILD_ID | cut -c1-7)" \
       --delivery-pipeline=${_DELIVERY_PIPELINE_NAME} \
       --region=$LOCATION \
