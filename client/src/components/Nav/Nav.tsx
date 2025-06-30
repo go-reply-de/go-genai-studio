@@ -200,7 +200,7 @@ const Nav = memo(
               <div className="flex h-full flex-col transition-opacity">
                 <div className="mt-4 flex content-start">
                   <img
-                    src="/assets/Go Reply - LOGO RGB.png"
+                    src="/assets/main_logo.png"
                     className="ml-5 h-12 object-contain"
                     alt="Logo"
                   />

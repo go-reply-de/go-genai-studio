@@ -43,7 +43,7 @@ steps:
   id: 'Update Build Version'
 
 # Documentation: https://goreplyde.atlassian.net/wiki/spaces/GOR/pages/2940502076/Code+Quality+with+SonarQube
-- name: 'gcr.io/$PROJECT_ID/sonar-scanner:latest'
+- name: 'sonarsource/sonar-scanner-cli:latest'
   id: 'Run Sonarqube Analysis'
   entrypoint: 'bash'
   args:
