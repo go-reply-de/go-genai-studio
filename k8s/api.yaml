@@ -25,7 +25,16 @@ spec:
       initContainers:
         - name: copy-assets
           image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
-          command: ["/bin/sh", "-c", "cp -r -n -v /app/client/dist/assets/* /default-assets/"]
+          command: ["/bin/sh", "-c"]
+          args:
+            - >
+              if [ -d /default-assets ]; then
+                echo "Directory /default-assets found. Cleaning and copying assets...";
+                find /default-assets -type f -not -name "main_logo.png" -not -name "main_favicon.png" -delete &&
+                cp -r -n -v /app/client/dist/assets/* /default-assets/;
+              else
+                echo "Directory /default-assets not found, skipping.";
+              fi
           volumeMounts:
             - name: api-branding
               mountPath: /default-assets
