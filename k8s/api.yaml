@@ -25,7 +25,7 @@ spec:
       initContainers:
         - name: copy-assets
           image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
-          command: ["/bin/sh", "-c", "rsync -r --delete --ignore-existing /app/client/dist/assets/ /default-assets/"]
+          command: ["/bin/sh", "-c", "cp -r -n -v /app/client/dist/assets/* /default-assets/"]
           volumeMounts:
             - name: api-branding
               mountPath: /default-assets
