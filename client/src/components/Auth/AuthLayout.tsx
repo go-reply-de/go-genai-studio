@@ -77,7 +77,7 @@ function AuthLayout({
           <div className="flex flex-wrap items-center gap-6">
             <a href="/">
               <img
-                src="/assets/Go Reply - LOGO RGB.png"
+                src="/assets/main_logo.png"
                 className="h-20 w-full object-contain"
                 alt="Logo"
               />

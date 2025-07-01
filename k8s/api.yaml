@@ -16,9 +16,28 @@ spec:
       maxUnavailable: 0 # Don't allow any pods to be unavailable during update
   template:
     metadata:
+      annotations:
+        gke-gcsfuse/volumes: "true"
       labels:
         app: api
     spec:
+      serviceAccountName: k8s-service-account
+      initContainers:
+        - name: copy-assets
+          image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
+          command: ["/bin/sh", "-c"]
+          args:
+            - >
+              if [ -d /default-assets ]; then
+                echo "Directory /default-assets found. Cleaning and copying assets...";
+                find /default-assets -type f -not -name "main_logo.png" -not -name "main_favicon.png" -delete &&
+                cp -r -n -v /app/client/dist/assets/* /default-assets/;
+              else
+                echo "Directory /default-assets not found, skipping.";
+              fi
+          volumeMounts:
+            - name: api-branding
+              mountPath: /default-assets
       containers:
         - env:
             - name: ALLOW_EMAIL_LOGIN
@@ -476,6 +495,8 @@ spec:
               subPath: librechat.yaml
             - mountPath: /app/client/public/images
               name: api-images
+            - mountPath: /app/client/dist/assets
+              name: api-branding
             - mountPath: /app/api/logs
               name: api-claim4
             - name: vertex-ai-sa-credentials
@@ -493,6 +514,9 @@ spec:
         - name: api-images
           persistentVolumeClaim:
             claimName: api-images
+        - name: api-branding
+          persistentVolumeClaim:
+            claimName: api-branding-pvc
         - name: api-claim4
           emptyDir: {}
         - name: vertex-ai-sa-credentials
@@ -533,3 +557,41 @@ spec:
   resources:
     requests:
       storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: api-branding-pv
+spec:
+  accessModes:
+  - ReadWriteMany
+  capacity:
+    storage: 5Gi
+  mountOptions:
+    - implicit-dirs
+  csi:
+    driver: gcsfuse.csi.storage.gke.io
+    volumeHandle: ###_BRANDING_BUCKET_NAME###
+  claimRef:
+    name: api-branding-pvc
+    namespace: ###_GKE_NAMESPACE###
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: api-branding-pvc
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-service-account
+  namespace: ###_GKE_NAMESPACE###
+  annotations:
+    iam.gke.io/gcp-service-account: ###_K8S_SA_EMAIL###
