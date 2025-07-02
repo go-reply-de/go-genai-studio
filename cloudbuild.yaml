@@ -110,6 +110,8 @@ steps:
         sed -i -e "s/###APP_TITLE###/${_APP_TITLE}/g" "$file"
         sed -i -e "s/###_BRANDING_BUCKET_NAME###/${_BRANDING_BUCKET_NAME}/g" "$file"
         sed -i -e "s/###_K8S_SA_EMAIL###/${_K8S_SA_EMAIL}/g" "$file"
+        sed -i -e "s/###_GOOGLE_MODELS###/${_GOOGLE_MODELS}/g" "$file"
+        sed -i -e "s/###_GOOGLE_LOC###/${_GOOGLE_LOC}/g" "$file"
       done
 
 - name: 'gcr.io/cloud-builders/gcloud'
