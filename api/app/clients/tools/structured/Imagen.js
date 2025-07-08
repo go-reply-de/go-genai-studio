@@ -1,46 +1,29 @@
 const { z } = require('zod');
 const { Tool } = require('@langchain/core/tools');
-const { PredictionServiceClient, helpers } = require('@google-cloud/aiplatform');
+const { GoogleAuth } = require('google-auth-library');
 const { v4 } = require('uuid');
 const { logger } = require('~/config'); // Assuming logger is correctly set up
-const fs = require('fs').promises;
-const path = require('path');
-const os = require('os'); // For a temporary directory
 const { ContentTypes } = require('librechat-data-provider');
-
-// --- Define ContentTypes if not already available globally ---
-// This should match what your Langchain setup expects.
-
-// Default display message
-const DEFAULT_DISPLAY_MESSAGE = 'Image generated successfully by Vertex AI Imagen.';
+const path = require('path');
+const os = require('os');
 
 const displayMessage =
-  'The tool displayed an image. All generated images are already plainly visible, so don\'t repeat the descriptions in detail. Do not list download links as they are available in the UI already. The user may download the images by clicking on them, but do not mention anything about downloading to the user.';
-
+  "The tool displayed an image. All generated images are already plainly visible, so don't repeat the descriptions in detail. Do not list download links as they are available in the UI already. The user may download the images by clicking on them, but do not mention anything about downloading to the user.";
 
 class Imagen extends Tool {
+  constructor(fields = {}, imagenModelId = 'imagegeneration@006') {
+    super();
 
-  // _initializeField - keep as is if used, though not explicitly used in provided constructor
-  _initializeField(field, envVar, defaultValue) {
-    return field || process.env[envVar] || defaultValue;
-  }
-
-  constructor(fields = {}, imagenModelId = 'imagen-3.0-generate-002') {
-    super(); // Call the parent Tool constructor
-
-    // --- Tool Name and Description (Update these to be more specific) ---
-    this.name = 'imagen_vertex'; // More specific name
+    this.name = 'imagen_vertex';
     this.description =
       `Generates an image using Google Vertex AI Imagen based on a textual prompt. ` +
       `Returns the image content and a file ID. Use this for creating original images.`;
-    this.returnDirect = false; // Standard for tools that return structured output
-
-    // *** CRITICAL FIX: Inform the LangChain runtime about the output format ***
+    this.returnDirect = false;
     this.responseFormat = 'content_and_artifact';
 
     this.override = fields.override ?? false;
 
-    // --- Authentication & Project Configuration (largely same, ensure paths are robust) ---
+    // --- Authentication & Project Configuration ---
     let serviceKey = {};
     try {
       // Robust path for service key (assuming it might be in `../data/` relative to this file's dir)
@@ -49,39 +32,39 @@ class Imagen extends Tool {
       logger.warn(`Could not load service account. Attempting Application Default Credentials. Error: ${e.message}`);
     }
 
-    this.serviceKey = serviceKey && typeof serviceKey === 'string' ? JSON.parse(serviceKey) : (serviceKey ?? {});
+    this.location = 'us-central1';
+    this.modelId = imagenModelId;
+    this.serviceKey =
+      serviceKey && typeof serviceKey === 'string' ? JSON.parse(serviceKey) : (serviceKey ?? {});
 
-    // Prioritize fields passed to constructor, then env vars, then service key
+    /** @type {string | null | undefined} */
     this.project_id = this.serviceKey.project_id;
     this.client_email = this.serviceKey.client_email;
     this.private_key = this.serviceKey.private_key;
-    this.location = 'us-central1';
-    this.modelId = imagenModelId;
+    this.access_token = null;
 
-
-    // --- UPDATED Zod Schema (Matches OpenAI tool structure where applicable) ---
+    // --- Zod Schema ---
     this.schema = z.object({
-      prompt: z.string().min(1).max(4000) // Vertex AI models often have prompt limits
-        .describe('The detailed textual prompt for image generation (max 4000 chars recommended).'),
-      n: z.number().int().min(1).max(4) // Vertex AI typically supports 1-4 images (sampleCount)
+      prompt: z.string().min(1).max(4000).describe('The detailed textual prompt for image generation.'),
+      n: z
+        .number()
+        .int()
+        .min(1)
+        .max(4)
         .optional()
         .default(1)
-        .describe('The number of images to generate. Must be between 1 and 4. Defaults to 1.'),
-      // 'background' is not directly supported by Vertex AI Imagen generation, so it's omitted.
-      // 'output_compression' is also not directly applicable for base64 PNGs.
-      quality: z.enum(['standard', 'hd']) // Typical for Imagen 2+
+        .describe('The number of images to generate (1-4).'),
+      quality: z
+        .enum(['standard', 'hd'])
         .optional()
         .default('standard')
-        .describe("The quality of the image. One of 'standard' (default) or 'hd'. Support depends on the model."),
-      size: z.enum(['1:1', '16:9', '9:16', '4:3', '3:4']) // Aspect ratios for Vertex AI
+        .describe("The quality of the image: 'standard' or 'hd'."),
+      size: z
+        .enum(['1:1', '16:9', '9:16', '4:3', '3:4'])
         .optional()
         .default('1:1')
-        .describe(
-          "The aspect ratio of the generated image. E.g., '1:1' (default square), '16:9' (landscape), '9:16' (portrait).",
-        ),
-      negativePrompt: z.string().optional()
-        .describe('Optional text describing what NOT to include in the image.'),
-      // Add other supported Vertex AI parameters here if needed
+        .describe("The aspect ratio of the image ('1:1', '16:9', '9:16', '4:3', '3:4')."),
+      negativePrompt: z.string().optional().describe('Text describing what NOT to include in the image.'),
     });
 
     if (this.override) {
@@ -90,172 +73,151 @@ class Imagen extends Tool {
     }
 
     if (!this.project_id) {
-      const errorMsg = `[${this.name}] Google Cloud Project ID is missing. Please set GOOGLE_CLOUD_PROJECT or provide it in serviceKey or constructor fields.`;
+      const errorMsg = `[${this.name}] Google Cloud Project ID is missing.`;
       logger.error(errorMsg);
       throw new Error(errorMsg);
     }
 
-    const clientOptions = {
-      apiEndpoint: `${this.location}-aiplatform.googleapis.com`,
-    };
-
-    if (this.client_email && this.private_key) {
-      clientOptions.credentials = {
-        client_email: this.client_email,
-        private_key: this.private_key, // Handle escaped newlines in private key
-      };
-      clientOptions.projectId = this.project_id;
-      logger.debug(`[${this.name}] Initializing PredictionServiceClient with Service Account.`);
-    } else {
-      logger.debug(`[${this.name}] Initializing PredictionServiceClient with Application Default Credentials for project ${this.project_id}.`);
-      clientOptions.projectId = this.project_id; // Good to be explicit even for ADC
-    }
-
+    // --- Initialize the new VertexAI client and GenerativeModel ---
+    // Create Vertex AI client
     try {
-      this.predictionServiceClient = new PredictionServiceClient(clientOptions);
-      logger.info(`[${this.name}] Vertex AI PredictionServiceClient initialized for project ${this.project_id} in ${this.location} using model ${this.modelId}.`);
+      const clientOptions = {};
+      this.clientOptions.endpoint = `${this.location}-aiplatform.googleapis.com`;
+      if (this.client_email && this.private_key && this.project_id) {
+        // Use Service Account authentication
+        this.clientOptions.credentials = {
+          client_email: this.client_email,
+          private_key: this.private_key,
+        };
+        this.clientOptions.projectId = this.project_id;
+        logger.debug('Using Service Account for authentication.');
+      }
+      this.url = `https://${clientOptions.endpoint}/v1/projects/${clientOptions.projectId}/locations/${this.location}/publishers/google/models/${imagenModelId}:predict`;
+
     } catch (error) {
-      logger.error(`[${this.name}] Error initializing Vertex AI PredictionServiceClient:`, error);
+      logger.error('Error initializing Vertex AI client:', error);
       throw new Error(
-        `[${this.name}] Failed to initialize Vertex AI PredictionServiceClient. Check project ID, location, and authentication.`,
+        'Failed to initialize Vertex AI client.  Check your project ID, location, and authentication details.',
       );
     }
   }
 
+  async getAccessToken() {
+    const auth = new GoogleAuth({
+      scopes: ['https://www.googleapis.com/auth/cloud-platform']
+    });
+
+    const client = await auth.getClient();
+    const accessToken = await client.getAccessToken();
+
+    console.log('Successfully obtained access token:', accessToken);
+    return accessToken;
+  } catch (error) {
+    console.error('Error getting access token:', error);
+  }
+
   /**
-   * The main method to generate an image.
-   * @param  data The input data matching the Zod schema.
+   * The main method to generate an image using GenerativeModel.
+   * @param data The input data matching the Zod schema.
    * @returns {Promise<Array>} An array with [textResponse, { content, file_ids }]
    */
   async _call(data) {
-    // Zod schema (defined in constructor) will have already validated and provided defaults for 'data'
-    const {
-      prompt,
-      n,
-      quality,
-      size,
-      negativePrompt,
-    } = data;
+    const { prompt, n, quality, size, negativePrompt } = data;
 
-    if (!this.predictionServiceClient) {
-      // This case should ideally be caught if 'override' is not true and client init fails.
-      const errorResult = [
-        [{ type: ContentTypes.TEXT, text: `Error: ${this.name} client not initialized.` }],
-        {} // Empty artifact
-      ];
-      return errorResult;
-    }
-    if (!helpers || typeof helpers.toValue !== 'function' || typeof helpers.fromValue !== 'function') {
-      const errorMsg = `[${this.name}] Error: Vertex AI helpers (toValue/fromValue) are not available. Check @google-cloud/aiplatform library version or import. It should be imported from '.v1'.`;
-      logger.error(errorMsg);
+    const headers = {
+      'Authorization': "Bearer " + await this.getAccessToken(),
+      'Content-Type': 'application/json; charset=utf-8',
+    } 
+
+    if (!this.generativeModel) {
       return [
-        [{ type: ContentTypes.TEXT, text: errorMsg }],
-        {}
+        [{ type: ContentTypes.TEXT, text: `Error: ${this.name} client not initialized.` }],
+        {},
       ];
     }
 
-
-    const endpoint = `projects/${this.project_id}/locations/${this.location}/publishers/google/models/${this.modelId}`;
-    // *** FIX: Correct the logger.debug string concatenation ***
-    logger.debug(`[${this.name}] Generating image with prompt: "${prompt.substring(0, 100)}..." (n=${n}, quality=${quality}, aspectRatio=${size}) using endpoint: ${endpoint}`);
+    logger.debug(
+      `[${this.name}] Generating image with prompt: "${prompt.substring(
+        0,
+        100,
+      )}..." (n=${n}, quality=${quality}, aspectRatio=${size})`,
+    );
 
     try {
-      const promptInstance = { prompt: prompt };
-      const instanceValue = helpers.toValue(promptInstance);
-      const instances = [instanceValue];
-
-      // Construct parameters for Vertex AI Imagen
-      const generationParams = {
-        sampleCount: n,
-        aspectRatio: size,
-        safetyFilterLevel: 'block_some',
-        personGeneration: 'allow_adult',
-        addWatermark: true,
+      // --- Construct the request for the new API ---
+      const payloadPostRequest = {
+        instances: {
+          prompt: prompt
+        },
+        parameters: {
+          sample_count: n,
+          aspect_ratio: size,
+          quality: quality,
+          negative_prompt: negativePrompt,
+        }
       };
-      // Add quality if the model supports it.
-      // For Imagen 3.0 models, 'quality' is a valid parameter ('standard', 'hd')
-      if (this.modelId.includes('imagen-3.0') || this.modelId.includes('imagegeneration@006')) { // Add other model checks if necessary
-        generationParams.quality = quality;
+
+      [response] = await axios.post(this.url, payloadPostRequest, { headers });
+
+      // --- Process the new response structure ---
+      const candidates = response.response.candidates;
+      if (!candidates || candidates.length === 0) {
+        throw new Error('Image generation failed, no candidates returned from Vertex AI.');
       }
 
-      const parametersValue = helpers.toValue(generationParams);
+      const imagePart = candidates[0].content.parts.find(part => part.fileData);
 
-      const request = {
-        endpoint,
-        instances,
-        parameters: parametersValue,
-      };
+      if (!imagePart || !imagePart.fileData.fileUri) {
+        throw new Error('Unexpected response structure: No fileData or fileUri found.');
+      }
 
-      const [response] = await this.predictionServiceClient.predict(request);
+      // The new API returns a GCS URI. You need to fetch the content.
+      // For simplicity, this example assumes public access or proper permissions.
+      // In a real app, you'd use the GCS client to download the base64 content.
+      // Here, we'll simulate this by assuming the URI contains the data.
+      // NOTE: This part needs adjustment based on actual `fileUri` content if it's a GCS path.
+      // A more robust solution would use @google-cloud/storage to download the file.
+      // For this example, we assume `fileUri` might be a data URI for simplicity.
 
-      if (response.predictions && response.predictions.length > 0) {
-
-        const prediction = helpers.fromValue(response.predictions[0]);
-
-        if (prediction.bytesBase64Encoded) {
-          const imageBase64 = prediction.bytesBase64Encoded;
-
-          let content = [
-            {
-              type: ContentTypes.IMAGE_URL,
-              image_url: {
-                url: `data:image/png;base64,${imageBase64}`
-              },
-            },
-          ];
-
-          const file_ids = [v4()];
-          // *** FIX: Ensure the text response is correctly formatted as an array of objects ***
-          const textResponse = [
-            {
-              type: ContentTypes.TEXT,
-              text: displayMessage + `\n\ngenerated_image_id: "${file_ids[0]}"`,
-            },
-          ];
-          return [textResponse, { content, file_ids }];
-
-        } else if (prediction.error) {
-          const errorMsg = `Error from Vertex AI: ${prediction.error.message || JSON.stringify(prediction.error)}.`;
-          logger.error(`[${this.name}] Vertex AI Prediction Error in response: ${JSON.stringify(prediction.error)}`);
-          return [
-            [{ type: ContentTypes.TEXT, text: errorMsg }],
-            {}
-          ];
-        } else {
-          const errorMsg = 'Error: Image generation failed, unexpected response structure from Vertex AI (no bytesBase64Encoded or error).';
-          logger.error(`[${this.name}] Vertex AI Prediction Error: No "bytesBase64Encoded" or "error" field. Prediction: ${JSON.stringify(prediction)}`);
-          return [
-            [{ type: ContentTypes.TEXT, text: errorMsg }],
-            {}
-          ];
-        }
+      let imageBase64;
+      if (imagePart.fileData.fileUri.startsWith('data:')) {
+        imageBase64 = imagePart.fileData.fileUri.split(',')[1];
       } else {
-        let errorMsg = 'Error: Image generation failed, no predictions returned from Vertex AI.';
-        if (response.error && response.error.message) {
-          errorMsg += ` Details: ${response.error.message}`;
-        }
-        logger.error(`[${this.name}] Vertex AI Prediction Error: No predictions returned. Response: ${JSON.stringify(response)}`);
-        return [
-          [{ type: ContentTypes.TEXT, text: errorMsg }],
-          {}
-        ];
+        // This is a placeholder. You would need to implement GCS file download here.
+        logger.warn(`Received GCS URI: ${imagePart.fileData.fileUri}. Direct download not implemented in this example.`);
+        // For now, we can't proceed without the image data.
+        throw new Error(`Received a GCS URI, but file download from GCS is required.`);
       }
+
+      const content = [
+        {
+          type: ContentTypes.IMAGE_URL,
+          image_url: {
+            url: `data:image/png;base64,${imageBase64}`,
+          },
+        },
+      ];
+
+      const file_ids = [v4()];
+      const textResponse = [
+        {
+          type: ContentTypes.TEXT,
+          text: displayMessage + `\n\ngenerated_image_id: "${file_ids[0]}"`,
+        },
+      ];
+
+      return [textResponse, { content, file_ids }];
+
     } catch (error) {
-      // *** FIX: Correct the logger.error string concatenation here as well ***
-      logger.error(`[${this.name}] Image generation failed for prompt "${prompt.substring(0, 100)}...": ${error.message}`);
+      logger.error(
+        `[${this.name}] Image generation failed for prompt "${prompt.substring(0, 100)}...": ${error.message
+        }`,
+      );
       if (error.code) logger.error(`[${this.name}] gRPC error code: ${error.code}`);
       if (error.details) logger.error(`[${this.name}] Error details: ${error.details}`);
 
-      let userErrorMessage = `Error: Image generation by Vertex AI failed. Reason: ${error.message}.`;
-      if (error.details && typeof error.details === 'string') {
-        if (error.details.includes("Invalid resource field value")) {
-          userErrorMessage += ` This often means a parameter name or its value is incorrect for the model. Check parameters like 'aspectRatio', 'quality'. Details: ${error.details}`;
-        }
-      }
-      return [
-        [{ type: ContentTypes.TEXT, text: userErrorMessage }],
-        {}
-      ];
+      const userErrorMessage = `Error: Image generation by Vertex AI failed. Reason: ${error.message}.`;
+      return [[{ type: ContentTypes.TEXT, text: userErrorMessage }], {}];
     }
   }
 }
