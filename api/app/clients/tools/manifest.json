@@ -217,8 +217,8 @@
     ]
   },
   {
-    "name": "Imagen 3",
-    "pluginKey": "imagen_vertex",
+    "name": "Google Imagen",
+    "pluginKey": "image_gen_vertex",
     "toolkit": true,
     "description": "Image Generation using Google Cloud's Vertex AI Imagen models. Requires Google Cloud project setup and authentication.",
     "icon": "https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg",
