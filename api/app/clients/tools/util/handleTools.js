@@ -182,8 +182,8 @@ const loadTools = async ({
       const authValues = await loadAuthValues({ userId: user, authFields });
       return new GoogleVertexAI(authValues, agent?.model);
     },
-    image_gen_vertex: async (_toolContextMap) => {
-      return createVertexAIImageTool(fields={}, 'imagen-3.0-generate-002');
+    imagen_vertex: async (_toolContextMap) => {
+      return createVertexAIImageTool({isAgent: !!agent}, 'imagen-3.0-generate-002');
     },
     image_gen_oai: async (toolContextMap) => {
       const authFields = getAuthFields('image_gen_oai');

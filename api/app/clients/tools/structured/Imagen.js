@@ -23,10 +23,10 @@ function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-3.0-genera
     logger.warn('[ImagenTool] Could not load service account key. Using Application Default Credentials.');
   }
 
+  /** @type {boolean} Used to initialize the Tool without necessary variables. */
   const override = fields.override ?? false;
+  /** @type {boolean} */
   if (!override && !fields.isAgent) {
-    // This check is good, but consider if it should throw or just log and return null.
-    // Throwing is usually fine if the caller expects to handle it.
     throw new Error('This tool is only available for agents.');
   }
   const project_id = serviceKey.project_id || process.env.GOOGLE_CLOUD_PROJECT;
@@ -116,7 +116,7 @@ function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-3.0-genera
       }
     },
     {
-      name: 'image_gen_vertex',
+      name: 'imagen_vertex',
       description: 'Generates one or more images using Google Vertex AI Imagen from a text prompt. Use this for creating original images.',
       schema: z.object({
         prompt: z.string().min(1).max(4000).describe('A detailed text prompt for the image.'),
@@ -126,10 +126,10 @@ function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-3.0-genera
         negativePrompt: z.string().optional().describe('A prompt of what to exclude from the image.'),
       }),
       responseFormat: 'content_and_artifact',
-    },
+    }
   );
 
-  return imagenTool;
+  return [imagenTool];
 }
 
 module.exports = createVertexAIImageTool;
