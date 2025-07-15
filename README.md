@@ -22,11 +22,26 @@ kubectl config set-context --current --namespace go-genai-studio-local
 
 ```
 
-## RAG API Image
+- 🤖 **AI Model Selection**:
+  - Anthropic (Claude), AWS Bedrock, OpenAI, Azure OpenAI, Google, Vertex AI, OpenAI Responses API (incl. Azure)
+  - [Custom Endpoints](https://www.librechat.ai/docs/quick_start/custom_endpoints): Use any OpenAI-compatible API with LibreChat, no proxy required
+  - Compatible with [Local & Remote AI Providers](https://www.librechat.ai/docs/configuration/librechat_yaml/ai_endpoints):
+    - Ollama, groq, Cohere, Mistral AI, Apple MLX, koboldcpp, together.ai,
+    - OpenRouter, Perplexity, ShuttleAI, Deepseek, Qwen, and more
 
 note down your minikube ip with `minikube ip`
 
-add `"insecure-registries": ["192.168.49.2:5000"]` to your `~/.docker/daemon.json` (macOS) or `C:\ProgramData\Docker\config\daemon.json` (Windows)
+- 🔦 **Agents & Tools Integration**:
+  - **[LibreChat Agents](https://www.librechat.ai/docs/features/agents)**:
+    - No-Code Custom Assistants: Build specialized, AI-driven helpers without coding
+    - Flexible & Extensible: Use MCP Servers, tools, file search, code execution, and more
+    - Compatible with Custom Endpoints, OpenAI, Azure, Anthropic, AWS Bedrock, Google, Vertex AI, Responses API, and more
+    - [Model Context Protocol (MCP) Support](https://modelcontextprotocol.io/clients#librechat) for Tools
+
+- 🔍 **Web Search**:
+  - Search the internet and retrieve relevant information to enhance your AI context
+  - Combines search providers, content scrapers, and result rerankers for optimal results
+  - **[Learn More →](https://www.librechat.ai/docs/features/web_search)**
 
 ```
 cd YOUR_WORKSPACE
@@ -94,9 +109,10 @@ Afterwards you can use the chat.
 # Go GenAI Studio - Remote Environment
 
 
-1. Adjust variables in terragrunt.hcl files inside [environments](./environment)
-2. Set environment with `appl` or `export env=prod`
-3. Run Terraform with `make init && make plan && make apply`
+**Other:**
+  - **Website:** [librechat.ai](https://librechat.ai)
+  - **Documentation:** [librechat.ai/docs](https://librechat.ai/docs)
+  - **Blog:** [librechat.ai/blog](https://librechat.ai/blog)
 
 **Common errors during first terraform executions:**
 
