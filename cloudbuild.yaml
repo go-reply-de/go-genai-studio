@@ -112,6 +112,7 @@ steps:
         sed -i -e "s/###_K8S_SA_EMAIL###/${_K8S_SA_EMAIL}/g" "$file"
         sed -i -e "s/###_GOOGLE_MODELS###/${_GOOGLE_MODELS}/g" "$file"
         sed -i -e "s/###_GOOGLE_LOC###/${_GOOGLE_LOC}/g" "$file"
+        sed -i -e "s/###_VERTEX_AI_DATASTORE_ID###/${_VERTEX_AI_DATASTORE_ID}/g" "$file"
       done
 
 - name: 'gcr.io/cloud-builders/gcloud'
