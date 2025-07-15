@@ -42,15 +42,8 @@ class GoogleVertexAI extends Tool {
         });
 
         // Initialize properties using helper function
-        this.projectId = this._initializeField(
-            fields.GOOGLE_CLOUD_PROJECT_ID,
-            'GOOGLE_CLOUD_PROJECT_ID',
-        );
-        this.location = this._initializeField(
-            fields.GOOGLE_CLOUD_LOCATION,
-            'GOOGLE_CLOUD_LOCATION',
-            'us-central1',
-        );
+        this.projectId = this.project_id
+        this.location = process.env.GOOGLE_LOC
         this.dataStoreId = this._initializeField(
             fields.VERTEX_AI_DATASTORE_ID,
             'VERTEX_AI_DATASTORE_ID',
@@ -62,7 +55,7 @@ class GoogleVertexAI extends Tool {
             (!this.projectId || !this.location || !this.dataStoreId)
         ) {
             throw new Error(
-                'Missing GOOGLE_CLOUD_PROJECT_ID, GOOGLE_CLOUD_LOCATION, or VERTEX_AI_DATASTORE_ID.',
+                'Missing PROJECT_ID, LOCATION, or VERTEX_AI_DATASTORE_ID.',
             );
         }
 
@@ -126,7 +119,7 @@ class GoogleVertexAI extends Tool {
 
         try {
             const streamingResult = await this.generativeModel.generateContentStream({
-                contents: [{role: 'user', parts: [{text: query}]}]
+                contents: [{ role: 'user', parts: [{ text: query }] }]
             })
             const aggregatedResponse = await streamingResult.response;
             return JSON.stringify(aggregatedResponse);
