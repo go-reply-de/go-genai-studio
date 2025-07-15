@@ -13,7 +13,7 @@ const displayMessage =
  * Creates a Google Vertex AI Imagen tool.
  * @param {Object} fields - Configuration fields (can be left empty).
  * @param {string} imagenModelId - The model ID to use for image generation.
- * @returns {import('@langchain/core/tools').Tool} A LangChain tool instance.
+ * @returns {import('@langchain/core/tools').Tool} - The configured Vertex AI image generation tool.
  */
 function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-3.0-generate-002') {
   let serviceKey = {};
@@ -25,9 +25,10 @@ function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-3.0-genera
 
   const override = fields.override ?? false;
   if (!override && !fields.isAgent) {
+    // This check is good, but consider if it should throw or just log and return null.
+    // Throwing is usually fine if the caller expects to handle it.
     throw new Error('This tool is only available for agents.');
   }
-  const { req } = fields;
   const project_id = serviceKey.project_id || process.env.GOOGLE_CLOUD_PROJECT;
   const location = 'us-central1';
 
@@ -37,7 +38,6 @@ function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-3.0-genera
 
   const clientOptions = {
     apiEndpoint: `${location}-aiplatform.googleapis.com`,
-    projectId: project_id,
   };
 
   if (serviceKey.client_email && serviceKey.private_key) {
@@ -75,29 +75,40 @@ function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-3.0-genera
           throw new Error('No predictions returned from Vertex AI.');
         }
 
-        const imageBase64 = helpers.fromValue(response.predictions[0])?.bytesBase64Encoded;
+        const content = [];
+        const file_ids = [];
 
-        if (!imageBase64) {
-          const errorDetails = helpers.fromValue(response.predictions[0])?.error;
-          throw new Error(`Vertex AI Error: ${errorDetails?.message || 'No image data in response'}`);
+        for (const prediction of response.predictions) {
+          const imageBase64 = helpers.fromValue(prediction)?.bytesBase64Encoded;
+
+          if (imageBase64) {
+            const imageId = v4();
+            file_ids.push(imageId);
+            content.push({
+              type: ContentTypes.IMAGE_URL,
+              image_url: { url: `data:image/png;base64,${imageBase64}` },
+            });
+          } else {
+            const errorDetails = helpers.fromValue(prediction)?.error;
+            logger.warn(`[ImagenTool] A prediction failed within a batch: ${errorDetails?.message || 'No image data in prediction'}`);
+          }
+        }
+        
+        if (content.length === 0) {
+            logger.error('[ImagenTool] All image generation attempts failed in the batch.');
+            throw new Error('Vertex AI Error: All image generation attempts failed in the batch.');
         }
 
-        // **This is the critical part: The exact return structure**
-        const content = [{
-          type: ContentTypes.IMAGE_URL,
-          image_url: { url: `data:image/png;base64,${imageBase64}` },
-        }];
+        const generatedImagesInfo = `Generated ${content.length} image(s).\ngenerated_image_ids: ${JSON.stringify(file_ids)}`;
 
-        const file_ids = [v4()];
-        
-        const textResponse = [{
-          type: ContentTypes.TEXT,
-          text: `${displayMessage}\n\ngenerated_image_id: "${file_ids[0]}"`,
-        }];
-        
-        // This precise [Array, Object] structure is what the frontend expects.
+        const textResponse = [
+          {
+            type: ContentTypes.TEXT,
+            text: `${displayMessage}\n\n${generatedImagesInfo}`,
+          },
+        ];
+
         return [textResponse, { content, file_ids }];
-
       } catch (error) {
         logger.error('[ImagenTool] Image generation failed:', error);
         // On error, return a user-friendly string. The executor will handle it.
@@ -106,15 +117,15 @@ function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-3.0-genera
     },
     {
       name: 'image_gen_vertex',
-      description: 'Generates an image using Google Vertex AI Imagen from a text prompt. Use this for creating original images.',
+      description: 'Generates one or more images using Google Vertex AI Imagen from a text prompt. Use this for creating original images.',
       schema: z.object({
         prompt: z.string().min(1).max(4000).describe('A detailed text prompt for the image.'),
-        n: z.number().int().min(1).max(4).optional().describe('Number of images to generate (1-4).'),
-        quality: z.enum(['standard', 'hd']).optional().describe("Image quality: 'standard' or 'hd'."),
-        size: z.enum(['1:1', '16:9', '9:16', '4:3', '3:4']).optional().describe("Aspect ratio of the image."),
+        n: z.number().int().min(1).max(8).optional().describe('Number of images to generate (1-8). Defaults to 1.'),
+        quality: z.enum(['standard', 'hd']).optional().describe("Image quality: 'standard' or 'hd'. Defaults to 'standard'."),
+        size: z.enum(['1:1', '16:9', '9:16', '4:3', '3:4']).optional().describe("Aspect ratio of the image. Defaults to '1:1'."),
         negativePrompt: z.string().optional().describe('A prompt of what to exclude from the image.'),
       }),
-      responseFormat: 'content_and_artifact'
+      responseFormat: 'content_and_artifact',
     },
   );
 
