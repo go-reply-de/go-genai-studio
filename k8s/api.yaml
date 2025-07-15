@@ -457,15 +457,20 @@ spec:
                 configMapKeyRef:
                   key: RAG_API_URL
                   name: env
-            - name: GCS_PROJECT_ID
+            - name: GOOGLE_CLOUD_PROJECT_ID
               valueFrom:
                 configMapKeyRef:
-                  key: GCS_PROJECT_ID
+                  key: GOOGLE_CLOUD_PROJECT_ID
                   name: env
-            - name: GCS_BUCKET_NAME
+            - name: GOOGLE_CLOUD_LOCATION
               valueFrom:
                 configMapKeyRef:
-                  key: GCS_BUCKET_NAME
+                  key: GOOGLE_CLOUD_LOCATION
+                  name: env
+            - name: VERTEX_AI_DATASTORE_ID
+              valueFrom:
+                configMapKeyRef:
+                  key: VERTEX_AI_DATASTORE_ID
                   name: env
           image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
           resources:
