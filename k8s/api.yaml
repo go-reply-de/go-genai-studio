@@ -247,6 +247,11 @@ spec:
                 configMapKeyRef:
                   key: GOOGLE_MODELS
                   name: env
+            - name: GOOGLE_LOC
+              valueFrom:
+                configMapKeyRef:
+                  key: GOOGLE_LOC
+                  name: env
             - name: HELP_AND_FAQ_URL
               valueFrom:
                 configMapKeyRef:
