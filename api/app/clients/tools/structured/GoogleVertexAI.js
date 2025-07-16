@@ -49,16 +49,19 @@ class GoogleVertexAI extends Tool {
             'VERTEX_AI_DATASTORE_ID',
         );
 
-        // Check for required fields
-        if (
-            !this.override &&
-            (!this.projectId || !this.location || !this.dataStoreId)
-        ) {
-            throw new Error(
-                'Missing PROJECT_ID, LOCATION, or VERTEX_AI_DATASTORE_ID.',
-            );
+        // Check for required fields if not overridden
+        if (!this.override) {
+            if (!this.projectId) {
+                throw new Error('Missing required field: PROJECT_ID.');
+            }
+            if (!this.location) {
+                throw new Error('Missing required field: LOCATION.');
+            }
+            if (!this.dataStoreId) {
+                throw new Error('Missing required field: VERTEX_AI_DATASTORE_ID.');
+            }
         }
-
+        
         if (!this.client_email && !this.private_key) {
             console.warn(
                 'Warning: No Service Account credentials provided.  Ensure the Compute Engine default service account has the Vertex AI User role if running on a Compute Engine instance.',
