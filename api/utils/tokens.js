@@ -105,6 +105,9 @@ const anthropicModels = {
   'claude-3.7-sonnet': 200000,
   'claude-3-5-sonnet-latest': 200000,
   'claude-3.5-sonnet-latest': 200000,
+  'claude-sonnet-4': 200000,
+  'claude-opus-4': 200000,
+  'claude-4': 200000,
 };
 
 const deepseekModels = {
@@ -220,6 +223,7 @@ const xAIModels = {
   'grok-3-fast': 131072,
   'grok-3-mini': 131072,
   'grok-3-mini-fast': 131072,
+  'grok-4': 256000, // 256K context
 };
 
 const aggregateModels = { ...openAIModels, ...googleModels, ...bedrockModels, ...xAIModels };
@@ -246,6 +250,8 @@ const anthropicMaxOutputs = {
   'claude-3-haiku': 4096,
   'claude-3-sonnet': 4096,
   'claude-3-opus': 4096,
+  'claude-opus-4': 32000,
+  'claude-sonnet-4': 64000,
   'claude-3.5-sonnet': 8192,
   'claude-3-5-sonnet': 8192,
   'claude-3.7-sonnet': 128000,
