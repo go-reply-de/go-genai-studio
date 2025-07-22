@@ -13,8 +13,8 @@ function TermsOfService({ className }: { className?: string }) {
   const termsOfService = config?.interface?.termsOfService;
 
   const modalContent = termsOfService?.modalContent;
-  const content = Array.isArray(modalContent) 
-    ? modalContent.join('\n\n') 
+  const content = Array.isArray(modalContent)
+    ? modalContent.join('\n\n')
     : modalContent || "The Terms of Service content could not be loaded.";
 
   return (
