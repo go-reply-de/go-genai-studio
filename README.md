@@ -1,187 +1,211 @@
-This project is is dedicated to the Go GenAI Studio application that is a a fork of the LibreChat: https://github.com/danny-avila/LibreChat and modified and customized to our needs.
+<p align="center">
+  <a href="https://librechat.ai">
+    <img src="client/public/assets/logo.svg" height="256">
+  </a>
+  <h1 align="center">
+    <a href="https://librechat.ai">LibreChat</a>
+  </h1>
+</p>
 
-This system has support for the latest flash and pro model of Gemini. Supports Grounding with both Google Search and Vertex AI Search.
+<p align="center">
+  <a href="https://discord.librechat.ai"> 
+    <img
+      src="https://img.shields.io/discord/1086345563026489514?label=&logo=discord&style=for-the-badge&logoWidth=20&logoColor=white&labelColor=000000&color=blueviolet">
+  </a>
+  <a href="https://www.youtube.com/@LibreChat"> 
+    <img
+      src="https://img.shields.io/badge/YOUTUBE-red.svg?style=for-the-badge&logo=youtube&logoColor=white&labelColor=000000&logoWidth=20">
+  </a>
+  <a href="https://docs.librechat.ai"> 
+    <img
+      src="https://img.shields.io/badge/DOCS-blue.svg?style=for-the-badge&logo=read-the-docs&logoColor=white&labelColor=000000&logoWidth=20">
+  </a>
+  <a aria-label="Sponsors" href="https://github.com/sponsors/danny-avila">
+    <img
+      src="https://img.shields.io/badge/SPONSORS-brightgreen.svg?style=for-the-badge&logo=github-sponsors&logoColor=white&labelColor=000000&logoWidth=20">
+  </a>
+</p>
 
-# Go GenAI Studio - Local Environment
+<p align="center">
+<a href="https://railway.app/template/b5k2mn?referralCode=HI9hWz">
+  <img src="https://railway.app/button.svg" alt="Deploy on Railway" height="30">
+</a>
+<a href="https://zeabur.com/templates/0X2ZY8">
+  <img src="https://zeabur.com/button.svg" alt="Deploy on Zeabur" height="30"/>
+</a>
+<a href="https://template.cloud.sealos.io/deploy?templateName=librechat">
+  <img src="https://raw.githubusercontent.com/labring-actions/templates/main/Deploy-on-Sealos.svg" alt="Deploy on Sealos" height="30">
+</a>
+</p>
 
-## Setup Minikube
-
-You need to setup minikube once. After this was done once, you can simply start it.
-
-```bash
-brew install minikube
-
-minikube start                   # if you see a message to use a different port than the default port 5000, you can ignore the message
-minikube addons enable registry
-minikube addons enable ingress   # see https://minikube.sigs.k8s.io/docs/handbook/addons/ingress-dns/#Mac
-
-
-kubectl config use-context minikube
-kubectl create namespace go-genai-studio-local
-kubectl config set-context --current --namespace go-genai-studio-local
-
-```
-
-## RAG API Image
-
-note down your minikube ip with `minikube ip`
-
-add `"insecure-registries": ["192.168.49.2:5000"]` to your `~/.docker/daemon.json` (macOS) or `C:\ProgramData\Docker\config\daemon.json` (Windows)
-
-```
-cd YOUR_WORKSPACE
-git clone https://github.com/go-reply-de/internal-internal-projects-go-genai-studio-rag-api.git
-cd internal-internal-projects-go-genai-studio-rag-api
-eval $(minikube docker-env)
-docker build -t $(minikube ip):5000/go-genai-studio-rag-api:bdae521a .
-docker push $(minikube ip):5000/go-genai-studio-rag-api:bdae521a
-```
-
-## Start Application
-
-### Create Secrets
-
-- Go to demo.goreply.de console [here](https://console.cloud.google.com/iam-admin/serviceaccounts/details/105650602806534171764/keys?inv=1&invt=AbkfOg&project=go-de-genai-demo) and create your own key
-- Download the key and rename it to `key.json`
-- Execute `kubectl create secret generic gcp-service-account --from-file=./key.json`
-
-### Start surrounding services
-
-```bash
-cd YOUR_WORKSPACE/go-genai-studio/k8s/minikube
-
-# please exchange all occurrences of "192.168.49.2" with your minikube ip (echo $(minikube ip))
-
-kubectl apply -f secret.yaml -f env.yaml -f vectordb.yaml -f rag.yaml -f mongodb.yaml -f meilisearch.yaml
-
-bash ./port_forwarding.sh # this should run in terminal session #1 and you should wait a bit before running this command so that all instances are up and running
-```
-
-### Start the app locally
-
-Open 2 new terminal sessions
-
-```bash
-cp .env.example .env
-npm run reinstall           # this takes a while, needs to be run once
-npm run build:data-provider
-npm run frontend:dev        # run this in terminal session #2
-npm run backend:dev         # run this in terminal session #3
-```
-
-Now you can access the app under localhost:3090.
-
-### Add service account for local setup
-
-Once logged in to the application, you need to link a service account in order to use the different models.
-
-If you don't have a service account setup yet, you should register a new one (e.g. me-test@goreply.de).
-
-ℹ️ Note: This needs to be repeated whenever the database is cleared.
-
-Do the following to create a service-account.json file, used for the upload later on:
-
-```bash
-cd service-account
-./create_service_account.sh
-```
-
-Follow the instructions and use your goreply demo account for authentication.
-A json file will be created.
-In your browser, you can now open the provider dropdown at the top-left-hand-side, hover over a provider (e.g. Google) and click on "Set API Key". Now upload the json file you just created.
-Afterwards you can use the chat.
-
-# Go GenAI Studio - Remote Environment
+<p align="center">
+  <a href="https://www.librechat.ai/docs/translation">
+    <img 
+      src="https://img.shields.io/badge/dynamic/json.svg?style=for-the-badge&color=2096F3&label=locize&query=%24.translatedPercentage&url=https://api.locize.app/badgedata/4cb2598b-ed4d-469c-9b04-2ed531a8cb45&suffix=%+translated" 
+      alt="Translation Progress">
+  </a>
+</p>
 
 
-1. Adjust variables in terragrunt.hcl files inside [environments](./environment)
-2. Set environment with `appl` or `export env=prod`
-3. Run Terraform with `make init && make plan && make apply`
+# ✨ Features
 
-**Common errors during first terraform executions:**
+- 🖥️ **UI & Experience** inspired by ChatGPT with enhanced design and features
 
-* `Error creating Secret: googleapi: Error 403`: This error happens because it takes some time for the APIs be becode available. Please execute plan and apply again
-* `Error waiting to create Connection: Error waiting for Creating Connection: Error code 9, message: could not access secret`: Please set `module.cloudbuild_v2.create_connection` to `false`, run apply again and then set it to true again
-* `Error waiting to create Connection: Error waiting for Creating Connection: Error code 3, message: secret "projects/go-de-genai-studio/secrets/<ENVIRONMENT>-go-genai-studio-github-oauth/versions/latest" not found`: Follow these steps:
-  * Generate a [new GitHub token access (classic)](https://github.com/settings/tokens/new) with the user `go-de-genai-studio` (credentials can be found in Bitwarden) that includes these following scopes: `repo`, `read:user` und `read:org`
-  ![Github tokens](doc/github_scopes.png)
-  * Put the token as a new version in the `<ENVIRONMENT>-go-genai-studio-github-oauth` secret in Google Cloud Secret Manager [here](https://console.cloud.google.com/security/secret-manager)
+- 🤖 **AI Model Selection**:  
+  - Anthropic (Claude), AWS Bedrock, OpenAI, Azure OpenAI, Google, Vertex AI, OpenAI Responses API (incl. Azure)
+  - [Custom Endpoints](https://www.librechat.ai/docs/quick_start/custom_endpoints): Use any OpenAI-compatible API with LibreChat, no proxy required
+  - Compatible with [Local & Remote AI Providers](https://www.librechat.ai/docs/configuration/librechat_yaml/ai_endpoints):
+    - Ollama, groq, Cohere, Mistral AI, Apple MLX, koboldcpp, together.ai,
+    - OpenRouter, Perplexity, ShuttleAI, Deepseek, Qwen, and more
 
-* Please restart the terraform plan and apply once again.
+- 🔧 **[Code Interpreter API](https://www.librechat.ai/docs/features/code_interpreter)**: 
+  - Secure, Sandboxed Execution in Python, Node.js (JS/TS), Go, C/C++, Java, PHP, Rust, and Fortran
+  - Seamless File Handling: Upload, process, and download files directly
+  - No Privacy Concerns: Fully isolated and secure execution
 
-4. Build and deploy RAG API
+- 🔦 **Agents & Tools Integration**:  
+  - **[LibreChat Agents](https://www.librechat.ai/docs/features/agents)**:
+    - No-Code Custom Assistants: Build specialized, AI-driven helpers without coding  
+    - Flexible & Extensible: Use MCP Servers, tools, file search, code execution, and more  
+    - Compatible with Custom Endpoints, OpenAI, Azure, Anthropic, AWS Bedrock, Google, Vertex AI, Responses API, and more
+    - [Model Context Protocol (MCP) Support](https://modelcontextprotocol.io/clients#librechat) for Tools
 
-```
-cd YOUR_WORKSPACE
-export GCP_PROJECT_NAME=go-de-genai-studio
-export GCP_ARTIFACTORY_REPO_NAME=go-de-dev-go-genai-studio #see terraform output "repo_name"
-git clone https://gitlab.com/goreplyde/internal/internal-projects/go-genai-studio-rag-api.git
-cd go-genai-studio-rag-api
-docker build --platform linux/amd64 -t europe-west3-docker.pkg.dev/$GCP_PROJECT_NAME/$GCP_ARTIFACTORY_REPO_NAME/rag:bdae521a .
-docker push europe-west3-docker.pkg.dev/$GCP_PROJECT_NAME/$GCP_ARTIFACTORY_REPO_NAME/rag:bdae521a
-```
+- 🔍 **Web Search**:  
+  - Search the internet and retrieve relevant information to enhance your AI context
+  - Combines search providers, content scrapers, and result rerankers for optimal results
+  - **[Learn More →](https://www.librechat.ai/docs/features/web_search)**
 
-5. Create a OAuth ClientID following this
-   ![guide](./doc/OAuth_client_ID_creation.gif)
-6. Open up [GCP Secrets Manager](https://console.cloud.google.com/security/secret-manager) and fill-in all secrets with a prefix e.g. "go-de-dev-go-genai-studio-"
+- 🪄 **Generative UI with Code Artifacts**:  
+  - [Code Artifacts](https://youtu.be/GfTj7O4gmd0?si=WJbdnemZpJzBrJo3) allow creation of React, HTML, and Mermaid diagrams directly in chat
 
-- For CREDS, JWT and MEILI please generate new secrets [here](https://www.librechat.ai/toolkit/creds_generator)
-- For POSTGRES\* please provide any new values
-- For GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, you can find the credentials in the console from [here](https://console.cloud.google.com/apis/credentials)
-- SONAR_LOGIN needs to be generated from [here](https://sonarqube.goreply.de/account/security) (please log in using the credentials in BitWarden)
-- SONAR_HOST refers to the URL that allows access to the SonarQube instance. So in our case it’s https://sonarqube.goreply.de/
-- For OPENAI_API_KEY, please use the API Key stored in our BitWarden (search for “GPT API Key for GenAI Studio Team”)
-- For GOOGLE_CSE_ID & GOOGLE_SEARCH_API_KEY, please follow the instructions found [here](https://goreplyde.atlassian.net/wiki/spaces/GOR/pages/3161423873/Google+Custom+Search+Engine)
-7. Trigger a deployment through running a CloudBuild (see [in the console](https://console.cloud.google.com/cloud-build/triggers))
-8. Set DNS record to the generated IP (see [in the console](https://console.cloud.google.com/networking/addresses/list))
-9. Wait until the TLS certificate gets provisioned (check with `kubectl describe ManagedCertificate genai-studio-managed-cert-dev | grep Status`)
+- 🎨 **Image Generation & Editing**
+  - Text-to-image and image-to-image with [GPT-Image-1](https://www.librechat.ai/docs/features/image_gen#1--openai-image-tools-recommended)
+  - Text-to-image with [DALL-E (3/2)](https://www.librechat.ai/docs/features/image_gen#2--dalle-legacy), [Stable Diffusion](https://www.librechat.ai/docs/features/image_gen#3--stable-diffusion-local), [Flux](https://www.librechat.ai/docs/features/image_gen#4--flux), or any [MCP server](https://www.librechat.ai/docs/features/image_gen#5--model-context-protocol-mcp)
+  - Produce stunning visuals from prompts or refine existing images with a single instruction
 
-# Backup & Restore
+- 💾 **Presets & Context Management**:  
+  - Create, Save, & Share Custom Presets  
+  - Switch between AI Endpoints and Presets mid-chat
+  - Edit, Resubmit, and Continue Messages with Conversation branching  
+  - [Fork Messages & Conversations](https://www.librechat.ai/docs/features/fork) for Advanced Context control
 
-## Backup
+- 💬 **Multimodal & File Interactions**:  
+  - Upload and analyze images with Claude 3, GPT-4.5, GPT-4o, o1, Llama-Vision, and Gemini 📸  
+  - Chat with Files using Custom Endpoints, OpenAI, Azure, Anthropic, AWS Bedrock, & Google 🗃️
 
-1. `kubectl cp $(kubectl get pods -l app=mongodb -o jsonpath='{.items[0].metadata.name}'):/data/db ./mongodb_bck/`
-2. `kubectl cp $(kubectl get pods -l app=meilisearch -o jsonpath='{.items[0].metadata.name}'):/meili_data ./meili_data_bck/`
-3. `kubectl cp $(kubectl get pods -l app=vectordb -o jsonpath='{.items[0].metadata.name}'):/var/lib/postgresql/data ./pgdata_bck/`
+- 🌎 **Multilingual UI**:  
+  - English, 中文, Deutsch, Español, Français, Italiano, Polski, Português Brasileiro
+  - Русский, 日本語, Svenska, 한국어, Tiếng Việt, 繁體中文, العربية, Türkçe, Nederlands, עברית
 
-## Restore
+- 🧠 **Reasoning UI**:  
+  - Dynamic Reasoning UI for Chain-of-Thought/Reasoning AI models like DeepSeek-R1
 
-1. Activate maintenance page (`kubectl patch service api-service -p '{"spec":{"selector":{"app":"maintenance-page"}}}'`)
-2. Scale down all deployments:
+- 🎨 **Customizable Interface**:  
+  - Customizable Dropdown & Interface that adapts to both power users and newcomers
 
-```
-kubectl scale --replicas=0 deployment/vectordb-prod
-kubectl scale --replicas=0 deployment/rag
-kubectl scale --replicas=0 deployment/meilisearch
-kubectl scale --replicas=0 deployment/mongodb
-kubectl scale --replicas=0 deployment/api
-```
+- 🗣️ **Speech & Audio**:  
+  - Chat hands-free with Speech-to-Text and Text-to-Speech  
+  - Automatically send and play Audio  
+  - Supports OpenAI, Azure OpenAI, and Elevenlabs
 
-    - name: test-pvc-mount-pgdata
-      mountPath: /mnt/pgdata
-    - name: test-pvc-meilisearch-claim0
-      mountPath: /mnt/meilisearch-claim0
-    - name: test-pvc-mongodb-claim0
-      mountPath: /mnt/mongodb-claim0
+- 📥 **Import & Export Conversations**:  
+  - Import Conversations from LibreChat, ChatGPT, Chatbot UI  
+  - Export conversations as screenshots, markdown, text, json
 
-3. Create [testpod](.k8s/testpod.yaml) with every pvc (`kubectl get pvc`) and execute copy commands
-   1. `kubectl apply -f ./k8s/testpod.yaml`
-   2. `kubectl cp ./mongodb_bck/ testpod:/mnt/mongodb-claim0` , then `kubectl exec -it testpod -- sh` and `mv /mnt/mongodb-claim0/mongodb_bck/* /mnt/mongodb-claim0/ && rm -rf /mnt/mongodb-claim0/mongodb_bck/`
-   3. `kubectl cp ./meili_data_bck/ testpod:/mnt/meilisearch-claim0`, then `kubectl exec -it testpod -- sh` and `mv /mnt/meilisearch-claim0/meili_data_bck/* /mnt/meilisearch-claim0/ && rm -rf /mnt/meilisearch-claim0/meili_data_bck/`
-   4. `kubectl cp ./pgdata_bck/ testpod:/mnt/pgdata`, then `kubectl exec -it testpod -- sh` and `mv /mnt/pgdata/pgdata_bck/* /mnt/pgdata/ && rm -rf /mnt/pgdata/pgdata_bck/`
-4. Scale up all deployments:
+- 🔍 **Search & Discovery**:  
+  - Search all messages/conversations
 
-```
-kubectl scale --replicas=1 deployment/vectordb-prod
-kubectl scale --replicas=1 deployment/rag
-kubectl scale --replicas=1 deployment/meilisearch
-kubectl scale --replicas=1 deployment/mongodb
-kubectl scale --replicas=1 deployment/api
-```
+- 👥 **Multi-User & Secure Access**:
+  - Multi-User, Secure Authentication with OAuth2, LDAP, & Email Login Support
+  - Built-in Moderation, and Token spend tools
 
-5. Deactivate maintenance page (`kubectl patch service api-service -p '{"spec":{"selector":{"app":"api"}}}'`)
+- ⚙️ **Configuration & Deployment**:  
+  - Configure Proxy, Reverse Proxy, Docker, & many Deployment options  
+  - Use completely local or deploy on the cloud
 
-# SonarQube
-## Documentation
-You can find all the relevant information on how to configure SonarQube in our Confluence.
-The Documentation can be found here: https://goreplyde.atlassian.net/wiki/spaces/GOR/pages/2940502076/Code+Quality+with+SonarQube
+- 📖 **Open-Source & Community**:  
+  - Completely Open-Source & Built in Public  
+  - Community-driven development, support, and feedback
+
+[For a thorough review of our features, see our docs here](https://docs.librechat.ai/) 📚
+
+## 🪶 All-In-One AI Conversations with LibreChat
+
+LibreChat brings together the future of assistant AIs with the revolutionary technology of OpenAI's ChatGPT. Celebrating the original styling, LibreChat gives you the ability to integrate multiple AI models. It also integrates and enhances original client features such as conversation and message search, prompt templates and plugins.
+
+With LibreChat, you no longer need to opt for ChatGPT Plus and can instead use free or pay-per-call APIs. We welcome contributions, cloning, and forking to enhance the capabilities of this advanced chatbot platform.
+
+[![Watch the video](https://raw.githubusercontent.com/LibreChat-AI/librechat.ai/main/public/images/changelog/v0.7.6.gif)](https://www.youtube.com/watch?v=ilfwGQtJNlI)
+
+Click on the thumbnail to open the video☝️
+
+---
+
+## 🌐 Resources
+
+**GitHub Repo:**
+  - **RAG API:** [github.com/danny-avila/rag_api](https://github.com/danny-avila/rag_api)
+  - **Website:** [github.com/LibreChat-AI/librechat.ai](https://github.com/LibreChat-AI/librechat.ai)
+
+**Other:**
+  - **Website:** [librechat.ai](https://librechat.ai)
+  - **Documentation:** [librechat.ai/docs](https://librechat.ai/docs)
+  - **Blog:** [librechat.ai/blog](https://librechat.ai/blog)
+
+---
+
+## 📝 Changelog
+
+Keep up with the latest updates by visiting the releases page and notes:
+- [Releases](https://github.com/danny-avila/LibreChat/releases)
+- [Changelog](https://www.librechat.ai/changelog) 
+
+**⚠️ Please consult the [changelog](https://www.librechat.ai/changelog) for breaking changes before updating.**
+
+---
+
+## ⭐ Star History
+
+<p align="center">
+  <a href="https://star-history.com/#danny-avila/LibreChat&Date">
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=danny-avila/LibreChat&type=Date&theme=dark" onerror="this.src='https://api.star-history.com/svg?repos=danny-avila/LibreChat&type=Date'" />
+  </a>
+</p>
+<p align="center">
+  <a href="https://trendshift.io/repositories/4685" target="_blank" style="padding: 10px;">
+    <img src="https://trendshift.io/api/badge/repositories/4685" alt="danny-avila%2FLibreChat | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
+  </a>
+  <a href="https://runacap.com/ross-index/q1-24/" target="_blank" rel="noopener" style="margin-left: 20px;">
+    <img style="width: 260px; height: 56px" src="https://runacap.com/wp-content/uploads/2024/04/ROSS_badge_white_Q1_2024.svg" alt="ROSS Index - Fastest Growing Open-Source Startups in Q1 2024 | Runa Capital" width="260" height="56"/>
+  </a>
+</p>
+
+---
+
+## ✨ Contributions
+
+Contributions, suggestions, bug reports and fixes are welcome!
+
+For new features, components, or extensions, please open an issue and discuss before sending a PR.
+
+If you'd like to help translate LibreChat into your language, we'd love your contribution! Improving our translations not only makes LibreChat more accessible to users around the world but also enhances the overall user experience. Please check out our [Translation Guide](https://www.librechat.ai/docs/translation).
+
+---
+
+## 💖 This project exists in its current state thanks to all the people who contribute
+
+<a href="https://github.com/danny-avila/LibreChat/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=danny-avila/LibreChat" />
+</a>
+
+---
+
+## 🎉 Special Thanks
+
+We thank [Locize](https://locize.com) for their translation management tools that support multiple languages in LibreChat.
+
+<p align="center">
+  <a href="https://locize.com" target="_blank" rel="noopener noreferrer">
+    <img src="https://github.com/user-attachments/assets/d6b70894-6064-475e-bb65-92a9e23e0077" alt="Locize Logo" height="50">
+  </a>
+</p>
