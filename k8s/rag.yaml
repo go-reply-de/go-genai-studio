@@ -59,7 +59,7 @@ spec:
                   name: librechat-credentials-env
             - name: GOOGLE_APPLICATION_CREDENTIALS
               value: /var/secrets/google/sa_credentials.json
-          image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/rag:latest
+          image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/rag:###RAG_SHORT_SHA###
           resources:
             requests:
               cpu: 10m

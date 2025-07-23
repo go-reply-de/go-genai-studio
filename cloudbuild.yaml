@@ -85,7 +85,7 @@ steps:
         sed -i -e "s/###LOCATION###/$LOCATION/g" "$file"
         sed -i -e "s/###PROJECT_ID###/$PROJECT_ID/g" "$file"
         sed -i -e "s/###API_SHORT_SHA###/$SHORT_SHA/g" "$file"
-        sed -i -e "s/###RAG_SHORT_SHA###/bdae521a/g" "$file"
+        sed -i -e "s/###RAG_SHORT_SHA###/${_RAG_SHORT_SHA}/g" "$file"
         sed -i -e "s/###_GKE_CLUSTER_NAME###/${_GKE_CLUSTER_NAME}/g" "$file"
         sed -i -e "s/###_GKE_NAMESPACE###/${_GKE_NAMESPACE}/g" "$file"
         sed -i -e "s/###GOOGLE_KEY###/${_GOOGLE_KEY}/g" "$file"
