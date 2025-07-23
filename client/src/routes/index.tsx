@@ -18,6 +18,7 @@ import ShareRoute from './ShareRoute';
 import ChatRoute from './ChatRoute';
 import Search from './Search';
 import Root from './Root';
+import TermsOfService from './TermsOfService';
 
 const AuthLayout = () => (
   <AuthContextProvider>
@@ -30,6 +31,11 @@ export const router = createBrowserRouter([
   {
     path: 'share/:shareId',
     element: <ShareRoute />,
+    errorElement: <RouteErrorBoundary />,
+  },
+  {
+    path: '/tos',
+    element: <TermsOfService />,
     errorElement: <RouteErrorBoundary />,
   },
   {
