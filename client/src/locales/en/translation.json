@@ -1092,6 +1092,5 @@
   "com_user_message": "You",
   "com_warning_resubmit_unsupported": "Resubmitting the AI message is not supported for this endpoint.",
   "com_description": "\nA powerful AI-powered platform that simplifies the creation of engaging and personalized chat experiences. \nWhether you're building a chatbot for customer service, marketing, or entertainment, Go GenAI Studio provides a user-friendly interface and advanced AI features to help you design and deploy your chatbot with ease.",
-  "com_header_description": "Your very own AI Chatbot",
-  "com_ui_tos_instructions": "Please review the terms and conditions below."
+  "com_header_description": "Your very own AI Chatbot"
 }
