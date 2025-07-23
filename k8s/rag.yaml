@@ -65,6 +65,7 @@ spec:
               cpu: 10m
               memory: 512Mi
           name: rag
+          imagePullPolicy: Always
           volumeMounts:
             - name: gcp-service-account
               mountPath: /var/secrets/google
