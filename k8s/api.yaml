@@ -467,6 +467,11 @@ spec:
                 configMapKeyRef:
                   key: VERTEX_AI_DATASTORE_ID
                   name: env
+            - name: CUSTOM_FOOTER
+              valueFrom:
+                configMapKeyRef:
+                  key: CUSTOM_FOOTER
+                  name: env
           image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
           resources:
             requests:

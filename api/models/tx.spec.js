@@ -636,6 +636,15 @@ describe('Grok Model Tests - Pricing', () => {
       );
     });
 
+    test('should return correct prompt and completion rates for Grok 4 model', () => {
+      expect(getMultiplier({ model: 'grok-4-0709', tokenType: 'prompt' })).toBe(
+        tokenValues['grok-4'].prompt,
+      );
+      expect(getMultiplier({ model: 'grok-4-0709', tokenType: 'completion' })).toBe(
+        tokenValues['grok-4'].completion,
+      );
+    });
+
     test('should return correct prompt and completion rates for Grok 3 models with prefixes', () => {
       expect(getMultiplier({ model: 'xai/grok-3', tokenType: 'prompt' })).toBe(
         tokenValues['grok-3'].prompt,
@@ -660,6 +669,109 @@ describe('Grok Model Tests - Pricing', () => {
       );
       expect(getMultiplier({ model: 'xai/grok-3-mini-fast', tokenType: 'completion' })).toBe(
         tokenValues['grok-3-mini-fast'].completion,
+      );
+    });
+
+    test('should return correct prompt and completion rates for Grok 4 model with prefixes', () => {
+      expect(getMultiplier({ model: 'xai/grok-4-0709', tokenType: 'prompt' })).toBe(
+        tokenValues['grok-4'].prompt,
+      );
+      expect(getMultiplier({ model: 'xai/grok-4-0709', tokenType: 'completion' })).toBe(
+        tokenValues['grok-4'].completion,
+      );
+    });
+  });
+});
+
+describe('Claude Model Tests', () => {
+  it('should return correct prompt and completion rates for Claude 4 models', () => {
+    expect(getMultiplier({ model: 'claude-sonnet-4', tokenType: 'prompt' })).toBe(
+      tokenValues['claude-sonnet-4'].prompt,
+    );
+    expect(getMultiplier({ model: 'claude-sonnet-4', tokenType: 'completion' })).toBe(
+      tokenValues['claude-sonnet-4'].completion,
+    );
+    expect(getMultiplier({ model: 'claude-opus-4', tokenType: 'prompt' })).toBe(
+      tokenValues['claude-opus-4'].prompt,
+    );
+    expect(getMultiplier({ model: 'claude-opus-4', tokenType: 'completion' })).toBe(
+      tokenValues['claude-opus-4'].completion,
+    );
+  });
+
+  it('should handle Claude 4 model name variations with different prefixes and suffixes', () => {
+    const modelVariations = [
+      'claude-sonnet-4',
+      'claude-sonnet-4-20240229',
+      'claude-sonnet-4-latest',
+      'anthropic/claude-sonnet-4',
+      'claude-sonnet-4/anthropic',
+      'claude-sonnet-4-preview',
+      'claude-sonnet-4-20240229-preview',
+      'claude-opus-4',
+      'claude-opus-4-20240229',
+      'claude-opus-4-latest',
+      'anthropic/claude-opus-4',
+      'claude-opus-4/anthropic',
+      'claude-opus-4-preview',
+      'claude-opus-4-20240229-preview',
+    ];
+
+    modelVariations.forEach((model) => {
+      const valueKey = getValueKey(model);
+      const isSonnet = model.includes('sonnet');
+      const expectedKey = isSonnet ? 'claude-sonnet-4' : 'claude-opus-4';
+
+      expect(valueKey).toBe(expectedKey);
+      expect(getMultiplier({ model, tokenType: 'prompt' })).toBe(tokenValues[expectedKey].prompt);
+      expect(getMultiplier({ model, tokenType: 'completion' })).toBe(
+        tokenValues[expectedKey].completion,
+      );
+    });
+  });
+
+  it('should return correct cache rates for Claude 4 models', () => {
+    expect(getCacheMultiplier({ model: 'claude-sonnet-4', cacheType: 'write' })).toBe(
+      cacheTokenValues['claude-sonnet-4'].write,
+    );
+    expect(getCacheMultiplier({ model: 'claude-sonnet-4', cacheType: 'read' })).toBe(
+      cacheTokenValues['claude-sonnet-4'].read,
+    );
+    expect(getCacheMultiplier({ model: 'claude-opus-4', cacheType: 'write' })).toBe(
+      cacheTokenValues['claude-opus-4'].write,
+    );
+    expect(getCacheMultiplier({ model: 'claude-opus-4', cacheType: 'read' })).toBe(
+      cacheTokenValues['claude-opus-4'].read,
+    );
+  });
+
+  it('should handle Claude 4 model cache rates with different prefixes and suffixes', () => {
+    const modelVariations = [
+      'claude-sonnet-4',
+      'claude-sonnet-4-20240229',
+      'claude-sonnet-4-latest',
+      'anthropic/claude-sonnet-4',
+      'claude-sonnet-4/anthropic',
+      'claude-sonnet-4-preview',
+      'claude-sonnet-4-20240229-preview',
+      'claude-opus-4',
+      'claude-opus-4-20240229',
+      'claude-opus-4-latest',
+      'anthropic/claude-opus-4',
+      'claude-opus-4/anthropic',
+      'claude-opus-4-preview',
+      'claude-opus-4-20240229-preview',
+    ];
+
+    modelVariations.forEach((model) => {
+      const isSonnet = model.includes('sonnet');
+      const expectedKey = isSonnet ? 'claude-sonnet-4' : 'claude-opus-4';
+
+      expect(getCacheMultiplier({ model, cacheType: 'write' })).toBe(
+        cacheTokenValues[expectedKey].write,
+      );
+      expect(getCacheMultiplier({ model, cacheType: 'read' })).toBe(
+        cacheTokenValues[expectedKey].read,
       );
     });
   });

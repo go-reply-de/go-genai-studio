@@ -52,8 +52,10 @@ bower_components/
 *.d.ts
 !vite-env.d.ts
 
-# Cline
+# AI
 .clineignore
+.cursor
+.aider*
 
 # Floobits
 .floo
@@ -113,6 +115,12 @@ uploads/
 
 # owner
 release/
+
+# Helm
+helm/librechat/Chart.lock
+helm/**/charts/
+helm/**/.values.yaml
+
 !/client/src/@types/i18next.d.ts
 
 
@@ -138,3 +146,14 @@ service-account/*.json
 
 # Terragrunt
 **/.terragrunt-cache
+# SAML Idp cert
+*.cert
+
+# AI Assistants
+/.claude/
+/.cursor/
+/.copilot/
+/.aider/
+/.openai/
+/.tabnine/
+/.codeium
