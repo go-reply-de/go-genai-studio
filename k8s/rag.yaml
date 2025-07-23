@@ -57,28 +57,15 @@ spec:
                 secretKeyRef:
                   key: JWT_SECRET
                   name: librechat-credentials-env
-            - name: GOOGLE_APPLICATION_CREDENTIALS
-              value: /var/secrets/google/sa_credentials.json
-          image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/rag:###RAG_SHORT_SHA###
+          image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/rag:latest
           resources:
             requests:
               cpu: 10m
               memory: 512Mi
           name: rag
-          volumeMounts:
-            - name: gcp-service-account
-              mountPath: /var/secrets/google
-              readOnly: true
           ports:
             - containerPort: 8000
               protocol: TCP
-      volumes:
-      - name: gcp-service-account
-        secret:
-          secretName: gcp-service-account
-          items:
-          - key: key.json
-            path: sa_credentials.json
       restartPolicy: Always
 ---
 apiVersion: v1
