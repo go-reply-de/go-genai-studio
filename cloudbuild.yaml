@@ -60,14 +60,14 @@ steps:
   id: 'Modify K8S manifests'
   entrypoint: 'bash'
   args:
-    - '-c'  
+    - '-c'
     - |
       # Determine the version string: use tag if present, otherwise use short SHA.
       VERSION_STRING=""
       if [ -n "${TAG_NAME}" ]; then
         echo "Git tag found: ${TAG_NAME}. Extracting version..."
         # Extract just the version (e.g., v0.7.8) from the full git tag.
-        VERSION_STRING=$(echo "${TAG_NAME}" | grep -o 'v[0-9.]*')
+        VERSION_STRING=$(echo "${TAG_NAME}" | sed -E 's/.*(v[0-9]+(\.[0-9]+)*(-rc[0-9]+)?).*/\1/')
         # If grep finds nothing, fall back to the full tag name.
         if [ -z "$${VERSION_STRING}" ]; then
           VERSION_STRING="${TAG_NAME}"
