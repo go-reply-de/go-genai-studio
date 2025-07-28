@@ -28,6 +28,7 @@ const {
 } = require('./ActionService');
 const {
   createOpenAIImageTools,
+  createVertexAIImageTool,
   createYouTubeTools,
   manifestToolMap,
   toolkits,
@@ -140,6 +141,7 @@ function loadAndFormatTools({ directory, adminFilter = [], adminIncluded = [] })
   const basicToolInstances = [
     new Calculator(),
     ...createOpenAIImageTools({ override: true }),
+    ...createVertexAIImageTool({ override: true }),
     ...createYouTubeTools({ override: true }),
   ];
   for (const toolInstance of basicToolInstances) {

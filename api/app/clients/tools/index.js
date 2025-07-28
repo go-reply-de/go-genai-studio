@@ -13,6 +13,7 @@ const GoogleVertexAI = require('./structured/GoogleVertexAI');
 const TraversaalSearch = require('./structured/TraversaalSearch');
 const createOpenAIImageTools = require('./structured/OpenAIImageTools');
 const TavilySearchResults = require('./structured/TavilySearchResults');
+const createVertexAIImageTool = require('./structured/Imagen');
 
 /** @type {Record<string, TPlugin | undefined>} */
 const manifestToolMap = {};
@@ -44,4 +45,5 @@ module.exports = {
   createYouTubeTools,
   TavilySearchResults,
   createOpenAIImageTools,
+  createVertexAIImageTool,
 };

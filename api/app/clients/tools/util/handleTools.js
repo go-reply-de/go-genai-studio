@@ -21,6 +21,7 @@ const {
   createYouTubeTools,
   TavilySearchResults,
   createOpenAIImageTools,
+  createVertexAIImageTool,
 } = require('../');
 const { primeFiles: primeCodeFiles } = require('~/server/services/Files/Code/process');
 const { createFileSearchTool, primeFiles: primeSearchFiles } = require('./fileSearch');
@@ -179,6 +180,9 @@ const loadTools = async ({
       const authFields = getAuthFields('vertex_ai');
       const authValues = await loadAuthValues({ userId: user, authFields });
       return new GoogleVertexAI(authValues, agent?.model);
+    },
+    imagen_vertex: async (_toolContextMap) => {
+      return createVertexAIImageTool({ isAgent: !!agent }, 'imagen-3.0-generate-002');
     },
     image_gen_oai: async (toolContextMap) => {
       const authFields = getAuthFields('image_gen_oai');
