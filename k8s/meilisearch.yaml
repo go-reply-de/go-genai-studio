@@ -234,11 +234,16 @@ spec:
                 configMapKeyRef:
                   key: GOOGLE_CALLBACK_URL
                   name: env
+            - name: GOOGLE_CSE_ID
+              valueFrom:
+                secretKeyRef:
+                  key: GOOGLE_CSE_ID
+                  name: librechat-credentials-env
             - name: GOOGLE_SEARCH_API_KEY
               valueFrom:
-                configMapKeyRef:
+                secretKeyRef:
                   key: GOOGLE_SEARCH_API_KEY
-                  name: env
+                  name: librechat-credentials-env
             - name: HELP_AND_FAQ_URL
               valueFrom:
                 configMapKeyRef:
@@ -381,9 +386,9 @@ spec:
                   name: env
             - name: OPENAI_API_KEY
               valueFrom:
-                configMapKeyRef:
+                secretKeyRef:
                   key: OPENAI_API_KEY
-                  name: env
+                  name: librechat-credentials-env
             - name: OPENAI_MODERATION
               valueFrom:
                 configMapKeyRef:

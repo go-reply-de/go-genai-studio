@@ -16,9 +16,28 @@ spec:
       maxUnavailable: 0 # Don't allow any pods to be unavailable during update
   template:
     metadata:
+      annotations:
+        gke-gcsfuse/volumes: "true"
       labels:
         app: api
     spec:
+      serviceAccountName: k8s-service-account
+      initContainers:
+        - name: copy-assets
+          image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
+          command: ["/bin/sh", "-c"]
+          args:
+            - >
+              if [ -d /default-assets ]; then
+                echo "Directory /default-assets found. Cleaning and copying assets...";
+                find /default-assets -type f -not -name "main_logo.png" -not -name "main_favicon.png" -delete &&
+                cp -r -n -v /app/client/dist/assets/* /default-assets/;
+              else
+                echo "Directory /default-assets not found, skipping.";
+              fi
+          volumeMounts:
+            - name: api-branding
+              mountPath: /default-assets
       containers:
         - env:
             - name: ALLOW_EMAIL_LOGIN
@@ -215,18 +234,23 @@ spec:
                   name: librechat-credentials-env
             - name: GOOGLE_CSE_ID
               valueFrom:
-                configMapKeyRef:
+                secretKeyRef:
                   key: GOOGLE_CSE_ID
-                  name: env
+                  name: librechat-credentials-env
             - name: GOOGLE_SEARCH_API_KEY
               valueFrom:
-                configMapKeyRef:
+                secretKeyRef:
                   key: GOOGLE_SEARCH_API_KEY
-                  name: env
+                  name: librechat-credentials-env
             - name: GOOGLE_MODELS
               valueFrom:
                 configMapKeyRef:
                   key: GOOGLE_MODELS
+                  name: env
+            - name: GOOGLE_LOC
+              valueFrom:
+                configMapKeyRef:
+                  key: GOOGLE_LOC
                   name: env
             - name: HELP_AND_FAQ_URL
               valueFrom:
@@ -438,15 +462,15 @@ spec:
                 configMapKeyRef:
                   key: RAG_API_URL
                   name: env
-            - name: GCS_PROJECT_ID
+            - name: VERTEX_AI_DATASTORE_ID
               valueFrom:
                 configMapKeyRef:
-                  key: GCS_PROJECT_ID
+                  key: VERTEX_AI_DATASTORE_ID
                   name: env
-            - name: GCS_BUCKET_NAME
+            - name: CUSTOM_FOOTER
               valueFrom:
                 configMapKeyRef:
-                  key: GCS_BUCKET_NAME
+                  key: CUSTOM_FOOTER
                   name: env
           image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
           resources:
@@ -471,11 +495,13 @@ spec:
             periodSeconds: 10 # Check every 5 seconds
             failureThreshold: 3 # Fail after 3 consecutive failures
           volumeMounts:
-            - mountPath: /app/config.yaml
+            - mountPath: /app/librechat.yaml
               name: config
-              subPath: config.yaml
+              subPath: librechat.yaml
             - mountPath: /app/client/public/images
-              name: api-claim3
+              name: api-images
+            - mountPath: /app/client/dist/assets
+              name: api-branding
             - mountPath: /app/api/logs
               name: api-claim4
             - name: vertex-ai-sa-credentials
@@ -486,12 +512,16 @@ spec:
       volumes:
         - configMap:
             items:
-              - key: config.yaml
-                path: config.yaml
+              - key: librechat.yaml
+                path: librechat.yaml
             name: config
           name: config
-        - name: api-claim3
-          emptyDir: {}
+        - name: api-images
+          persistentVolumeClaim:
+            claimName: api-images
+        - name: api-branding
+          persistentVolumeClaim:
+            claimName: api-branding-pvc
         - name: api-claim4
           emptyDir: {}
         - name: vertex-ai-sa-credentials
@@ -518,3 +548,55 @@ spec:
   type: NodePort
   selector:
     app: api
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    app: api-images
+  name: api-images
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: api-branding-pv
+spec:
+  accessModes:
+  - ReadWriteMany
+  capacity:
+    storage: 5Gi
+  mountOptions:
+    - implicit-dirs
+  csi:
+    driver: gcsfuse.csi.storage.gke.io
+    volumeHandle: ###_BRANDING_BUCKET_NAME###
+  claimRef:
+    name: api-branding-pvc
+    namespace: ###_GKE_NAMESPACE###
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: api-branding-pvc
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-service-account
+  namespace: ###_GKE_NAMESPACE###
+  annotations:
+    iam.gke.io/gcp-service-account: ###_K8S_SA_EMAIL###

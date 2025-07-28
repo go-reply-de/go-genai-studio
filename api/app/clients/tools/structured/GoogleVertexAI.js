@@ -42,30 +42,26 @@ class GoogleVertexAI extends Tool {
         });
 
         // Initialize properties using helper function
-        this.projectId = this._initializeField(
-            fields.GOOGLE_CLOUD_PROJECT_ID,
-            'GOOGLE_CLOUD_PROJECT_ID',
-        );
-        this.location = this._initializeField(
-            fields.GOOGLE_CLOUD_LOCATION,
-            'GOOGLE_CLOUD_LOCATION',
-            'us-central1',
-        );
+        this.projectId = this.project_id
+        this.location = process.env.GOOGLE_LOC
         this.dataStoreId = this._initializeField(
             fields.VERTEX_AI_DATASTORE_ID,
             'VERTEX_AI_DATASTORE_ID',
         );
 
-        // Check for required fields
-        if (
-            !this.override &&
-            (!this.projectId || !this.location || !this.dataStoreId)
-        ) {
-            throw new Error(
-                'Missing GOOGLE_CLOUD_PROJECT_ID, GOOGLE_CLOUD_LOCATION, or VERTEX_AI_DATASTORE_ID.',
-            );
+        // Check for required fields if not overridden
+        if (!this.override) {
+            if (!this.projectId) {
+                throw new Error('Missing required field: PROJECT_ID.');
+            }
+            if (!this.location) {
+                throw new Error('Missing required field: LOCATION.');
+            }
+            if (!this.dataStoreId) {
+                throw new Error('Missing required field: VERTEX_AI_DATASTORE_ID.');
+            }
         }
-
+        
         if (!this.client_email && !this.private_key) {
             console.warn(
                 'Warning: No Service Account credentials provided.  Ensure the Compute Engine default service account has the Vertex AI User role if running on a Compute Engine instance.',
@@ -126,7 +122,7 @@ class GoogleVertexAI extends Tool {
 
         try {
             const streamingResult = await this.generativeModel.generateContentStream({
-                contents: [{role: 'user', parts: [{text: query}]}]
+                contents: [{ role: 'user', parts: [{ text: query }] }]
             })
             const aggregatedResponse = await streamingResult.response;
             return JSON.stringify(aggregatedResponse);

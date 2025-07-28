@@ -17,18 +17,7 @@
     "pluginKey": "google",
     "description": "Use Google Search to find information about the weather, news, sports, and more.",
     "icon": "https://i.imgur.com/SMmVkNB.png",
-    "authConfig": [
-      {
-        "authField": "GOOGLE_CSE_ID",
-        "label": "Google CSE ID",
-        "description": "This is your Google Custom Search Engine ID. For instructions on how to obtain this, see <a href='https://github.com/danny-avila/LibreChat/blob/main/docs/features/plugins/google_search.md'>Our Docs</a>."
-      },
-      {
-        "authField": "GOOGLE_SEARCH_API_KEY",
-        "label": "Google API Key",
-        "description": "This is your Google Custom Search API Key. For instructions on how to obtain this, see <a href='https://github.com/danny-avila/LibreChat/blob/main/docs/features/plugins/google_search.md'>Our Docs</a>."
-      }
-    ]
+    "authConfig": []
   },
   {
     "name": "YouTube",
@@ -199,16 +188,6 @@
     "description": "Search and interact with Google Vertex AI, grounding the model with information from a Vertex AI Search data store. Use this tool when you need to generate text, answer questions, or perform tasks grounded in specific documents.",
     "icon": "https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg",
     "authConfig": [
-      {
-        "authField": "GOOGLE_CLOUD_PROJECT_ID",
-        "label": "Google Cloud Project ID",
-        "description": "Your Google Cloud Project ID."
-      },
-      {
-        "authField": "GOOGLE_CLOUD_LOCATION",
-        "label": "Google Cloud Location",
-        "description": "The location (region) where your Vertex AI Search data store is deployed (e.g., us-central1). Leave blank to use us-central1."
-      },
       {
         "authField": "VERTEX_AI_DATASTORE_ID",
         "label": "Vertex AI Data Store ID",
