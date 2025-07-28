@@ -1064,5 +1064,6 @@
   "com_user_message": "Du",
   "com_warning_resubmit_unsupported": "Das erneute Senden der KI-Nachricht wird für diesen Endpunkt nicht unterstützt.",
   "com_description": "\nEine leistungsstarke KI-gestützte Plattform, die die Erstellung von ansprechenden und personalisierten Chat-Erlebnissen vereinfacht. \nEgal, ob Sie einen Chatbot für Kundenservice, Marketing oder Unterhaltung entwickeln, Go GenAI Studio bietet eine benutzerfreundliche Oberfläche und fortschrittliche KI-Funktionen, die Ihnen helfen, Ihren Chatbot mühelos zu gestalten und bereitzustellen.",
-  "com_header_description": "Ihr persönlicher KI-Chatbot"
+  "com_header_description": "Ihr persönlicher KI-Chatbot",
+  "com_ui_tos_instructions": "Lesen Sie bitte die folgenden Nutzungsbedingungen sorgfältig durch."  
 }
