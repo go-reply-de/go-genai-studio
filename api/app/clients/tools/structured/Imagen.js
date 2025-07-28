@@ -20,7 +20,9 @@ function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-3.0-genera
   try {
     serviceKey = require('~/data/auth.json');
   } catch (e) {
-    logger.warn('[ImagenTool] Could not load service account key. Using Application Default Credentials.');
+    logger.warn(
+      '[ImagenTool] Could not load service account key. Using Application Default Credentials.',
+    );
   }
 
   /** @type {boolean} Used to initialize the Tool without necessary variables. */
@@ -90,13 +92,15 @@ function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-3.0-genera
             });
           } else {
             const errorDetails = helpers.fromValue(prediction)?.error;
-            logger.warn(`[ImagenTool] A prediction failed within a batch: ${errorDetails?.message || 'No image data in prediction'}`);
+            logger.warn(
+              `[ImagenTool] A prediction failed within a batch: ${errorDetails?.message || 'No image data in prediction'}`,
+            );
           }
         }
-        
+
         if (content.length === 0) {
-            logger.error('[ImagenTool] All image generation attempts failed in the batch.');
-            throw new Error('Vertex AI Error: All image generation attempts failed in the batch.');
+          logger.error('[ImagenTool] All image generation attempts failed in the batch.');
+          throw new Error('Vertex AI Error: All image generation attempts failed in the batch.');
         }
 
         const generatedImagesInfo = `Generated ${content.length} image(s).\ngenerated_image_ids: ${JSON.stringify(file_ids)}`;
@@ -117,16 +121,32 @@ function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-3.0-genera
     },
     {
       name: 'imagen_vertex',
-      description: 'Generates one or more images using Google Vertex AI Imagen from a text prompt. Use this for creating original images.',
+      description:
+        'Generates one or more images using Google Vertex AI Imagen from a text prompt. Use this for creating original images.',
       schema: z.object({
         prompt: z.string().min(1).max(4000).describe('A detailed text prompt for the image.'),
-        n: z.number().int().min(1).max(8).optional().describe('Number of images to generate (1-8). Defaults to 1.'),
-        quality: z.enum(['standard', 'hd']).optional().describe("Image quality: 'standard' or 'hd'. Defaults to 'standard'."),
-        size: z.enum(['1:1', '16:9', '9:16', '4:3', '3:4']).optional().describe("Aspect ratio of the image. Defaults to '1:1'."),
-        negativePrompt: z.string().optional().describe('A prompt of what to exclude from the image.'),
+        n: z
+          .number()
+          .int()
+          .min(1)
+          .max(8)
+          .optional()
+          .describe('Number of images to generate (1-8). Defaults to 1.'),
+        quality: z
+          .enum(['standard', 'hd'])
+          .optional()
+          .describe("Image quality: 'standard' or 'hd'. Defaults to 'standard'."),
+        size: z
+          .enum(['1:1', '16:9', '9:16', '4:3', '3:4'])
+          .optional()
+          .describe("Aspect ratio of the image. Defaults to '1:1'."),
+        negativePrompt: z
+          .string()
+          .optional()
+          .describe('A prompt of what to exclude from the image.'),
       }),
       responseFormat: 'content_and_artifact',
-    }
+    },
   );
 
   return [imagenTool];
