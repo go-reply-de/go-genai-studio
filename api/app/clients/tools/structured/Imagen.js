@@ -21,7 +21,7 @@ function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-3.0-genera
     serviceKey = require('~/data/auth.json');
   } catch (e) {
     logger.warn(
-      '[ImagenTool] Could not load service account key. Using Application Default Credentials.',
+      `[ImagenTool] Could not load service account key. Using Application Default Credentials. ${e}`,
     );
   }
 
