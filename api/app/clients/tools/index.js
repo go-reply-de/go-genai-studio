@@ -45,5 +45,5 @@ module.exports = {
   createYouTubeTools,
   TavilySearchResults,
   createOpenAIImageTools,
-  createVertexAIImageTool
+  createVertexAIImageTool,
 };
