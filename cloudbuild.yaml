@@ -12,25 +12,30 @@ steps:
 #  id: 'Run Regression Tests'
 
 # Documentation: https://goreplyde.atlassian.net/wiki/spaces/GOR/pages/2940502076/Code+Quality+with+SonarQube
-- name: 'sonarsource/sonar-scanner-cli:latest'
-  id: 'Run Sonarqube Analysis'
+- id: 'Run Sonarqube Analysis'
+  name: 'sonarsource/sonar-scanner-cli:latest'
   entrypoint: 'bash'
   args:
     - -c
     - |
       if [ "${_EXECUTE_SONARQUBE_ANALYSIS}" = "true" ]; then
         echo "Executing SonarQube Analysis as _EXECUTE_SONARQUBE_ANALYSIS is true."
-        sonar_host=$(gcloud secrets versions access latest --secret="${_LIBRECHAT_CREDENTIALS_ENV_KEYS_PREFIX}SONAR_HOST" --format='value(payload.data)' | tr '_-' '/+' | base64 -d)
-        sonar_login=$(gcloud secrets versions access latest --secret="${_LIBRECHAT_CREDENTIALS_ENV_KEYS_PREFIX}SONAR_LOGIN" --format='value(payload.data)' | tr '_-' '/+' | base64 -d)
+        if [ -z "$SONAR_HOST" ] || [ -z "$SONAR_LOGIN" ]; then
+          echo "Error: SonarQube host or login secrets were not provided. Ensure they are configured in Secret Manager and Cloud Build."
+          exit 1
+        fi
         sonar-scanner \
-          -Dsonar.host.url="${sonar_host}" \
-          -Dsonar.login="${sonar_login}" \
+          -Dsonar.host.url="${SONAR_HOST}" \
+          -Dsonar.login="${SONAR_LOGIN}" \
           -Dsonar.projectKey="${_REGISTRY_NAME}" \
           -Dsonar.projectName="${_REGISTRY_NAME}" \
           -Dsonar.sources=.
       else
         echo "Skipping SonarQube Analysis as _EXECUTE_SONARQUBE_ANALYSIS is not 'true' (current value: '${_EXECUTE_SONARQUBE_ANALYSIS:-false}')."
       fi
+  secretEnv:
+    - SONAR_HOST
+    - SONAR_LOGIN
 
 - name: 'gcr.io/cloud-builders/docker'
   args: ['build', '-t', '$LOCATION-docker.pkg.dev/$PROJECT_ID/${_REGISTRY_NAME}/api:$SHORT_SHA', '.', '-f', 'Dockerfile.multi']
@@ -172,3 +177,10 @@ steps:
 
 options:
   logging: CLOUD_LOGGING_ONLY
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/${_LIBRECHAT_CREDENTIALS_ENV_KEYS_PREFIX}SONAR_HOST/versions/latest
+      env: SONAR_HOST
+    - versionName: projects/$PROJECT_ID/secrets/${_LIBRECHAT_CREDENTIALS_ENV_KEYS_PREFIX}SONAR_LOGIN/versions/latest
+      env: SONAR_LOGIN
