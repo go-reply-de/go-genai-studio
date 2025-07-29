@@ -15,6 +15,7 @@ steps:
 - name: 'sonarsource/sonar-scanner-cli:latest'
   id: 'Run Sonarqube Analysis'
   entrypoint: 'bash'
+  user: '0'
   args:
     - -c
     - |
