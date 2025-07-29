@@ -30,7 +30,7 @@ steps:
           -Dsonar.projectKey="${_REGISTRY_NAME}" \
           -Dsonar.projectName="${_REGISTRY_NAME}" \
           -Dsonar.sources=. \
-          -Dsonar.log.level=DEBUG \
+          -Dsonar.log.level=DEBUG
       else
         echo "Skipping SonarQube Analysis as _EXECUTE_SONARQUBE_ANALYSIS is not 'true' (current value: '${_EXECUTE_SONARQUBE_ANALYSIS:-false}')."
       fi
