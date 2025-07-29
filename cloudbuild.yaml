@@ -12,8 +12,8 @@ steps:
 #  id: 'Run Regression Tests'
 
 # Documentation: https://goreplyde.atlassian.net/wiki/spaces/GOR/pages/2940502076/Code+Quality+with+SonarQube
-- id: 'Run Sonarqube Analysis'
-  name: 'sonarsource/sonar-scanner-cli:latest'
+- name: 'sonarsource/sonar-scanner-cli:latest'
+  id: 'Run Sonarqube Analysis'
   entrypoint: 'bash'
   args:
     - -c
