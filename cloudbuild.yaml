@@ -15,12 +15,12 @@ steps:
 - name: 'sonarsource/sonar-scanner-cli:latest'
   id: 'Run Sonarqube Analysis'
   entrypoint: 'bash'
-  user: '0'
   args:
     - -c
     - |
       if [ "${_EXECUTE_SONARQUBE_ANALYSIS}" = "true" ]; then
         echo "Executing SonarQube Analysis as _EXECUTE_SONARQUBE_ANALYSIS is true."
+        chmod -R 777 /workspace
         if [ -z "$$SONAR_HOST" ] || [ -z "$$SONAR_LOGIN" ]; then
           echo "Error: SonarQube host or login secrets were not provided. Ensure they are configured in Secret Manager and Cloud Build."
           exit 1
