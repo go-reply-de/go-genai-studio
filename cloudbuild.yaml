@@ -65,7 +65,7 @@ steps:
   id: 'Modify K8S manifests'
   entrypoint: 'bash'
   args:
-    - '-c'  
+    - '-c'
     - |
       # Determine the version string: use tag if present, otherwise use short SHA.
       VERSION_STRING=""
