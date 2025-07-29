@@ -20,7 +20,6 @@ steps:
     - |
       if [ "${_EXECUTE_SONARQUBE_ANALYSIS}" = "true" ]; then
         echo "Executing SonarQube Analysis as _EXECUTE_SONARQUBE_ANALYSIS is true."
-        chmod -R 777 /workspace
         if [ -z "$$SONAR_HOST" ] || [ -z "$$SONAR_LOGIN" ]; then
           echo "Error: SonarQube host or login secrets were not provided. Ensure they are configured in Secret Manager and Cloud Build."
           exit 1
@@ -30,7 +29,8 @@ steps:
           -Dsonar.login="$$SONAR_LOGIN" \
           -Dsonar.projectKey="${_REGISTRY_NAME}" \
           -Dsonar.projectName="${_REGISTRY_NAME}" \
-          -Dsonar.sources=.
+          -Dsonar.sources=. \
+          -Dsonar.scanner.localPath=/tmp/sonar-work
       else
         echo "Skipping SonarQube Analysis as _EXECUTE_SONARQUBE_ANALYSIS is not 'true' (current value: '${_EXECUTE_SONARQUBE_ANALYSIS:-false}')."
       fi
