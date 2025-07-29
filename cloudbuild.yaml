@@ -12,7 +12,7 @@ steps:
 #  id: 'Run Regression Tests'
 
 # Documentation: https://goreplyde.atlassian.net/wiki/spaces/GOR/pages/2940502076/Code+Quality+with+SonarQube
-- name: 'sonarsource/sonar-scanner-cli:4.6'
+- name: 'sonarsource/sonar-scanner-cli:latest'
   id: 'Run Sonarqube Analysis'
   entrypoint: 'bash'
   args:
@@ -30,7 +30,8 @@ steps:
           -Dsonar.projectKey="${_REGISTRY_NAME}" \
           -Dsonar.projectName="${_REGISTRY_NAME}" \
           -Dsonar.sources=. \
-          -Dsonar.log.level=DEBUG
+          -Dsonar.log.level=DEBUG \
+          -Dsonar.working.directory=/tmp/sonar-work
       else
         echo "Skipping SonarQube Analysis as _EXECUTE_SONARQUBE_ANALYSIS is not 'true' (current value: '${_EXECUTE_SONARQUBE_ANALYSIS:-false}')."
       fi
