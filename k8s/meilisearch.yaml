@@ -3,6 +3,7 @@ kind: Deployment
 metadata:
   labels:
     app: meilisearch
+    backup-target: "true"
   name: meilisearch
   namespace: ###_GKE_NAMESPACE###
 spec:
@@ -464,6 +465,7 @@ kind: Service
 metadata:
   labels:
     app: meilisearch-service
+    backup-target: "true"
   name: meilisearch-service
   namespace: ###_GKE_NAMESPACE###
 spec:
@@ -479,6 +481,7 @@ kind: PersistentVolumeClaim
 metadata:
   labels:
     io.kompose.service: meilisearch-claim0
+    backup-target: "true"
   name: meilisearch-claim0
   namespace: ###_GKE_NAMESPACE###
 spec:

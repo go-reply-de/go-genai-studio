@@ -3,6 +3,7 @@ kind: Deployment
 metadata:
   labels:
     app: api
+    backup-target: "true"
   name: api
   namespace: ###_GKE_NAMESPACE###
 spec:
@@ -237,10 +238,10 @@ spec:
                 secretKeyRef:
                   key: GOOGLE_CSE_ID
                   name: librechat-credentials-env
-            - name: GOOGLE_SEARCH_API_KEY
+            - name: Google Search_API_KEY
               valueFrom:
                 secretKeyRef:
-                  key: GOOGLE_SEARCH_API_KEY
+                  key: Google Search_API_KEY
                   name: librechat-credentials-env
             - name: GOOGLE_MODELS
               valueFrom:
@@ -536,6 +537,7 @@ kind: Service
 metadata:
   labels:
     app: api-service
+    backup-target: "true"
   name: api-service
   namespace: ###_GKE_NAMESPACE###
   annotations:
@@ -554,6 +556,7 @@ kind: PersistentVolumeClaim
 metadata:
   labels:
     app: api-images
+    backup-target: "true" # <-- ADDED
   name: api-images
   namespace: ###_GKE_NAMESPACE###
 spec:
@@ -586,8 +589,6 @@ kind: PersistentVolumeClaim
 metadata:
   name: api-branding-pvc
   namespace: ###_GKE_NAMESPACE###
-  annotations:
-    backup.gke.io/exclude: "true"
 spec:
   accessModes:
   - ReadWriteMany
@@ -600,5 +601,7 @@ kind: ServiceAccount
 metadata:
   name: k8s-service-account
   namespace: ###_GKE_NAMESPACE###
+  labels:
+    backup-target: "true"
   annotations:
     iam.gke.io/gcp-service-account: ###_K8S_SA_EMAIL###

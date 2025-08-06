@@ -4,6 +4,7 @@ metadata:
   name: mongodb
   labels:
     app: mongodb
+    backup-target: "true"
   namespace: ###_GKE_NAMESPACE###
 spec:
   replicas: 1
@@ -43,6 +44,7 @@ kind: Service
 metadata:
   labels:
     app: mongodb-service
+    backup-target: "true"
   name: mongodb-service
   namespace: ###_GKE_NAMESPACE###
 spec:
@@ -58,6 +60,7 @@ kind: PersistentVolumeClaim
 metadata:
   labels:
     io.kompose.service: mongodb-claim0
+    backup-target: "true"
   name: mongodb-claim0
   namespace: ###_GKE_NAMESPACE###
 spec:

@@ -2,6 +2,8 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: maintenance-page
+  labels:
+    backup-target: "true"
 data:
   maintenance.html: |-
     <!--HTML GOES HERE-->
@@ -43,6 +45,7 @@ metadata:
   name: maintenance-page
   labels:
     app: maintenance-page
+    backup-target: "true"
 spec:
   replicas: 1
   selector:

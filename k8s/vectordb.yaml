@@ -3,6 +3,7 @@ kind: Deployment
 metadata:
   labels:
     app: vectordb-###ENVIRONMENT###
+    backup-target: "true"
   name: vectordb-###ENVIRONMENT###
   namespace: ###_GKE_NAMESPACE###
 spec:
@@ -55,6 +56,7 @@ kind: Service
 metadata:
   labels:
     app: vectordb-###ENVIRONMENT###-service
+    backup-target: "true"
   name: vectordb-###ENVIRONMENT###-service
   namespace: ###_GKE_NAMESPACE###
 spec:
@@ -70,6 +72,7 @@ kind: PersistentVolumeClaim
 metadata:
   labels:
     app: pgdata
+    backup-target: "true"
   name: pgdata
   namespace: ###_GKE_NAMESPACE###
 spec:

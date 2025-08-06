@@ -3,6 +3,8 @@ kind: ManagedCertificate
 metadata:
   name: genai-studio-managed-cert-###ENVIRONMENT###
   namespace: ###_GKE_NAMESPACE###
+  labels:
+    backup-target: "true"
 spec:
   domains:
     - ###DOMAIN###
@@ -12,6 +14,8 @@ kind: Ingress
 metadata:
   name: genai-studio-managed-ingress-###ENVIRONMENT###
   namespace: ###_GKE_NAMESPACE###
+  labels:
+    backup-target: "true"
   annotations:
     kubernetes.io/ingress.global-static-ip-name: ###IP_ADDRESS_ID###
     networking.gke.io/managed-certificates: genai-studio-managed-cert-###ENVIRONMENT###
@@ -28,6 +32,8 @@ apiVersion: networking.gke.io/v1beta1
 kind: FrontendConfig
 metadata:
   name: genai-studio-managed-ingress-###ENVIRONMENT###-frontend-config
+  labels:
+    backup-target: "true"
 spec:
   redirectToHttps:
     enabled: true
@@ -38,6 +44,8 @@ kind: BackendConfig
 metadata:
   name: genai-studio-managed-ingress-###ENVIRONMENT###-backend-config
   namespace: ###_GKE_NAMESPACE###
+  labels:
+    backup-target: "true"
 spec:
   timeoutSec: 300
   securityPolicy:

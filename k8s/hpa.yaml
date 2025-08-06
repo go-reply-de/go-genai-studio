@@ -3,6 +3,8 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: api
   namespace: ###_GKE_NAMESPACE###
+  labels:
+    backup-target: "true"
 spec:
   maxReplicas: 3
   metrics:

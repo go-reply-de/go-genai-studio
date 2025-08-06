@@ -3,6 +3,7 @@ kind: Deployment
 metadata:
   labels:
     app: rag
+    backup-target: "true"
   name: rag
 spec:
   replicas: 1
@@ -87,6 +88,7 @@ kind: Service
 metadata:
   labels:
     app: rag-###ENVIRONMENT###-service
+    backup-target: "true"
   name: rag-###ENVIRONMENT###-service
 spec:
   ports:
