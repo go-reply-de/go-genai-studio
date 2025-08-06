@@ -579,13 +579,13 @@ spec:
     volumeHandle: ###_BRANDING_BUCKET_NAME###
   claimRef:
     name: api-branding-pvc
-    namespace: ###_GKE_NAMESPACE###-branding
+    namespace: ###_GKE_NAMESPACE###
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: api-branding-pvc
-  namespace: ###_GKE_NAMESPACE###-###_GKE_NAMESPACE###-branding
+  namespace: ###_GKE_NAMESPACE###
 spec:
   accessModes:
   - ReadWriteMany
