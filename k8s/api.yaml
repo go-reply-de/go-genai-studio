@@ -586,6 +586,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: api-branding-pvc
   namespace: ###_GKE_NAMESPACE###
+  annotations:
+    backup.gke.io/exclude: "true"
 spec:
   accessModes:
   - ReadWriteMany
