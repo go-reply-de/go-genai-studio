@@ -17,61 +17,6 @@ function MCPSelect() {
     localize,
   } = useMCPServerManager();
 
-  // Use the shared initialization hook
-  const { initializeServer, isInitializing, connectionStatus, cancelOAuthFlow, isCancellable } =
-    useMCPServerInitialization({
-      onSuccess: (serverName) => {
-        // Add to selected values after successful initialization
-        const currentValues = mcpValues ?? [];
-        if (!currentValues.includes(serverName)) {
-          setMCPValues([...currentValues, serverName]);
-        }
-      },
-      onError: (serverName) => {
-        // Find the tool/server configuration
-        const tool = mcpToolDetails?.find((t) => t.name === serverName);
-        const serverConfig = startupConfig?.mcpServers?.[serverName];
-        const serverStatus = connectionStatus[serverName];
-
-        // Check if this server would show a config button
-        const hasAuthConfig =
-          (tool?.authConfig && tool.authConfig.length > 0) ||
-          (serverConfig?.customUserVars && Object.keys(serverConfig.customUserVars).length > 0);
-
-        // Only open dialog if the server would have shown a config button
-        // (disconnected/error states always show button, connected only shows if hasAuthConfig)
-        const wouldShowButton =
-          !serverStatus ||
-          serverStatus.connectionState === 'disconnected' ||
-          serverStatus.connectionState === 'error' ||
-          (serverStatus.connectionState === 'connected' && hasAuthConfig);
-
-        if (!wouldShowButton) {
-          return; // Don't open dialog if no button would be shown
-        }
-
-        // Create tool object if it doesn't exist
-        const configTool = tool || {
-          name: serverName,
-          pluginKey: `${Constants.mcp_prefix}${serverName}`,
-          authConfig: serverConfig?.customUserVars
-            ? Object.entries(serverConfig.customUserVars).map(([key, config]) => ({
-                authField: key,
-                label: config.title,
-                description: config.description,
-              }))
-            : [],
-          authenticated: false,
-        };
-
-        previousFocusRef.current = document.activeElement as HTMLElement;
-
-        // Open the config dialog on error
-        setSelectedToolForConfig(configTool);
-        setIsConfigModalOpen(true);
-      },
-    });
-
   const renderSelectedValues = useCallback(
     (values: string[], placeholder?: string) => {
       if (values.length === 0) {
@@ -97,9 +42,8 @@ function MCPSelect() {
       const mainContentWrapper = (
         <button
           type="button"
-          className={`flex flex-grow items-center rounded bg-transparent p-0 text-left transition-colors focus:outline-none ${
-            isServerInitializing ? 'opacity-50' : ''
-          }`}
+          className={`flex flex-grow items-center rounded bg-transparent p-0 text-left transition-colors focus:outline-none ${isServerInitializing ? 'opacity-50' : ''
+            }`}
           tabIndex={0}
           disabled={isServerInitializing}
         >
