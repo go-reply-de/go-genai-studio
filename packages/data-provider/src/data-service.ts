@@ -149,6 +149,12 @@ export const getMCPConnectionStatus = (): Promise<q.MCPConnectionStatusResponse>
   return request.get(endpoints.mcpConnectionStatus());
 };
 
+export const getMCPServerConnectionStatus = (
+  serverName: string,
+): Promise<q.MCPServerConnectionStatusResponse> => {
+  return request.get(endpoints.mcpServerConnectionStatus(serverName));
+};
+
 export const getMCPAuthValues = (serverName: string): Promise<q.MCPAuthValuesResponse> => {
   return request.get(endpoints.mcpAuthValues(serverName));
 };
@@ -809,8 +815,8 @@ export function confirmTwoFactor(payload: t.TVerify2FARequest): Promise<t.TVerif
   return request.post(endpoints.confirmTwoFactor(), payload);
 }
 
-export function disableTwoFactor(): Promise<t.TDisable2FAResponse> {
-  return request.post(endpoints.disableTwoFactor());
+export function disableTwoFactor(payload?: t.TDisable2FARequest): Promise<t.TDisable2FAResponse> {
+  return request.post(endpoints.disableTwoFactor(), payload);
 }
 
 export function regenerateBackupCodes(): Promise<t.TRegenerateBackupCodesResponse> {

@@ -1,53 +1,15 @@
 const { logger } = require('@librechat/data-schemas');
-const { CacheKeys, AuthType, Constants } = require('librechat-data-provider');
+const { CacheKeys, Constants } = require('librechat-data-provider');
+const {
+  getToolkitKey,
+  checkPluginAuth,
+  filterUniquePlugins,
+  convertMCPToolsToPlugins,
+} = require('@librechat/api');
 const { getCustomConfig, getCachedTools } = require('~/server/services/Config');
-const { getToolkitKey } = require('~/server/services/ToolService');
+const { availableTools, toolkits } = require('~/app/clients/tools');
 const { getMCPManager, getFlowStateManager } = require('~/config');
-const { availableTools } = require('~/app/clients/tools');
 const { getLogStores } = require('~/cache');
-
-/**
- * Filters out duplicate plugins from the list of plugins.
- *
- * @param {TPlugin[]} plugins The list of plugins to filter.
- * @returns {TPlugin[]} The list of plugins with duplicates removed.
- */
-const filterUniquePlugins = (plugins) => {
-  const seen = new Set();
-  return plugins.filter((plugin) => {
-    const duplicate = seen.has(plugin.pluginKey);
-    seen.add(plugin.pluginKey);
-    return !duplicate;
-  });
-};
-
-/**
- * Determines if a plugin is authenticated by checking if all required authentication fields have non-empty values.
- * Supports alternate authentication fields, allowing validation against multiple possible environment variables.
- *
- * @param {TPlugin} plugin The plugin object containing the authentication configuration.
- * @returns {boolean} True if the plugin is authenticated for all required fields, false otherwise.
- */
-const checkPluginAuth = (plugin) => {
-  if (!plugin.authConfig || plugin.authConfig.length === 0) {
-    return false;
-  }
-
-  return plugin.authConfig.every((authFieldObj) => {
-    const authFieldOptions = authFieldObj.authField.split('||');
-    let isFieldAuthenticated = false;
-
-    for (const fieldOption of authFieldOptions) {
-      const envValue = process.env[fieldOption];
-      if (envValue && envValue.trim() !== '' && envValue !== AuthType.USER_PROVIDED) {
-        isFieldAuthenticated = true;
-        break;
-      }
-    }
-
-    return isFieldAuthenticated;
-  });
-};
 
 const getAvailablePluginsController = async (req, res) => {
   try {
@@ -143,9 +105,9 @@ const getAvailableTools = async (req, res) => {
     const cache = getLogStores(CacheKeys.CONFIG_STORE);
     const cachedToolsArray = await cache.get(CacheKeys.TOOLS);
     const cachedUserTools = await getCachedTools({ userId });
-    const userPlugins = convertMCPToolsToPlugins(cachedUserTools, customConfig);
+    const userPlugins = convertMCPToolsToPlugins({ functionTools: cachedUserTools, customConfig });
 
-    if (cachedToolsArray && userPlugins) {
+    if (cachedToolsArray != null && userPlugins != null) {
       const dedupedTools = filterUniquePlugins([...userPlugins, ...cachedToolsArray]);
       res.status(200).json(dedupedTools);
       return;
@@ -185,7 +147,9 @@ const getAvailableTools = async (req, res) => {
       const isToolDefined = toolDefinitions[plugin.pluginKey] !== undefined;
       const isToolkit =
         plugin.toolkit === true &&
-        Object.keys(toolDefinitions).some((key) => getToolkitKey(key) === plugin.pluginKey);
+        Object.keys(toolDefinitions).some(
+          (key) => getToolkitKey({ toolkits, toolName: key }) === plugin.pluginKey,
+        );
 
       if (!isToolDefined && !isToolkit) {
         continue;
