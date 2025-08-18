@@ -402,6 +402,11 @@ spec:
                 secretKeyRef:
                   key: OPENAI_API_KEY
                   name: librechat-credentials-env
+            - name: OPENAI_MODELS
+              valueFrom:
+                secretKeyRef:
+                  key: OPENAI_MODELS
+                  name: env
             - name: OPENAI_MODERATION
               valueFrom:
                 configMapKeyRef:
