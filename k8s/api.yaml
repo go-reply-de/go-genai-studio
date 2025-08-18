@@ -404,7 +404,7 @@ spec:
                   name: librechat-credentials-env
             - name: OPENAI_MODELS
               valueFrom:
-                secretKeyRef:
+                configMapKeyRef:
                   key: OPENAI_MODELS
                   name: env
             - name: OPENAI_MODERATION
