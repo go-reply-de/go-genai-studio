@@ -597,6 +597,9 @@ spec:
   resources:
     requests:
       storage: 5Gi
+  volumeName: api-branding-pv
+  storageClassName: ""
+  volumeMode: Filesystem
 ---
 apiVersion: v1
 kind: ServiceAccount
