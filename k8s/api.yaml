@@ -498,6 +498,9 @@ spec:
             - mountPath: /app/librechat.yaml
               name: config
               subPath: librechat.yaml
+            - mountPath: /app/clients/tools/manifest.json
+              name: plugin-manifest
+              subPath: manifest.json
             - mountPath: /app/client/public/images
               name: api-images
             - mountPath: /app/client/dist/assets
@@ -516,6 +519,12 @@ spec:
                 path: librechat.yaml
             name: config
           name: config
+        - configMap:
+            items:
+              - key: manifest.json
+                path: manifest.json
+            name: plugin-manifest
+          name: plugin-manifest
         - name: api-images
           persistentVolumeClaim:
             claimName: api-images
