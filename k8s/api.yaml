@@ -498,7 +498,7 @@ spec:
             - mountPath: /app/librechat.yaml
               name: config
               subPath: librechat.yaml
-            - mountPath: /app/clients/tools/manifest.json
+            - mountPath: /app/api/app/clients/tools/manifest.json
               name: plugin-manifest
               subPath: manifest.json
             - mountPath: /app/client/public/images
