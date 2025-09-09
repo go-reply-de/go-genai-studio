@@ -183,7 +183,7 @@ const loadTools = async ({
       return new GoogleVertexAI(authValues, agent?.model);
     },
     web_grounding_enterprise: async (_toolContextMap) => {
-      return new WebGroundingEnterprise(agent?.model);
+      return new WebGroundingEnterprise({ isAgent: !!agent }, agent?.model);
     },
     imagen_vertex: async (_toolContextMap) => {
       return createVertexAIImageTool({ isAgent: !!agent }, 'imagen-3.0-generate-002');

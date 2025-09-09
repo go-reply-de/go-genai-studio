@@ -10,11 +10,14 @@ class WebGroundingEnterprise extends Tool {
         return field || process.env[envVar] || defaultValue;
     }
 
-    constructor(geminiModel) {
+    constructor(fields = {}, geminiModel) {
         super();
         this.name = 'web_grounding_enterprise';
         this.description =
             'Use the GDPR-compliant \'web_grounding_enterprise\' tool to retrieve search results from the web.';
+
+        /* Used to initialize the Tool without necessary variables. */
+        this.override = fields.override ?? false;
 
         let serviceKey = {};
         try {
@@ -35,13 +38,14 @@ class WebGroundingEnterprise extends Tool {
 
         // Define schema
         this.schema = z.object({
-            query: z.string().describe('Search word or phrase to Vertex AI Search'),
+            query: z.string().describe('Search word or phrase for the Web Grounding Enterprise tool'),
         });
 
         // Initialize properties using helper function
         this.projectId = this.project_id
         this.location = process.env.GOOGLE_LOC
 
+        // Check for required fields if not overridden
         if (!this.override) {
             if (!this.projectId) {
                 throw new Error('Missing required field: PROJECT_ID.');
