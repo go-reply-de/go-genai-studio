@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: metrics-exporter
-        image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/metrics_exporter:latest
+        image: ghcr.io/virtuos/librechat_exporter:2.1.0
         ports:
         - name: metrics-port
           containerPort: 8000
