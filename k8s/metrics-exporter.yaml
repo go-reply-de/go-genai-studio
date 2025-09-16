@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metrics-exporter
+  labels:
+    app: metrics-exporter
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: metrics-exporter
+  template:
+    metadata:
+      labels:
+        app: metrics-exporter
+    spec:
+      containers:
+      - name: metrics-exporter
+        image: ghcr.io/virtuos/librechat_exporter:2.1.0
+        imagePullPolicy: Always
+        ports:
+        - name: metrics-port
+          containerPort: 8000
+        env:
+        - name: MONGODB_URI
+          valueFrom:
+            configMapKeyRef:
+              key: MONGO_URI
+              name: env
+        - name: LOGGING_LEVEL
+          value: "info"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: metrics-exporter-service
+  labels:
+    app: metrics-exporter
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  selector:
+    app: metrics-exporter
+  ports:
+  - name: metrics
+    port: 8000
+    targetPort: metrics-port
+
+---
+# This is the official GMP resource for configuring a scrape target.
+# It tells the managed collector to find pods with the label 'app: metrics-exporter'
+# and scrape the 'metrics-port' every 60 seconds.
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: metrics-exporter-monitoring
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  selector:
+    matchLabels:
+      app: metrics-exporter
+  endpoints:
+  - port: metrics-port
+    interval: 60s 
+
