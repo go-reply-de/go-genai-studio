@@ -196,6 +196,13 @@
     ]
   },
   {
+    "name": "Web Grounding",
+    "pluginKey": "web_grounding_enterprise",
+    "description": "Search and interact with the GDPR-compliant grounded Google tool Web Grounding for Enterprise.",
+    "icon": "https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg",
+    "authConfig": []
+  },
+  {
     "name": "Google Imagen",
     "pluginKey": "imagen_vertex",
     "description": "Image Generation using Google Cloud's Vertex AI Imagen models. Requires Google Cloud project setup and authentication.",
