@@ -145,7 +145,7 @@ steps:
 
 - name: "gcr.io/cloud-builders/kubectl"
   id: 'Apply K8S components'
-  args: ["apply", "-f", "./k8s/env.yaml", "-f", "./k8s/mongodb.yaml", "-f", "./k8s/meilisearch.yaml", "-f", "./k8s/maintenance-page.yaml", "--namespace=${_GKE_NAMESPACE}"]
+  args: ["apply", "-f", "./k8s/env.yaml", "-f", "./k8s/mongodb.yaml", "-f", "./k8s/meilisearch.yaml", "-f", "./k8s/maintenance-page.yaml", "-f", "./k8s/metrics-exporter.yaml", "--namespace=${_GKE_NAMESPACE}"]
   env:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
