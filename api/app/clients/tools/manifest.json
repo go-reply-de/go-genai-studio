@@ -196,7 +196,7 @@
     ]
   },
   {
-    "name": "Web Grounding for Enterprise",
+    "name": "Web Grounding",
     "pluginKey": "web_grounding_enterprise",
     "description": "Search and interact with the GDPR-compliant grounded Google tool Web Grounding for Enterprise.",
     "icon": "https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg",
