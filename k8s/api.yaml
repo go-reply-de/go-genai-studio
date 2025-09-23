@@ -591,9 +591,6 @@ spec:
   csi:
     driver: gcsfuse.csi.storage.gke.io
     volumeHandle: ###_BRANDING_BUCKET_NAME###
-  claimRef:
-    name: api-branding-pvc
-    namespace: ###_GKE_NAMESPACE###
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
