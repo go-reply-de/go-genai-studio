@@ -186,7 +186,7 @@ const loadTools = async ({
       return new WebGroundingEnterprise({ isAgent: !!agent }, agent?.model);
     },
     imagen_vertex: async (_toolContextMap) => {
-      return createVertexAIImageTool({ isAgent: !!agent }, 'imagen-3.0-generate-002');
+      return createVertexAIImageTool({ isAgent: !!agent }, 'imagen-4.0-generate-001');
     },
     image_gen_oai: async (toolContextMap) => {
       const authFields = getAuthFields('image_gen_oai');

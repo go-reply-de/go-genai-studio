@@ -15,7 +15,7 @@ const displayMessage =
  * @param {string} imagenModelId - The model ID to use for image generation.
  * @returns {import('@langchain/core/tools').Tool} - The configured Vertex AI image generation tool.
  */
-function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-3.0-generate-002') {
+function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-4.0-generate-001') {
   let serviceKey = {};
   try {
     serviceKey = require('~/data/auth.json');
@@ -32,7 +32,7 @@ function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-3.0-genera
     throw new Error('This tool is only available for agents.');
   }
   const project_id = serviceKey.project_id || process.env.GOOGLE_CLOUD_PROJECT;
-  const location = 'us-central1';
+  const location = 'europe-west3';
 
   if (!project_id) {
     throw new Error('[ImagenTool] Google Cloud Project ID is missing.');
@@ -52,7 +52,7 @@ function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-3.0-genera
   const predictionServiceClient = new PredictionServiceClient(clientOptions);
 
   const imagenTool = tool(
-    async ({ prompt, n = 1, quality = 'standard', size = '1:1', negativePrompt }) => {
+    async ({ prompt, n = 1, resolution = '1K', size = '1:1', negativePrompt }) => {
       const endpoint = `projects/${project_id}/locations/${location}/publishers/google/models/${imagenModelId}`;
 
       try {
@@ -61,7 +61,7 @@ function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-3.0-genera
         const generationParams = {
           sampleCount: n,
           aspectRatio: size,
-          quality: quality,
+          sampleImageSize: resolution,
         };
 
         if (negativePrompt) {
@@ -132,10 +132,10 @@ function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-3.0-genera
           .max(8)
           .optional()
           .describe('Number of images to generate (1-8). Defaults to 1.'),
-        quality: z
-          .enum(['standard', 'hd'])
+        resolution: z
+          .enum(['1K', '2K'])
           .optional()
-          .describe("Image quality: 'standard' or 'hd'. Defaults to 'standard'."),
+          .describe("Image resolution: '1K' or '2K'. Defaults to '1K'."),
         size: z
           .enum(['1:1', '16:9', '9:16', '4:3', '3:4'])
           .optional()
