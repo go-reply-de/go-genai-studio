@@ -61,7 +61,7 @@ function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-4.0-genera
         const generationParams = {
           sampleCount: n,
           aspectRatio: size,
-          imageResolution: resolution,
+          sampleImageSize: resolution,
         };
 
         if (negativePrompt) {
