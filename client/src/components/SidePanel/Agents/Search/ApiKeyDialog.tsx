@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Button, OGDialog, OGDialogTemplate } from '@librechat/client';
 import {
   AuthType,
   SearchCategories,
@@ -9,8 +10,6 @@ import {
 import type { SearchApiKeyFormData } from '~/hooks/Plugins/useAuthSearchTool';
 import type { UseFormRegister, UseFormHandleSubmit } from 'react-hook-form';
 import InputSection, { type DropdownOption } from './InputSection';
-import OGDialogTemplate from '~/components/ui/OGDialogTemplate';
-import { Button, OGDialog } from '~/components/ui';
 import { useGetStartupConfig } from '~/data-provider';
 import { useLocalize } from '~/hooks';
 
@@ -90,6 +89,14 @@ export default function ApiKeyDialog({
           link: {
             url: 'https://jina.ai/api-dashboard/',
             text: localize('com_ui_web_search_reranker_jina_key'),
+          },
+        },
+        jinaApiUrl: {
+          placeholder: localize('com_ui_web_search_jina_url'),
+          type: 'text' as const,
+          link: {
+            url: 'https://api.jina.ai/v1/rerank',
+            text: localize('com_ui_web_search_reranker_jina_url_help'),
           },
         },
       },

@@ -1,5 +1,5 @@
 import { RefObject } from 'react';
-import { FileSources, EModelEndpoint } from 'librechat-data-provider';
+import { Constants, FileSources, EModelEndpoint } from 'librechat-data-provider';
 import type { UseMutationResult } from '@tanstack/react-query';
 import type * as InputNumberPrimitive from 'rc-input-number';
 import type { SetterOrUpdater, RecoilState } from 'recoil';
@@ -7,6 +7,15 @@ import type { ColumnDef } from '@tanstack/react-table';
 import type * as t from 'librechat-data-provider';
 import type { LucideIcon } from 'lucide-react';
 import type { TranslationKeys } from '~/hooks';
+
+export function isEphemeralAgent(agentId: string | null | undefined): boolean {
+  return agentId == null || agentId === '' || agentId === Constants.EPHEMERAL_AGENT_ID;
+}
+
+export interface ConfigFieldDetail {
+  title: string;
+  description: string;
+}
 
 export type CodeBarProps = {
   lang: string;
@@ -206,8 +215,18 @@ export type AgentPanelProps = {
   setActivePanel: React.Dispatch<React.SetStateAction<Panel>>;
   setMcp: React.Dispatch<React.SetStateAction<t.MCP | undefined>>;
   setAction: React.Dispatch<React.SetStateAction<t.Action | undefined>>;
+  endpointsConfig?: t.TEndpointsConfig;
   setCurrentAgentId: React.Dispatch<React.SetStateAction<string | undefined>>;
+  agentsConfig?: t.TAgentsEndpoint | null;
 };
+
+export interface MCPServerInfo {
+  serverName: string;
+  tools: t.AgentToolType[];
+  isConfigured: boolean;
+  isConnected: boolean;
+  metadata: t.TPlugin;
+}
 
 export type AgentPanelContextType = {
   action?: t.Action;
@@ -217,14 +236,16 @@ export type AgentPanelContextType = {
   mcps?: t.MCP[];
   setMcp: React.Dispatch<React.SetStateAction<t.MCP | undefined>>;
   setMcps: React.Dispatch<React.SetStateAction<t.MCP[] | undefined>>;
-  tools: t.AgentToolType[];
   activePanel?: string;
+  regularTools?: t.TPlugin[];
   setActivePanel: React.Dispatch<React.SetStateAction<Panel>>;
   setCurrentAgentId: React.Dispatch<React.SetStateAction<string | undefined>>;
-  groupedTools?: Record<string, t.AgentToolType & { tools?: t.AgentToolType[] }>;
   agent_id?: string;
+  startupConfig?: t.TStartupConfig | null;
   agentsConfig?: t.TAgentsEndpoint | null;
   endpointsConfig?: t.TEndpointsConfig | null;
+  /** Pre-computed MCP server information indexed by server key */
+  mcpServersMap: Map<string, MCPServerInfo>;
 };
 
 export type AgentModelPanelProps = {
@@ -335,17 +356,15 @@ export type TAskProps = {
 
 export type TOptions = {
   editedMessageId?: string | null;
+  editedContent?: t.TEditedContent;
   editedText?: string | null;
-  editedContent?: {
-    index: number;
-    text: string;
-    type: 'text' | 'think';
-  };
   isRegenerate?: boolean;
   isContinued?: boolean;
   isEdited?: boolean;
   overrideMessages?: t.TMessage[];
-  /** Currently only utilized when resubmitting user-created message, uses that message's currently attached files */
+  /** This value is only true when the user submits a message with "Save & Submit" for a user-created message */
+  isResubmission?: boolean;
+  /** Currently only utilized when `isResubmission === true`, uses that message's currently attached files */
   overrideFiles?: t.TMessage['files'];
 };
 

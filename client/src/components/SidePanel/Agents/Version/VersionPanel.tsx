@@ -1,28 +1,22 @@
 import { ChevronLeft } from 'lucide-react';
 import { useCallback, useMemo } from 'react';
+import { useToastContext } from '@librechat/client';
 import { useGetAgentByIdQuery, useRevertAgentVersionMutation } from '~/data-provider';
 import type { AgentWithVersions, VersionContext } from './types';
 import { isActiveVersion } from './isActiveVersion';
 import { useAgentPanelContext } from '~/Providers';
-import { useLocalize, useToast } from '~/hooks';
 import VersionContent from './VersionContent';
+import { useLocalize } from '~/hooks';
 import { Panel } from '~/common';
 
 export default function VersionPanel() {
   const localize = useLocalize();
-  const { showToast } = useToast();
+  const { showToast } = useToastContext();
   const { agent_id, setActivePanel } = useAgentPanelContext();
 
   const selectedAgentId = agent_id ?? '';
 
-  const {
-    data: agent,
-    isLoading,
-    error,
-    refetch,
-  } = useGetAgentByIdQuery(selectedAgentId, {
-    enabled: !!selectedAgentId && selectedAgentId !== '',
-  });
+  const { data: agent, isLoading, error, refetch } = useGetAgentByIdQuery(selectedAgentId);
 
   const revertAgentVersion = useRevertAgentVersionMutation({
     onSuccess: () => {
