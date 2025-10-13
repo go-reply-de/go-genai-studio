@@ -119,10 +119,6 @@ https://www.librechat.ai/docs/configuration/stt_tts`);
     .filter((endpoint) => endpoint.customParams)
     .forEach((endpoint) => parseCustomParams(endpoint.name, endpoint.customParams));
 
-  if (customConfig.cache) {
-    const cache = getLogStores(CacheKeys.CONFIG_STORE);
-    await cache.set(CacheKeys.CUSTOM_CONFIG, customConfig);
-  }
 
   if (result.data.modelSpecs) {
     customConfig.modelSpecs = result.data.modelSpecs;
