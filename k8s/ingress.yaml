@@ -1,0 +1,44 @@
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: genai-studio-managed-cert-###ENVIRONMENT###
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  domains:
+    - ###DOMAIN###
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: genai-studio-managed-ingress-###ENVIRONMENT###
+  namespace: ###_GKE_NAMESPACE###
+  annotations:
+    kubernetes.io/ingress.global-static-ip-name: ###IP_ADDRESS_ID###
+    networking.gke.io/managed-certificates: genai-studio-managed-cert-###ENVIRONMENT###
+    kubernetes.io/ingress.class: gce
+    networking.gke.io/v1beta1.FrontendConfig: genai-studio-managed-ingress-###ENVIRONMENT###-frontend-config
+spec:
+  defaultBackend:
+    service:
+      name: api-service
+      port:
+        number: 80
+---
+apiVersion: networking.gke.io/v1beta1
+kind: FrontendConfig
+metadata:
+  name: genai-studio-managed-ingress-###ENVIRONMENT###-frontend-config
+spec:
+  redirectToHttps:
+    enabled: true
+    responseCodeName: "MOVED_PERMANENTLY_DEFAULT"
+---
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: genai-studio-managed-ingress-###ENVIRONMENT###-backend-config
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  timeoutSec: 300
+  securityPolicy:
+    name: ###_SECURITY_POLICY###

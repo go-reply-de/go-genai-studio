@@ -32,7 +32,7 @@ function Footer({ startupConfig }: { startupConfig: TStartupConfig | null | unde
   );
 
   return (
-    <div className="align-end m-4 flex justify-center gap-2" role="contentinfo">
+    <div className="absolute bottom-4 right-0 mr-3 flex flex-row content-center gap-2 md:m-4" role="contentinfo">
       {privacyPolicyRender}
       {privacyPolicyRender && termsOfServiceRender && (
         <div className="border-r-[1px] border-gray-300 dark:border-gray-600" />

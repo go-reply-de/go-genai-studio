@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: testpod
+spec:
+  containers:
+  - name: testcontainer
+    image: busybox
+    command: ["sh", "-c", "while true; do sleep 30; done"] # Replace with your application
+    volumeMounts:
+    # - name: test-pvc-pgdata
+    #   mountPath: /mnt/pgdata
+    # - name: test-pvc-meilisearch-claim0
+    #   mountPath: /mnt/meilisearch-claim0
+    - name: test-pvc-mongodb-claim0
+      mountPath: /mnt/mongodb-claim0
+  volumes:
+  # - name: test-pvc-pgdata
+  #   persistentVolumeClaim:
+  #     claimName: pgdata
+  # - name: test-pvc-meilisearch-claim0
+  #   persistentVolumeClaim:
+  #     claimName: meilisearch-claim0
+  - name: test-pvc-mongodb-claim0
+    persistentVolumeClaim:
+      claimName: mongodb-claim0

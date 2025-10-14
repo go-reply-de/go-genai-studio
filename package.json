@@ -153,5 +153,12 @@
       "admin/",
       "packages/"
     ]
+  },
+  "dependencies": {
+    "@google-cloud/aiplatform": "^4.1.0",
+    "@google-cloud/storage": "^7.16.0",
+    "@google-cloud/vertexai": "^1.10.0",
+    "react-markdown": "^10.1.0",
+    "rehype-raw": "^7.0.0"
   }
 }

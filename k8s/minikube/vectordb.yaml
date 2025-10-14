@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: vectordb-dev
+  name: vectordb-dev
+
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vectordb-dev
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: vectordb-dev
+    spec:
+      containers:
+        - env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  key: POSTGRES_DB
+                  name: librechat-credentials-env
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  key: POSTGRES_USER
+                  name: librechat-credentials-env
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: POSTGRES_PASSWORD
+                  name: librechat-credentials-env
+          image: ankane/pgvector:latest
+          name: vectordb-dev
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+          volumeMounts:
+            - mountPath: /var/lib/postgresql/data
+              name: pgdata
+              subPath: data
+      restartPolicy: Always
+      volumes:
+        - name: pgdata
+          persistentVolumeClaim:
+            claimName: pgdata
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: vectordb-dev-service
+  name: vectordb-dev-service
+
+spec:
+  ports:
+    - name: "tcp"
+      port: 5432
+      targetPort: 5432
+  selector:
+    app: vectordb-dev
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    app: pgdata
+  name: pgdata
+
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Mi

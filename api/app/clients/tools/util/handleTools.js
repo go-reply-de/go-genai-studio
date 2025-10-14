@@ -21,6 +21,8 @@ const {
   manifestToolMap,
   // Basic Tools
   GoogleSearchAPI,
+  GoogleVertexAI,
+  WebGroundingEnterprise,
   // Structured Tools
   DALLE3,
   FluxAPI,
@@ -32,6 +34,7 @@ const {
   createYouTubeTools,
   TavilySearchResults,
   createOpenAIImageTools,
+  createVertexAIImageTool,
 } = require('../');
 const { primeFiles: primeCodeFiles } = require('~/server/services/Files/Code/process');
 const { createFileSearchTool, primeFiles: primeSearchFiles } = require('./fileSearch');
@@ -196,6 +199,17 @@ const loadTools = async ({
       const authFields = getAuthFields('youtube');
       const authValues = await loadAuthValues({ userId: user, authFields });
       return createYouTubeTools(authValues);
+    },
+    vertex_ai: async (_toolContextMap) => {
+      const authFields = getAuthFields('vertex_ai');
+      const authValues = await loadAuthValues({ userId: user, authFields });
+      return new GoogleVertexAI(authValues, agent?.model);
+    },
+    web_grounding_enterprise: async (_toolContextMap) => {
+      return new WebGroundingEnterprise({ isAgent: !!agent }, agent?.model);
+    },
+    imagen_vertex: async (_toolContextMap) => {
+      return createVertexAIImageTool({ isAgent: !!agent }, 'imagen-4.0-generate-001');
     },
     image_gen_oai: async (toolContextMap) => {
       const authFields = getAuthFields('image_gen_oai');
