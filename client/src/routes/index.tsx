@@ -13,6 +13,7 @@ import AgentMarketplace from '~/components/Agents/Marketplace';
 import { OAuthSuccess, OAuthError } from '~/components/OAuth';
 import { AuthContextProvider } from '~/hooks/AuthContext';
 import RouteErrorBoundary from './RouteErrorBoundary';
+import TermsOfService from './TermsOfService';
 import StartupLayout from './Layouts/Startup';
 import LoginLayout from './Layouts/Login';
 import dashboardRoutes from './Dashboard';
@@ -70,6 +71,11 @@ export const router = createBrowserRouter(
           element: <ResetPassword />,
         },
       ],
+    },
+    {
+      path: '/tos',
+      element: <TermsOfService />,
+      errorElement: <RouteErrorBoundary />,
     },
     {
       path: 'verify',

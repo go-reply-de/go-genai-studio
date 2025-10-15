@@ -17,18 +17,7 @@
     "pluginKey": "google",
     "description": "Use Google Search to find information about the weather, news, sports, and more.",
     "icon": "https://i.imgur.com/SMmVkNB.png",
-    "authConfig": [
-      {
-        "authField": "GOOGLE_CSE_ID",
-        "label": "Google CSE ID",
-        "description": "This is your Google Custom Search Engine ID. For instructions on how to obtain this, see <a href='https://github.com/danny-avila/LibreChat/blob/main/docs/features/plugins/google_search.md'>Our Docs</a>."
-      },
-      {
-        "authField": "GOOGLE_SEARCH_API_KEY",
-        "label": "Google API Key",
-        "description": "This is your Google Custom Search API Key. For instructions on how to obtain this, see <a href='https://github.com/danny-avila/LibreChat/blob/main/docs/features/plugins/google_search.md'>Our Docs</a>."
-      }
-    ]
+    "authConfig": []
   },
   {
     "name": "YouTube",
@@ -192,5 +181,32 @@
         "description": "Provide your Flux API key from your user profile."
       }
     ]
+  },
+  {
+    "name": "Vertex AI Search",
+    "pluginKey": "vertex_ai",
+    "description": "Search and interact with Google Vertex AI, grounding the model with information from a Vertex AI Search data store. Use this tool when you need to generate text, answer questions, or perform tasks grounded in specific documents.",
+    "icon": "https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg",
+    "authConfig": [
+      {
+        "authField": "VERTEX_AI_DATASTORE_ID",
+        "label": "Vertex AI Data Store ID",
+        "description": "The ID of your Vertex AI Search data store."
+      }
+    ]
+  },
+  {
+    "name": "Web Grounding",
+    "pluginKey": "web_grounding_enterprise",
+    "description": "Search and interact with the GDPR-compliant grounded Google tool Web Grounding for Enterprise.",
+    "icon": "https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg",
+    "authConfig": []
+  },
+  {
+    "name": "Google Imagen",
+    "pluginKey": "imagen_vertex",
+    "description": "Image Generation using Google Cloud's Vertex AI Imagen models. Requires Google Cloud project setup and authentication.",
+    "icon": "https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg",
+    "authConfig": []
   }
 ]

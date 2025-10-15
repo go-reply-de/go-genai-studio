@@ -37,9 +37,9 @@ export default function Footer({ className }: { className?: string }) {
   const mainContentParts = (
     typeof config?.customFooter === 'string'
       ? config.customFooter
-      : '[LibreChat ' +
+      : '[Go GenAI Studio ' +
         Constants.VERSION +
-        '](https://librechat.ai) - ' +
+        '](https://www.reply.com/go-reply/en/) - ' +
         localize('com_ui_latest_footer')
   ).split('|');
 
