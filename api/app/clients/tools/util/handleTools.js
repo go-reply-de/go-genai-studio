@@ -21,6 +21,8 @@ const {
   manifestToolMap,
   // Basic Tools
   GoogleSearchAPI,
+  GoogleVertexAI,
+  WebGroundingEnterprise,
   // Structured Tools
   DALLE3,
   FluxAPI,
