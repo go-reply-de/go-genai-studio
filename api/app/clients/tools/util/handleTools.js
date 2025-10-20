@@ -208,7 +208,7 @@ const loadTools = async ({
     web_grounding_enterprise: async (_toolContextMap) => {
       return new WebGroundingEnterprise({ isAgent: !!agent }, agent?.model);
     },
-    imagen_vertex: async (_toolContextMap) => {
+    imagen: async (_toolContextMap) => {
       return createVertexAIImageTool({ isAgent: !!agent }, 'imagen-4.0-generate-001');
     },
     image_gen_oai: async (toolContextMap) => {
