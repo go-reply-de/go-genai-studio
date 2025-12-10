@@ -177,9 +177,24 @@ const loadTools = async ({
       const authValues = await loadAuthValues({ userId: user, authFields });
       return createYouTubeTools(authValues);
     },
-    vertex_ai: async (_toolContextMap) => {
+    vertex_ai: async (toolContextMap) => {
       const authFields = getAuthFields('vertex_ai');
       const authValues = await loadAuthValues({ userId: user, authFields });
+      let toolContext = `
+        After generating a response, list your information sources in a designated, isolated section.
+
+        Requirements:
+        1. Display sources as an enumerated list based on groundingChunkIndices.
+        2. Make links clickable (e.g. [FILE_NAME](uri)). URIs and names are in groundingMetadata.
+        3. If there are no sources, do not show the footer.
+        4. Translate the "Sources" footer to the language of the response.
+
+        **IMPORTANT:**
+        - Convert "gs://" URIs to "https://storage.cloud.google.com/".
+        - Separate the sources footer from the main content with a Markdown horizontal rule (---).
+        - **CRITICAL:** You must insert a blank line before and after the "---" for it to render correctly.
+      `;
+      toolContextMap.vertex_ai = toolContext;
       return new GoogleVertexAI(authValues, agent?.model);
     },
     web_grounding_enterprise: async (_toolContextMap) => {
