@@ -4,6 +4,7 @@ const { PredictionServiceClient, helpers } = require('@google-cloud/aiplatform')
 const { v4 } = require('uuid');
 const { logger } = require('~/config');
 const { ContentTypes } = require('librechat-data-provider');
+const { googleToolkit } = require('@librechat/api');
 
 // This is the message the AI will see. It instructs the AI to be concise.
 const displayMessage =
@@ -119,34 +120,7 @@ function createVertexAIImageTool(fields = {}, imagenModelId = 'imagen-4.0-genera
         return `An error occurred with the Imagen tool: ${error.message}`;
       }
     },
-    {
-      name: 'imagen_vertex',
-      description:
-        'Generates one or more images using Google Vertex AI Imagen from a text prompt. Use this for creating original images.',
-      schema: z.object({
-        prompt: z.string().min(1).max(4000).describe('A detailed text prompt for the image.'),
-        n: z
-          .number()
-          .int()
-          .min(1)
-          .max(8)
-          .optional()
-          .describe('Number of images to generate (1-8). Defaults to 1.'),
-        resolution: z
-          .enum(['1K', '2K'])
-          .optional()
-          .describe("Image resolution: '1K' or '2K'. Defaults to '1K'."),
-        size: z
-          .enum(['1:1', '16:9', '9:16', '4:3', '3:4'])
-          .optional()
-          .describe("Aspect ratio of the image. Defaults to '1:1'."),
-        negativePrompt: z
-          .string()
-          .optional()
-          .describe('A prompt of what to exclude from the image.'),
-      }),
-      responseFormat: 'content_and_artifact',
-    },
+    googleToolkit.imagen,
   );
 
   return [imagenTool];

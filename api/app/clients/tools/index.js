@@ -1,4 +1,4 @@
-const availableTools = require('./manifest.json');
+const manifest = require('./manifest');
 
 // Structured Tools
 const DALLE3 = require('./structured/DALLE3');
@@ -16,23 +16,8 @@ const createOpenAIImageTools = require('./structured/OpenAIImageTools');
 const TavilySearchResults = require('./structured/TavilySearchResults');
 const createVertexAIImageTool = require('./structured/Imagen');
 
-/** @type {Record<string, TPlugin | undefined>} */
-const manifestToolMap = {};
-
-/** @type {Array<TPlugin>} */
-const toolkits = [];
-
-availableTools.forEach((tool) => {
-  manifestToolMap[tool.pluginKey] = tool;
-  if (tool.toolkit === true) {
-    toolkits.push(tool);
-  }
-});
-
 module.exports = {
-  toolkits,
-  availableTools,
-  manifestToolMap,
+  ...manifest,
   // Structured Tools
   DALLE3,
   FluxAPI,

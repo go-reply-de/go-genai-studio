@@ -1,13 +1,13 @@
 const OpenAI = require('openai');
 const { ProxyAgent } = require('undici');
+const { isUserProvided } = require('@librechat/api');
 const { ErrorTypes, EModelEndpoint } = require('librechat-data-provider');
 const {
   getUserKeyValues,
   getUserKeyExpiry,
   checkUserKeyExpiry,
 } = require('~/server/services/UserService');
-const OpenAIClient = require('~/app/clients/OpenAIClient');
-const { isUserProvided } = require('~/server/utils');
+const OAIClient = require('~/app/clients/OpenAIClient');
 
 const initializeClient = async ({ req, res, endpointOption, version, initAppClient = false }) => {
   const { PROXY, OPENAI_ORGANIZATION, ASSISTANTS_API_KEY, ASSISTANTS_BASE_URL } = process.env;
@@ -79,7 +79,7 @@ const initializeClient = async ({ req, res, endpointOption, version, initAppClie
   openai.res = res;
 
   if (endpointOption && initAppClient) {
-    const client = new OpenAIClient(apiKey, clientOptions);
+    const client = new OAIClient(apiKey, clientOptions);
     return {
       client,
       openai,

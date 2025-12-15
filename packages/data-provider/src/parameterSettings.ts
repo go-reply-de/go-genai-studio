@@ -1,4 +1,5 @@
 import {
+  Verbosity,
   ImageDetail,
   EModelEndpoint,
   openAISettings,
@@ -138,6 +139,18 @@ export const librechat = {
     placeholderCode: true,
     optionType: 'model',
   } as const,
+  fileTokenLimit: {
+    key: 'fileTokenLimit',
+    label: 'com_ui_file_token_limit',
+    labelCode: true,
+    description: 'com_ui_file_token_limit_desc',
+    descriptionCode: true,
+    placeholder: 'com_nav_theme_system',
+    placeholderCode: true,
+    type: 'number',
+    component: 'input',
+    columnSpan: 2,
+  } as const,
 };
 
 const openAIParams: Record<string, SettingDefinition> = {
@@ -217,16 +230,20 @@ const openAIParams: Record<string, SettingDefinition> = {
     description: 'com_endpoint_openai_reasoning_effort',
     descriptionCode: true,
     type: 'enum',
-    default: ReasoningEffort.none,
+    default: ReasoningEffort.unset,
     component: 'slider',
     options: [
+      ReasoningEffort.unset,
       ReasoningEffort.none,
+      ReasoningEffort.minimal,
       ReasoningEffort.low,
       ReasoningEffort.medium,
       ReasoningEffort.high,
     ],
     enumMappings: {
+      [ReasoningEffort.unset]: 'com_ui_auto',
       [ReasoningEffort.none]: 'com_ui_none',
+      [ReasoningEffort.minimal]: 'com_ui_minimal',
       [ReasoningEffort.low]: 'com_ui_low',
       [ReasoningEffort.medium]: 'com_ui_medium',
       [ReasoningEffort.high]: 'com_ui_high',
@@ -276,10 +293,29 @@ const openAIParams: Record<string, SettingDefinition> = {
       ReasoningSummary.detailed,
     ],
     enumMappings: {
-      [ReasoningSummary.none]: 'com_ui_none',
+      [ReasoningSummary.none]: 'com_ui_unset',
       [ReasoningSummary.auto]: 'com_ui_auto',
       [ReasoningSummary.concise]: 'com_ui_concise',
       [ReasoningSummary.detailed]: 'com_ui_detailed',
+    },
+    optionType: 'model',
+    columnSpan: 4,
+  },
+  verbosity: {
+    key: 'verbosity',
+    label: 'com_endpoint_verbosity',
+    labelCode: true,
+    description: 'com_endpoint_openai_verbosity',
+    descriptionCode: true,
+    type: 'enum',
+    default: Verbosity.none,
+    component: 'slider',
+    options: [Verbosity.none, Verbosity.low, Verbosity.medium, Verbosity.high],
+    enumMappings: {
+      [Verbosity.none]: 'com_ui_none',
+      [Verbosity.low]: 'com_ui_low',
+      [Verbosity.medium]: 'com_ui_medium',
+      [Verbosity.high]: 'com_ui_high',
     },
     optionType: 'model',
     columnSpan: 4,
@@ -458,6 +494,19 @@ const bedrock: Record<string, SettingDefinition> = {
     default: 0.999,
     range: { min: 0, max: 1, step: 0.01 },
   }),
+  promptCache: {
+    key: 'promptCache',
+    label: 'com_endpoint_prompt_cache',
+    labelCode: true,
+    type: 'boolean',
+    description: 'com_endpoint_anthropic_prompt_cache',
+    descriptionCode: true,
+    default: true,
+    component: 'switch',
+    optionType: 'conversation',
+    showDefault: false,
+    columnSpan: 2,
+  },
 };
 
 const mistral: Record<string, SettingDefinition> = {
@@ -603,6 +652,7 @@ const googleConfig: SettingsConfiguration = [
   google.thinking,
   google.thinkingBudget,
   google.web_search,
+  librechat.fileTokenLimit,
 ];
 
 const googleCol1: SettingsConfiguration = [
@@ -621,6 +671,7 @@ const googleCol2: SettingsConfiguration = [
   google.thinking,
   google.thinkingBudget,
   google.web_search,
+  librechat.fileTokenLimit,
 ];
 
 const openAI: SettingsConfiguration = [
@@ -639,7 +690,9 @@ const openAI: SettingsConfiguration = [
   openAIParams.reasoning_effort,
   openAIParams.useResponsesApi,
   openAIParams.reasoning_summary,
+  openAIParams.verbosity,
   openAIParams.disableStreaming,
+  librechat.fileTokenLimit,
 ];
 
 const openAICol1: SettingsConfiguration = [
@@ -660,9 +713,11 @@ const openAICol2: SettingsConfiguration = [
   baseDefinitions.imageDetail,
   openAIParams.reasoning_effort,
   openAIParams.reasoning_summary,
+  openAIParams.verbosity,
   openAIParams.useResponsesApi,
   openAIParams.web_search,
   openAIParams.disableStreaming,
+  librechat.fileTokenLimit,
 ];
 
 const anthropicConfig: SettingsConfiguration = [
@@ -678,6 +733,7 @@ const anthropicConfig: SettingsConfiguration = [
   anthropic.thinking,
   anthropic.thinkingBudget,
   anthropic.web_search,
+  librechat.fileTokenLimit,
 ];
 
 const anthropicCol1: SettingsConfiguration = [
@@ -697,6 +753,7 @@ const anthropicCol2: SettingsConfiguration = [
   anthropic.thinking,
   anthropic.thinkingBudget,
   anthropic.web_search,
+  librechat.fileTokenLimit,
 ];
 
 const bedrockAnthropic: SettingsConfiguration = [
@@ -710,8 +767,10 @@ const bedrockAnthropic: SettingsConfiguration = [
   baseDefinitions.stop,
   librechat.resendFiles,
   bedrock.region,
+  bedrock.promptCache,
   anthropic.thinking,
   anthropic.thinkingBudget,
+  librechat.fileTokenLimit,
 ];
 
 const bedrockMistral: SettingsConfiguration = [
@@ -723,6 +782,7 @@ const bedrockMistral: SettingsConfiguration = [
   mistral.topP,
   librechat.resendFiles,
   bedrock.region,
+  librechat.fileTokenLimit,
 ];
 
 const bedrockCohere: SettingsConfiguration = [
@@ -734,6 +794,7 @@ const bedrockCohere: SettingsConfiguration = [
   cohere.topP,
   librechat.resendFiles,
   bedrock.region,
+  librechat.fileTokenLimit,
 ];
 
 const bedrockGeneral: SettingsConfiguration = [
@@ -744,6 +805,8 @@ const bedrockGeneral: SettingsConfiguration = [
   meta.topP,
   librechat.resendFiles,
   bedrock.region,
+  bedrock.promptCache,
+  librechat.fileTokenLimit,
 ];
 
 const bedrockAnthropicCol1: SettingsConfiguration = [
@@ -761,8 +824,10 @@ const bedrockAnthropicCol2: SettingsConfiguration = [
   bedrock.topK,
   librechat.resendFiles,
   bedrock.region,
+  bedrock.promptCache,
   anthropic.thinking,
   anthropic.thinkingBudget,
+  librechat.fileTokenLimit,
 ];
 
 const bedrockMistralCol1: SettingsConfiguration = [
@@ -778,6 +843,7 @@ const bedrockMistralCol2: SettingsConfiguration = [
   mistral.topP,
   librechat.resendFiles,
   bedrock.region,
+  librechat.fileTokenLimit,
 ];
 
 const bedrockCohereCol1: SettingsConfiguration = [
@@ -793,6 +859,7 @@ const bedrockCohereCol2: SettingsConfiguration = [
   cohere.topP,
   librechat.resendFiles,
   bedrock.region,
+  librechat.fileTokenLimit,
 ];
 
 const bedrockGeneralCol1: SettingsConfiguration = [
@@ -807,6 +874,8 @@ const bedrockGeneralCol2: SettingsConfiguration = [
   meta.topP,
   librechat.resendFiles,
   bedrock.region,
+  bedrock.promptCache,
+  librechat.fileTokenLimit,
 ];
 
 export const paramSettings: Record<string, SettingsConfiguration | undefined> = {

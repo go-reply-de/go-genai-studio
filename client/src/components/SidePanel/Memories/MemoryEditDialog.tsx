@@ -1,11 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { PermissionTypes, Permissions } from 'librechat-data-provider';
+import {
+  OGDialog,
+  OGDialogTemplate,
+  Button,
+  Label,
+  Input,
+  Spinner,
+  useToastContext,
+} from '@librechat/client';
 import type { TUserMemory } from 'librechat-data-provider';
-import { OGDialog, OGDialogTemplate, Button, Label, Input } from '~/components/ui';
 import { useUpdateMemoryMutation, useMemoriesQuery } from '~/data-provider';
 import { useLocalize, useHasAccess } from '~/hooks';
-import { useToastContext } from '~/Providers';
-import { Spinner } from '~/components/svg';
 
 interface MemoryEditDialogProps {
   memory: TUserMemory | null;
@@ -186,6 +192,7 @@ export default function MemoryEditDialog({
               type="button"
               variant="submit"
               onClick={handleSave}
+              aria-label={localize('com_ui_save')}
               disabled={isLoading || !key.trim() || !value.trim()}
               className="text-white"
             >

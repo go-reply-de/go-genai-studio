@@ -38,7 +38,7 @@
     "pluginKey": "image_gen_oai",
     "toolkit": true,
     "description": "Image Generation and Editing using OpenAI's latest state-of-the-art models",
-    "icon": "/assets/image_gen_oai.png",
+    "icon": "assets/image_gen_oai.png",
     "authConfig": [
       {
         "authField": "IMAGE_GEN_OAI_API_KEY",
@@ -64,25 +64,12 @@
     "name": "Browser",
     "pluginKey": "web-browser",
     "description": "Scrape and summarize webpage data",
-    "icon": "/assets/web-browser.svg",
+    "icon": "assets/web-browser.svg",
     "authConfig": [
       {
         "authField": "OPENAI_API_KEY",
         "label": "OpenAI API Key",
         "description": "Browser makes use of OpenAI embeddings"
-      }
-    ]
-  },
-  {
-    "name": "Serpapi",
-    "pluginKey": "serpapi",
-    "description": "SerpApi is a real-time API to access search engine results.",
-    "icon": "https://i.imgur.com/5yQHUz4.png",
-    "authConfig": [
-      {
-        "authField": "SERPAPI_API_KEY",
-        "label": "Serpapi Private API Key",
-        "description": "Private Key for Serpapi. Register at <a href='https://serpapi.com/'>Serpapi</a> to obtain a private key."
       }
     ]
   },
@@ -159,7 +146,7 @@
     "name": "OpenWeather",
     "pluginKey": "open_weather",
     "description": "Get weather forecasts and historical data from the OpenWeather API",
-    "icon": "/assets/openweather.png",
+    "icon": "assets/openweather.png",
     "authConfig": [
       {
         "authField": "OPENWEATHER_API_KEY",
@@ -204,7 +191,7 @@
   },
   {
     "name": "Google Imagen",
-    "pluginKey": "imagen_vertex",
+    "pluginKey": "imagen",
     "description": "Image Generation using Google Cloud's Vertex AI Imagen models. Requires Google Cloud project setup and authentication.",
     "icon": "https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg",
     "authConfig": []

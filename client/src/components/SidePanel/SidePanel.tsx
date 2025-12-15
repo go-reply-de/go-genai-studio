@@ -1,14 +1,15 @@
 import { useState, useCallback, useMemo, memo } from 'react';
+import { getEndpointField } from 'librechat-data-provider';
 import { useUserKeyQuery } from 'librechat-data-provider/react-query';
+import { ResizableHandleAlt, ResizablePanel, useMediaQuery } from '@librechat/client';
 import type { TEndpointsConfig, TInterfaceConfig } from 'librechat-data-provider';
 import type { ImperativePanelHandle } from 'react-resizable-panels';
-import { ResizableHandleAlt, ResizablePanel } from '~/components/ui/Resizable';
-import { useMediaQuery, useLocalStorage, useLocalize } from '~/hooks';
 import useSideNavLinks from '~/hooks/Nav/useSideNavLinks';
+import { useLocalStorage, useLocalize } from '~/hooks';
 import { useGetEndpointsQuery } from '~/data-provider';
 import NavToggle from '~/components/Nav/NavToggle';
 import { useSidePanelContext } from '~/Providers';
-import { cn, getEndpointField } from '~/utils';
+import { cn } from '~/utils';
 import Nav from './Nav';
 
 const defaultMinSize = 20;
@@ -161,6 +162,9 @@ const SidePanel = ({
           transition: 'width 0.2s ease, visibility 0s linear 0.2s',
         }}
         onExpand={() => {
+          if (isCollapsed && (fullCollapse || collapsedSize === 0)) {
+            return;
+          }
           setIsCollapsed(false);
           localStorage.setItem('react-resizable-panels:collapsed', 'false');
         }}
