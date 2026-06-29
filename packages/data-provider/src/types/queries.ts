@@ -1,4 +1,5 @@
 import type { InfiniteData } from '@tanstack/react-query';
+import type * as p from '../accessPermissions';
 import type * as a from '../types/agents';
 import type * as s from '../schemas';
 import type * as t from '../types';
@@ -18,11 +19,12 @@ export type ConversationListParams = {
   sortDirection?: 'asc' | 'desc';
   tags?: string[];
   search?: string;
+  projectId?: string;
 };
 
 export type MinimalConversation = Pick<
   s.TConversation,
-  'conversationId' | 'endpoint' | 'title' | 'createdAt' | 'updatedAt' | 'user'
+  'conversationId' | 'endpoint' | 'title' | 'createdAt' | 'updatedAt' | 'user' | 'chatProjectId'
 >;
 
 export type ConversationListResponse = {
@@ -35,6 +37,21 @@ export type ConversationUpdater = (
   data: ConversationData,
   conversation: s.TConversation,
 ) => ConversationData;
+
+export type ProjectListParams = {
+  cursor?: string;
+  limit?: number;
+  sortBy?: 'name' | 'createdAt' | 'lastConversationAt';
+  sortDirection?: 'asc' | 'desc';
+  search?: string;
+};
+
+export type ProjectListResponse = {
+  projects: t.TChatProject[];
+  nextCursor: string | null;
+};
+
+export type ProjectData = InfiniteData<ProjectListResponse>;
 
 /* Messages */
 export type MessagesListParams = {
@@ -59,7 +76,6 @@ export type SharedMessagesResponse = Omit<s.TSharedLink, 'messages'> & {
 
 export interface SharedLinksListParams {
   pageSize: number;
-  isPublic: boolean;
   sortBy: 'title' | 'createdAt';
   sortDirection: 'asc' | 'desc';
   search?: string;
@@ -69,7 +85,6 @@ export interface SharedLinksListParams {
 export type SharedLinkItem = {
   shareId: string;
   title: string;
-  isPublic: boolean;
   createdAt: Date;
   conversationId: string;
 };
@@ -100,6 +115,25 @@ export type AllPromptGroupsResponse = t.TPromptGroup[];
 
 export type ConversationTagsResponse = s.TConversationTag[];
 
+/* MCP Types */
+export type MCPTool = {
+  name: string;
+  pluginKey: string;
+  description: string;
+};
+
+export type MCPServer = {
+  name: string;
+  icon: string;
+  authenticated: boolean;
+  authConfig: s.TPluginAuthConfig[];
+  tools: MCPTool[];
+};
+
+export type MCPServersResponse = {
+  servers: Record<string, MCPServer>;
+};
+
 export type VerifyToolAuthParams = { toolId: string };
 export type VerifyToolAuthResponse = {
   authenticated: boolean;
@@ -125,6 +159,40 @@ export type MemoriesResponse = {
   usagePercentage: number | null;
 };
 
+export type PrincipalSearchParams = {
+  q: string;
+  limit?: number;
+  types?: Array<p.PrincipalType.USER | p.PrincipalType.GROUP | p.PrincipalType.ROLE>;
+};
+
+export type PrincipalSearchResponse = {
+  query: string;
+  limit: number;
+  types?: Array<p.PrincipalType.USER | p.PrincipalType.GROUP | p.PrincipalType.ROLE>;
+  results: p.TPrincipalSearchResult[];
+  count: number;
+  sources: {
+    local: number;
+    entra: number;
+  };
+};
+
+export type AccessRole = {
+  accessRoleId: p.AccessRoleIds;
+  name: string;
+  description: string;
+  permBits: number;
+};
+
+export type AccessRolesResponse = AccessRole[];
+
+export type ListRolesResponse = {
+  roles: Array<{ _id?: string; name: string; description?: string }>;
+  total: number;
+  limit: number;
+  offset?: number;
+};
+
 export interface MCPServerStatus {
   requiresOAuth: boolean;
   connectionState: 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -133,6 +201,15 @@ export interface MCPServerStatus {
 export interface MCPConnectionStatusResponse {
   success: boolean;
   connectionStatus: Record<string, MCPServerStatus>;
+  /** Server-configured OAuth completion window in ms (`MCP_OAUTH_HANDLING_TIMEOUT`) */
+  oauthTimeout?: number;
+}
+
+export interface MCPServerConnectionStatusResponse {
+  success: boolean;
+  serverName: string;
+  requiresOAuth: boolean;
+  connectionStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
 }
 
 export interface MCPAuthValuesResponse {
@@ -140,3 +217,29 @@ export interface MCPAuthValuesResponse {
   serverName: string;
   authValueFlags: Record<string, boolean>;
 }
+
+/**
+ * User Favorites — pinned agents, models, and model specs.
+ * Exactly one variant should be set per entry; exclusivity is enforced
+ * server-side in FavoritesController. Shape is loose for state-update ergonomics.
+ */
+export type TUserFavorite = {
+  agentId?: string;
+  model?: string;
+  endpoint?: string;
+  spec?: string;
+  /** Phase 2 — skill favoriting isn't persisted yet, but the shape is reserved. */
+  skillId?: string;
+};
+
+/* SharePoint Graph API Token */
+export type GraphTokenParams = {
+  scopes: string;
+};
+
+export type GraphTokenResponse = {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  scope: string;
+};

@@ -1,10 +1,8 @@
 import React, { useRef, Dispatch, SetStateAction } from 'react';
 import { TConversationTag } from 'librechat-data-provider';
-import OGDialogTemplate from '~/components/ui/OGDialogTemplate';
+import { OGDialogTemplate, OGDialog, Button, Spinner, useToastContext } from '@librechat/client';
 import { useConversationTagMutation } from '~/data-provider';
-import { OGDialog, Button, Spinner } from '~/components';
 import { NotificationSeverity } from '~/common';
-import { useToastContext } from '~/Providers';
 import BookmarkForm from './BookmarkForm';
 import { useLocalize } from '~/hooks';
 import { logger } from '~/utils';
@@ -91,9 +89,9 @@ const BookmarkEditDialog = ({
     <OGDialog open={open} onOpenChange={setOpen} triggerRef={triggerRef}>
       {children}
       <OGDialogTemplate
-        title="Bookmark"
+        title={bookmark ? localize('com_ui_bookmarks_edit') : localize('com_ui_bookmarks_new')}
         showCloseButton={false}
-        className="w-11/12 md:max-w-2xl"
+        className="w-11/12 md:max-w-lg"
         main={
           <BookmarkForm
             tags={tags}

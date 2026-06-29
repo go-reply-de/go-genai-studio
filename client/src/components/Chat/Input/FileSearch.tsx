@@ -1,14 +1,22 @@
 import React, { memo } from 'react';
+import { CheckboxButton, VectorIcon } from '@librechat/client';
 import { PermissionTypes, Permissions } from 'librechat-data-provider';
-import CheckboxButton from '~/components/ui/CheckboxButton';
 import { useLocalize, useHasAccess } from '~/hooks';
 import { useBadgeRowContext } from '~/Providers';
-import { VectorIcon } from '~/components/svg';
 
 function FileSearch() {
   const localize = useLocalize();
-  const { fileSearch } = useBadgeRowContext();
-  const { toggleState: fileSearchEnabled, debouncedChange, isPinned } = fileSearch;
+  const context = useBadgeRowContext();
+  const { toggleState: fileSearchEnabled, debouncedChange, isPinned } = context?.fileSearch ?? {};
+
+  const canUseFileSearch = useHasAccess({
+    permissionType: PermissionTypes.FILE_SEARCH,
+    permission: Permissions.USE,
+  });
+
+  if (!canUseFileSearch) {
+    return null;
+  }
 
   const canUseFileSearch = useHasAccess({
     permissionType: PermissionTypes.FILE_SEARCH,

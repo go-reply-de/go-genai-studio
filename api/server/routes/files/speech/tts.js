@@ -1,14 +1,15 @@
 const multer = require('multer');
 const express = require('express');
+const { restoreTenantContextFromReq } = require('@librechat/api');
+const { logger } = require('@librechat/data-schemas');
 const { CacheKeys } = require('librechat-data-provider');
 const { getVoices, streamAudio, textToSpeech } = require('~/server/services/Files/Audio');
 const { getLogStores } = require('~/cache');
-const { logger } = require('~/config');
 
 const router = express.Router();
 const upload = multer();
 
-router.post('/manual', upload.none(), async (req, res) => {
+router.post('/manual', upload.none(), restoreTenantContextFromReq, async (req, res) => {
   await textToSpeech(req, res);
 });
 

@@ -1,20 +1,22 @@
-import { RotateCcw } from 'lucide-react';
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import keyBy from 'lodash/keyBy';
+import { RotateCcw } from 'lucide-react';
 import {
   excludedKeys,
   paramSettings,
   getSettingsKeys,
+  getEndpointField,
   SettingDefinition,
   tConvoUpdateSchema,
+  applyModelAwareDefaults,
 } from 'librechat-data-provider';
 import type { TPreset } from 'librechat-data-provider';
 import { SaveAsPresetDialog } from '~/components/Endpoints';
 import { useSetIndexOptions, useLocalize } from '~/hooks';
 import { useGetEndpointsQuery } from '~/data-provider';
-import { getEndpointField, logger } from '~/utils';
 import { componentMapping } from './components';
 import { useChatContext } from '~/Providers';
-import keyBy from 'lodash/keyBy';
+import { logger } from '~/utils';
 
 export default function Parameters() {
   const localize = useLocalize();
@@ -44,7 +46,12 @@ export default function Parameters() {
     const defaultParams = paramSettings[combinedKey] ?? paramSettings[overriddenEndpointKey] ?? [];
     const overriddenParams = endpointsConfig[provider]?.customParams?.paramDefinitions ?? [];
     const overriddenParamsMap = keyBy(overriddenParams, 'key');
-    return defaultParams.map(
+    const modelAwareParams = applyModelAwareDefaults(
+      defaultParams.filter((param) => param != null),
+      overriddenEndpointKey,
+      model,
+    );
+    return modelAwareParams.map(
       (param) => (overriddenParamsMap[param.key] as SettingDefinition) ?? param,
     );
   }, [endpointType, endpointsConfig, model, provider]);
@@ -63,7 +70,9 @@ export default function Parameters() {
     //     return setting.key;
     //   }),
     // );
-    const paramKeys = new Set(parameters.map((setting) => setting.key));
+    const paramKeys = new Set(
+      parameters.filter((setting) => setting != null).map((setting) => setting.key),
+    );
     setConversation((prev) => {
       if (!prev) {
         return prev;
@@ -139,7 +148,7 @@ export default function Parameters() {
   }
 
   return (
-    <div className="h-auto max-w-full overflow-x-hidden p-3">
+    <div className="h-auto max-w-full px-3 pb-3 pt-2">
       <div className="grid grid-cols-2 gap-4">
         {' '}
         {/* This is the parent element containing all settings */}

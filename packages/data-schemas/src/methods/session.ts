@@ -12,11 +12,30 @@ export class SessionError extends Error {
   }
 }
 
-const { REFRESH_TOKEN_EXPIRY } = process.env ?? {};
-const expires = REFRESH_TOKEN_EXPIRY ? eval(REFRESH_TOKEN_EXPIRY) : 1000 * 60 * 60 * 24 * 7; // 7 days default
+/** Default refresh token expiry: 7 days in milliseconds */
+export const DEFAULT_REFRESH_TOKEN_EXPIRY: number = 1000 * 60 * 60 * 24 * 7;
 
 // Factory function that takes mongoose instance and returns the methods
-export function createSessionMethods(mongoose: typeof import('mongoose')) {
+export function createSessionMethods(mongoose: typeof import('mongoose')): {
+  findSession: (
+    params: t.SessionSearchParams,
+    options?: t.SessionQueryOptions,
+  ) => Promise<t.ISession | null>;
+  SessionError: typeof SessionError;
+  deleteSession: (params: t.DeleteSessionParams) => Promise<{ deletedCount?: number }>;
+  createSession: (userId: string, options?: t.CreateSessionOptions) => Promise<t.SessionResult>;
+  updateExpiration: (
+    session: t.ISession | string,
+    newExpiration?: Date,
+    options?: t.UpdateExpirationOptions,
+  ) => Promise<t.ISession>;
+  countActiveSessions: (userId: string) => Promise<number>;
+  generateRefreshToken: (session: t.ISession) => Promise<string>;
+  deleteAllUserSessions: (
+    userId: string | { userId: string },
+    options?: t.DeleteAllSessionsOptions,
+  ) => Promise<{ deletedCount?: number }>;
+} {
   /**
    * Creates a new session for a user
    */
@@ -28,11 +47,13 @@ export function createSessionMethods(mongoose: typeof import('mongoose')) {
       throw new SessionError('User ID is required', 'INVALID_USER_ID');
     }
 
+    const expiresIn = options.expiresIn ?? DEFAULT_REFRESH_TOKEN_EXPIRY;
+
     try {
       const Session = mongoose.models.Session;
       const currentSession = new Session({
         user: userId,
-        expiration: options.expiration || new Date(Date.now() + expires),
+        expiration: options.expiration || new Date(Date.now() + expiresIn),
       });
       const refreshToken = await generateRefreshToken(currentSession);
 
@@ -105,7 +126,10 @@ export function createSessionMethods(mongoose: typeof import('mongoose')) {
   async function updateExpiration(
     session: t.ISession | string,
     newExpiration?: Date,
+    options: t.UpdateExpirationOptions = {},
   ): Promise<t.ISession> {
+    const expiresIn = options.expiresIn ?? DEFAULT_REFRESH_TOKEN_EXPIRY;
+
     try {
       const Session = mongoose.models.Session;
       const sessionDoc = typeof session === 'string' ? await Session.findById(session) : session;
@@ -114,7 +138,7 @@ export function createSessionMethods(mongoose: typeof import('mongoose')) {
         throw new SessionError('Session not found', 'SESSION_NOT_FOUND');
       }
 
-      sessionDoc.expiration = newExpiration || new Date(Date.now() + expires);
+      sessionDoc.expiration = newExpiration || new Date(Date.now() + expiresIn);
       return await sessionDoc.save();
     } catch (error) {
       logger.error('[updateExpiration] Error updating session:', error);
@@ -208,7 +232,9 @@ export function createSessionMethods(mongoose: typeof import('mongoose')) {
     }
 
     try {
-      const expiresIn = session.expiration ? session.expiration.getTime() : Date.now() + expires;
+      const expiresIn = session.expiration
+        ? session.expiration.getTime()
+        : Date.now() + DEFAULT_REFRESH_TOKEN_EXPIRY;
 
       if (!session.expiration) {
         session.expiration = new Date(expiresIn);

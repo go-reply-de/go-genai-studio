@@ -1,103 +1,123 @@
 import React from 'react';
 import * as Ariakit from '@ariakit/react';
 import { ChevronRight } from 'lucide-react';
-import { PinIcon, MCPIcon } from '~/components/svg';
+import { MCPIcon, PinIcon } from '@librechat/client';
+import MCPServerMenuItem from '~/components/MCP/MCPServerMenuItem';
+import MCPConfigDialog from '~/components/MCP/MCPConfigDialog';
+import { useBadgeRowContext } from '~/Providers';
 import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
 
-interface MCPSubMenuProps {
-  isMCPPinned: boolean;
-  setIsMCPPinned: (value: boolean) => void;
-  mcpValues?: string[];
-  mcpServerNames: string[];
-  handleMCPToggle: (serverName: string) => void;
+interface MCPSubMenuProps extends React.HTMLAttributes<HTMLButtonElement> {
   placeholder?: string;
 }
 
-const MCPSubMenu = ({
-  mcpValues,
-  isMCPPinned,
-  mcpServerNames,
-  setIsMCPPinned,
-  handleMCPToggle,
-  placeholder,
-  ...props
-}: MCPSubMenuProps) => {
-  const localize = useLocalize();
+const MCPSubMenu = React.forwardRef<HTMLButtonElement, MCPSubMenuProps>(
+  ({ placeholder, className, ...props }, ref) => {
+    const localize = useLocalize();
+    const context = useBadgeRowContext();
+    const { storageContextKey, mcpServerManager } = context ?? {};
 
-  const menuStore = Ariakit.useMenuStore({
-    focusLoop: true,
-    showTimeout: 100,
-    placement: 'right',
-  });
+    const menuStore = Ariakit.useMenuStore({
+      focusLoop: true,
+      showTimeout: 100,
+      placement: 'right',
+    });
 
-  return (
-    <Ariakit.MenuProvider store={menuStore}>
-      <Ariakit.MenuItem
-        {...props}
-        render={
+    if (!mcpServerManager) {
+      return null;
+    }
+
+    const {
+      isPinned,
+      mcpValues,
+      setIsPinned,
+      isInitializing,
+      placeholderText,
+      connectionStatus,
+      selectableServers,
+      getConfigDialogProps,
+      toggleServerSelection,
+      getServerStatusIconProps,
+    } = mcpServerManager;
+
+    if (!selectableServers || selectableServers.length === 0) {
+      return null;
+    }
+
+    const configDialogProps = getConfigDialogProps();
+
+    return (
+      <>
+        <Ariakit.MenuProvider store={menuStore}>
           <Ariakit.MenuButton
+            ref={ref}
+            {...props}
             onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               e.stopPropagation();
               menuStore.toggle();
             }}
-            className="flex w-full cursor-pointer items-center justify-between rounded-lg p-2 hover:bg-surface-hover"
-          />
-        }
-      >
-        <div className="flex items-center gap-2">
-          <MCPIcon className="icon-md" />
-          <span>{placeholder || localize('com_ui_mcp_servers')}</span>
-          <ChevronRight className="ml-auto h-3 w-3" />
-        </div>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setIsMCPPinned(!isMCPPinned);
-          }}
-          className={cn(
-            'rounded p-1 transition-all duration-200',
-            'hover:bg-surface-tertiary hover:shadow-sm',
-            !isMCPPinned && 'text-text-secondary hover:text-text-primary',
-          )}
-          aria-label={isMCPPinned ? 'Unpin' : 'Pin'}
-        >
-          <div className="h-4 w-4">
-            <PinIcon unpin={isMCPPinned} />
-          </div>
-        </button>
-      </Ariakit.MenuItem>
-      <Ariakit.Menu
-        portal={true}
-        unmountOnHide={true}
-        className={cn(
-          'animate-popover-left z-50 ml-3 flex min-w-[200px] flex-col rounded-xl',
-          'border border-border-light bg-surface-secondary p-1 shadow-lg',
-        )}
-      >
-        {mcpServerNames.map((serverName) => (
-          <Ariakit.MenuItem
-            key={serverName}
-            onClick={(event) => {
-              event.preventDefault();
-              handleMCPToggle(serverName);
-            }}
             className={cn(
-              'flex items-center gap-2 rounded-lg px-2 py-1.5 text-text-primary hover:cursor-pointer',
-              'scroll-m-1 outline-none transition-colors',
-              'hover:bg-black/[0.075] dark:hover:bg-white/10',
-              'data-[active-item]:bg-black/[0.075] dark:data-[active-item]:bg-white/10',
-              'w-full min-w-0 text-sm',
+              'flex w-full cursor-pointer items-center justify-between rounded-lg p-2 hover:bg-surface-hover',
+              className,
             )}
           >
-            <Ariakit.MenuItemCheck checked={mcpValues?.includes(serverName) ?? false} />
-            <span>{serverName}</span>
-          </Ariakit.MenuItem>
-        ))}
-      </Ariakit.Menu>
-    </Ariakit.MenuProvider>
-  );
-};
+            <div className="flex items-center gap-2">
+              <MCPIcon className="h-5 w-5 flex-shrink-0 text-text-primary" aria-hidden="true" />
+              <span>{placeholder || placeholderText}</span>
+              <ChevronRight className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
+            </div>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsPinned(!isPinned);
+              }}
+              className={cn(
+                'rounded p-1 transition-all duration-200',
+                'hover:bg-surface-tertiary hover:shadow-sm',
+                !isPinned && 'text-text-secondary hover:text-text-primary',
+              )}
+              aria-label={isPinned ? localize('com_ui_unpin') : localize('com_ui_pin')}
+            >
+              <div className="h-4 w-4">
+                <PinIcon unpin={isPinned} />
+              </div>
+            </button>
+          </Ariakit.MenuButton>
+
+          <Ariakit.Menu
+            portal={true}
+            unmountOnHide={true}
+            aria-label={localize('com_ui_mcp_servers')}
+            className={cn(
+              'animate-popover-left z-40 ml-3 flex min-w-[260px] max-w-[320px] flex-col rounded-xl',
+              'border border-border-light bg-presentation p-1.5 shadow-lg',
+            )}
+          >
+            <div className="flex max-h-[320px] flex-col gap-1 overflow-y-auto">
+              {selectableServers.map((server) => (
+                <MCPServerMenuItem
+                  key={server.serverName}
+                  server={server}
+                  isSelected={mcpValues?.includes(server.serverName) ?? false}
+                  connectionStatus={connectionStatus}
+                  isInitializing={isInitializing}
+                  statusIconProps={getServerStatusIconProps(server.serverName)}
+                  onToggle={toggleServerSelection}
+                />
+              ))}
+            </div>
+          </Ariakit.Menu>
+        </Ariakit.MenuProvider>
+        {configDialogProps && (
+          <MCPConfigDialog {...configDialogProps} storageContextKey={storageContextKey} />
+        )}
+      </>
+    );
+  },
+);
+
+MCPSubMenu.displayName = 'MCPSubMenu';
 
 export default React.memo(MCPSubMenu);

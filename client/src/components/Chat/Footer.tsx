@@ -1,35 +1,37 @@
-import React, { useEffect } from 'react';
-import ReactMarkdown from 'react-markdown';
+import React, { useEffect, memo } from 'react';
 import TagManager from 'react-gtm-module';
+import ReactMarkdown from 'react-markdown';
 import { Constants } from 'librechat-data-provider';
+import type { TStartupConfig } from 'librechat-data-provider';
 import { useGetStartupConfig } from '~/data-provider';
 import { useLocalize } from '~/hooks';
 
-export default function Footer({ className }: { className?: string }) {
-  const { data: config } = useGetStartupConfig();
+type FooterProps = {
+  className?: string;
+  startupConfig?: FooterStartupConfig | null;
+};
+
+type FooterStartupConfig = Pick<Partial<TStartupConfig>, 'analyticsGtmId' | 'customFooter'> & {
+  interface?: Pick<NonNullable<TStartupConfig['interface']>, 'privacyPolicy' | 'termsOfService'>;
+};
+
+function Footer({ className, startupConfig }: FooterProps) {
+  const shouldFetchConfig = startupConfig === undefined;
+  const { data: fetchedConfig } = useGetStartupConfig({ enabled: shouldFetchConfig });
+  const config = shouldFetchConfig ? fetchedConfig : startupConfig;
   const localize = useLocalize();
 
   const privacyPolicy = config?.interface?.privacyPolicy;
   const termsOfService = config?.interface?.termsOfService;
 
   const privacyPolicyRender = privacyPolicy?.externalUrl != null && (
-    <a
-      className="text-text-secondary underline"
-      href={privacyPolicy.externalUrl}
-      target={privacyPolicy.openNewTab === true ? '_blank' : undefined}
-      rel="noreferrer"
-    >
+    <a className="text-text-secondary underline" href={privacyPolicy.externalUrl} rel="noreferrer">
       {localize('com_ui_privacy_policy')}
     </a>
   );
 
   const termsOfServiceRender = termsOfService?.externalUrl != null && (
-    <a
-      className="text-text-secondary underline"
-      href={termsOfService.externalUrl}
-      target={termsOfService.openNewTab === true ? '_blank' : undefined}
-      rel="noreferrer"
-    >
+    <a className="text-text-secondary underline" href={termsOfService.externalUrl} rel="noreferrer">
       {localize('com_ui_terms_of_service')}
     </a>
   );
@@ -61,7 +63,6 @@ export default function Footer({ className }: { className?: string }) {
               <a
                 className="text-text-secondary underline"
                 href={href}
-                target="_blank"
                 rel="noreferrer"
                 {...otherProps}
               >
@@ -109,3 +110,8 @@ export default function Footer({ className }: { className?: string }) {
     </div>
   );
 }
+
+const MemoizedFooter = memo(Footer);
+MemoizedFooter.displayName = 'Footer';
+
+export default MemoizedFooter;

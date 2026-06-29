@@ -4,13 +4,19 @@ import type {
   UseMutationResult,
   QueryObserverResult,
 } from '@tanstack/react-query';
+import { MCPServerConnectionStatusResponse } from '../types/queries';
 import { Constants, initialModelsConfig } from '../config';
 import { defaultOrderQuery } from '../types/assistants';
+import * as permissions from '../accessPermissions';
+import { ResourceType } from '../accessPermissions';
 import * as dataService from '../data-service';
 import * as m from '../types/mutations';
+import * as q from '../types/queries';
 import { QueryKeys } from '../keys';
 import * as s from '../schemas';
 import * as t from '../types';
+
+export { hasPermissions } from '../accessPermissions';
 
 export const useGetSharedMessages = (
   shareId: string,
@@ -45,10 +51,7 @@ export const useGetSharedLinkQuery = (
       refetchOnReconnect: false,
       refetchOnMount: false,
       onSuccess: (data) => {
-        queryClient.setQueryData([QueryKeys.sharedLinks, conversationId], {
-          conversationId: data.conversationId,
-          shareId: data.shareId,
-        });
+        queryClient.setQueryData([QueryKeys.sharedLinks, conversationId], data);
       },
       ...config,
     },
@@ -118,6 +121,9 @@ export const useUpdateUserKeysMutation = (): UseMutationResult<
   return useMutation((payload: t.TUpdateUserKeyRequest) => dataService.updateUserKey(payload), {
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries([QueryKeys.name, variables.name]);
+      queryClient.invalidateQueries([QueryKeys.models]);
+      /** token-config is derived from the same per-user model fetch */
+      queryClient.invalidateQueries([QueryKeys.tokenConfig]);
     },
   });
 };
@@ -127,6 +133,7 @@ export const useClearConversationsMutation = (): UseMutationResult<unknown> => {
   return useMutation(() => dataService.clearAllConversations(), {
     onSuccess: () => {
       queryClient.invalidateQueries([QueryKeys.allConversations]);
+      queryClient.invalidateQueries([QueryKeys.conversationTags]);
     },
   });
 };
@@ -136,11 +143,14 @@ export const useRevokeUserKeyMutation = (name: string): UseMutationResult<unknow
   return useMutation(() => dataService.revokeUserKey(name), {
     onSuccess: () => {
       queryClient.invalidateQueries([QueryKeys.name, name]);
+      queryClient.invalidateQueries([QueryKeys.models]);
+      queryClient.invalidateQueries([QueryKeys.tokenConfig]);
       if (s.isAssistantsEndpoint(name)) {
         queryClient.invalidateQueries([QueryKeys.assistants, name, defaultOrderQuery]);
         queryClient.invalidateQueries([QueryKeys.assistantDocs]);
         queryClient.invalidateQueries([QueryKeys.assistants]);
         queryClient.invalidateQueries([QueryKeys.assistant]);
+        queryClient.invalidateQueries([QueryKeys.mcpTools]);
         queryClient.invalidateQueries([QueryKeys.actions]);
         queryClient.invalidateQueries([QueryKeys.tools]);
       }
@@ -153,6 +163,7 @@ export const useRevokeAllUserKeysMutation = (): UseMutationResult<unknown> => {
   return useMutation(() => dataService.revokeAllUserKeys(), {
     onSuccess: () => {
       queryClient.invalidateQueries([QueryKeys.name]);
+      queryClient.invalidateQueries([QueryKeys.tokenConfig]);
       queryClient.invalidateQueries([
         QueryKeys.assistants,
         s.EModelEndpoint.assistants,
@@ -166,8 +177,10 @@ export const useRevokeAllUserKeysMutation = (): UseMutationResult<unknown> => {
       queryClient.invalidateQueries([QueryKeys.assistantDocs]);
       queryClient.invalidateQueries([QueryKeys.assistants]);
       queryClient.invalidateQueries([QueryKeys.assistant]);
+      queryClient.invalidateQueries([QueryKeys.mcpTools]);
       queryClient.invalidateQueries([QueryKeys.actions]);
       queryClient.invalidateQueries([QueryKeys.tools]);
+      queryClient.invalidateQueries([QueryKeys.models]);
     },
   });
 };
@@ -312,6 +325,44 @@ export const useUpdateUserPluginsMutation = (
     onSuccess: (...args) => {
       queryClient.invalidateQueries([QueryKeys.user]);
       onSuccess?.(...args);
+      if (args[1]?.action === 'uninstall' && args[1]?.pluginKey?.startsWith(Constants.mcp_prefix)) {
+        const serverName = args[1]?.pluginKey?.substring(Constants.mcp_prefix.length);
+        queryClient.invalidateQueries([QueryKeys.mcpAuthValues, serverName]);
+      }
+    },
+  });
+};
+
+export const useReinitializeMCPServerMutation = (): UseMutationResult<
+  {
+    success: boolean;
+    message: string;
+    serverName: string;
+    oauthRequired?: boolean;
+    oauthUrl?: string;
+  },
+  unknown,
+  string,
+  unknown
+> => {
+  const queryClient = useQueryClient();
+  return useMutation((serverName: string) => dataService.reinitializeMCPServer(serverName), {
+    onSuccess: () => {
+      queryClient.invalidateQueries([QueryKeys.mcpTools]);
+    },
+  });
+};
+
+export const useCancelMCPOAuthMutation = (): UseMutationResult<
+  m.CancelMCPOAuthResponse,
+  unknown,
+  string,
+  unknown
+> => {
+  const queryClient = useQueryClient();
+  return useMutation((serverName: string) => dataService.cancelMCPOAuth(serverName), {
+    onSuccess: () => {
+      queryClient.invalidateQueries([QueryKeys.mcpConnectionStatus]);
     },
   });
 };
@@ -379,4 +430,176 @@ export const useUpdateFeedbackMutation = (
       },
     },
   );
+};
+
+export const useSearchPrincipalsQuery = (
+  params: q.PrincipalSearchParams,
+  config?: UseQueryOptions<q.PrincipalSearchResponse>,
+): QueryObserverResult<q.PrincipalSearchResponse> => {
+  return useQuery<q.PrincipalSearchResponse>(
+    [QueryKeys.principalSearch, params],
+    () => dataService.searchPrincipals(params),
+    {
+      enabled: !!params.q && params.q.length >= 2,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      refetchOnMount: false,
+      staleTime: 30000,
+      ...config,
+    },
+  );
+};
+
+export const useGetAccessRolesQuery = (
+  resourceType: ResourceType,
+  config?: UseQueryOptions<q.AccessRolesResponse>,
+): QueryObserverResult<q.AccessRolesResponse> => {
+  return useQuery<q.AccessRolesResponse>(
+    [QueryKeys.accessRoles, resourceType],
+    () => dataService.getAccessRoles(resourceType),
+    {
+      enabled: !!resourceType,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      refetchOnMount: false,
+      staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+      ...config,
+    },
+  );
+};
+
+export const useGetResourcePermissionsQuery = (
+  resourceType: ResourceType,
+  resourceId: string,
+  config?: UseQueryOptions<permissions.TGetResourcePermissionsResponse>,
+): QueryObserverResult<permissions.TGetResourcePermissionsResponse> => {
+  return useQuery<permissions.TGetResourcePermissionsResponse>(
+    [QueryKeys.resourcePermissions, resourceType, resourceId],
+    () => dataService.getResourcePermissions(resourceType, resourceId),
+    {
+      enabled: !!resourceType && !!resourceId,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      refetchOnMount: false,
+      staleTime: 2 * 60 * 1000, // Cache for 2 minutes
+      ...config,
+    },
+  );
+};
+
+export const useUpdateResourcePermissionsMutation = (): UseMutationResult<
+  permissions.TUpdateResourcePermissionsResponse,
+  Error,
+  {
+    resourceType: ResourceType;
+    resourceId: string;
+    data: permissions.TUpdateResourcePermissionsRequest;
+  }
+> => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ resourceType, resourceId, data }) =>
+      dataService.updateResourcePermissions(resourceType, resourceId, data),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: [QueryKeys.accessRoles, variables.resourceType],
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: [QueryKeys.resourcePermissions, variables.resourceType, variables.resourceId],
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: [QueryKeys.effectivePermissions, variables.resourceType, variables.resourceId],
+      });
+    },
+  });
+};
+
+export const useGetEffectivePermissionsQuery = (
+  resourceType: ResourceType,
+  resourceId: string,
+  config?: UseQueryOptions<permissions.TEffectivePermissionsResponse>,
+): QueryObserverResult<permissions.TEffectivePermissionsResponse> => {
+  return useQuery<permissions.TEffectivePermissionsResponse>({
+    queryKey: [QueryKeys.effectivePermissions, resourceType, resourceId],
+    queryFn: () => dataService.getEffectivePermissions(resourceType, resourceId),
+    enabled: !!resourceType && !!resourceId,
+    refetchOnWindowFocus: false,
+    staleTime: 30000,
+    ...config,
+  });
+};
+
+export const useGetAllEffectivePermissionsQuery = (
+  resourceType: ResourceType,
+  config?: UseQueryOptions<permissions.TAllEffectivePermissionsResponse>,
+): QueryObserverResult<permissions.TAllEffectivePermissionsResponse> => {
+  return useQuery<permissions.TAllEffectivePermissionsResponse>({
+    queryKey: [QueryKeys.effectivePermissions, 'all', resourceType],
+    queryFn: () => dataService.getAllEffectivePermissions(resourceType),
+    enabled: !!resourceType,
+    refetchOnWindowFocus: false,
+    staleTime: 30000,
+    ...config,
+  });
+};
+
+export const useMCPServerConnectionStatusQuery = (
+  serverName: string,
+  config?: UseQueryOptions<MCPServerConnectionStatusResponse>,
+): QueryObserverResult<MCPServerConnectionStatusResponse> => {
+  return useQuery<MCPServerConnectionStatusResponse>(
+    [QueryKeys.mcpConnectionStatus, serverName],
+    () => dataService.getMCPServerConnectionStatus(serverName),
+    {
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      refetchOnMount: false,
+      staleTime: 10000, // 10 seconds
+      enabled: !!serverName,
+      ...config,
+    },
+  );
+};
+
+export const useGetAgentApiKeysQuery = (
+  config?: UseQueryOptions<t.TAgentApiKeyListResponse>,
+): QueryObserverResult<t.TAgentApiKeyListResponse> => {
+  return useQuery<t.TAgentApiKeyListResponse>(
+    [QueryKeys.agentApiKeys],
+    () => dataService.getAgentApiKeys(),
+    {
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      refetchOnMount: false,
+      ...config,
+    },
+  );
+};
+
+export const useCreateAgentApiKeyMutation = (): UseMutationResult<
+  t.TAgentApiKeyCreateResponse,
+  unknown,
+  t.TAgentApiKeyCreateRequest
+> => {
+  const queryClient = useQueryClient();
+  return useMutation(
+    (payload: t.TAgentApiKeyCreateRequest) => dataService.createAgentApiKey(payload),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries([QueryKeys.agentApiKeys]);
+      },
+    },
+  );
+};
+
+export const useDeleteAgentApiKeyMutation = (): UseMutationResult<void, unknown, string> => {
+  const queryClient = useQueryClient();
+  return useMutation((id: string) => dataService.deleteAgentApiKey(id), {
+    onSuccess: () => {
+      queryClient.invalidateQueries([QueryKeys.agentApiKeys]);
+    },
+  });
 };

@@ -1,4 +1,4 @@
-const { isUserProvided } = require('@librechat/api');
+const { isUserProvided, isEnabled } = require('@librechat/api');
 const { EModelEndpoint } = require('librechat-data-provider');
 const { generateConfig } = require('~/server/utils/handleText');
 
@@ -8,8 +8,6 @@ const {
   ASSISTANTS_API_KEY: assistantsApiKey,
   AZURE_API_KEY: azureOpenAIApiKey,
   ANTHROPIC_API_KEY: anthropicApiKey,
-  CHATGPT_TOKEN: chatGPTToken,
-  PLUGINS_USE_AZURE,
   GOOGLE_KEY: googleKey,
   OPENAI_REVERSE_PROXY,
   AZURE_OPENAI_BASEURL,
@@ -17,21 +15,23 @@ const {
   AZURE_ASSISTANTS_BASE_URL,
 } = process.env ?? {};
 
-const useAzurePlugins = !!PLUGINS_USE_AZURE;
-
-const userProvidedOpenAI = useAzurePlugins
-  ? isUserProvided(azureOpenAIApiKey)
-  : isUserProvided(openAIApiKey);
+const userProvidedOpenAI = isUserProvided(openAIApiKey);
+const anthropicUsesVertex = isEnabled(process.env.ANTHROPIC_USE_VERTEX);
+const firstNonEmpty = (...values) => values.find((value) => value != null && value !== '');
+const bedrockUserProvidedCredential = [
+  process.env.BEDROCK_AWS_BEARER_TOKEN,
+  process.env.BEDROCK_AWS_ACCESS_KEY_ID,
+  process.env.BEDROCK_AWS_SECRET_ACCESS_KEY,
+  process.env.BEDROCK_AWS_SESSION_TOKEN,
+].find(isUserProvided);
 
 module.exports = {
   config: {
+    googleKey,
     openAIApiKey,
     azureOpenAIApiKey,
-    useAzurePlugins,
     userProvidedOpenAI,
-    googleKey,
-    [EModelEndpoint.anthropic]: generateConfig(anthropicApiKey),
-    [EModelEndpoint.chatGPTBrowser]: generateConfig(chatGPTToken),
+    [EModelEndpoint.anthropic]: generateConfig(anthropicUsesVertex ? 'true' : anthropicApiKey),
     [EModelEndpoint.openAI]: generateConfig(openAIApiKey, OPENAI_REVERSE_PROXY),
     [EModelEndpoint.azureOpenAI]: generateConfig(azureOpenAIApiKey, AZURE_OPENAI_BASEURL),
     [EModelEndpoint.assistants]: generateConfig(
@@ -45,7 +45,13 @@ module.exports = {
       EModelEndpoint.azureAssistants,
     ),
     [EModelEndpoint.bedrock]: generateConfig(
-      process.env.BEDROCK_AWS_SECRET_ACCESS_KEY ?? process.env.BEDROCK_AWS_DEFAULT_REGION,
+      bedrockUserProvidedCredential ??
+        firstNonEmpty(
+          process.env.BEDROCK_AWS_BEARER_TOKEN,
+          process.env.BEDROCK_AWS_SECRET_ACCESS_KEY,
+          process.env.BEDROCK_AWS_PROFILE,
+          process.env.BEDROCK_AWS_DEFAULT_REGION,
+        ),
     ),
     /* key will be part of separate config */
     [EModelEndpoint.agents]: generateConfig('true', undefined, EModelEndpoint.agents),

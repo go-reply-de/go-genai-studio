@@ -1,5 +1,5 @@
 const { Providers } = require('@librechat/agents');
-const { Constants, EModelEndpoint } = require('librechat-data-provider');
+const { Constants, ContentTypes, EModelEndpoint } = require('librechat-data-provider');
 const AgentClient = require('./client');
 
 jest.mock('@librechat/agents', () => ({
@@ -8,6 +8,44 @@ jest.mock('@librechat/agents', () => ({
     handleLLMEnd: jest.fn(),
     collected: [],
   }),
+}));
+
+jest.mock('@librechat/api', () => ({
+  ...jest.requireActual('@librechat/api'),
+  checkAccess: jest.fn(),
+  countFormattedMessageTokens: jest.fn(() => 42),
+  countTokens: jest.fn((text) => Math.ceil(String(text ?? '').length / 4)),
+  initializeAgent: jest.fn(),
+  createMemoryProcessor: jest.fn(),
+  isMemoryAgentEnabled: jest.fn((config) => {
+    if (!config || config.disabled === true) return false;
+    const agent = config.agent;
+    if (agent?.enabled !== true) return false;
+    return Boolean(agent.id || (agent.provider && agent.model));
+  }),
+  loadAgent: jest.fn(),
+}));
+
+jest.mock('~/server/services/Config', () => ({
+  getMCPServerTools: jest.fn(),
+}));
+
+jest.mock('~/server/services/MCP', () => ({
+  resolveConfigServers: jest.fn().mockResolvedValue({}),
+}));
+
+jest.mock('~/models', () => ({
+  getAgent: jest.fn(),
+  getRoleByName: jest.fn(),
+  getFormattedMemories: jest.fn(),
+}));
+
+// Mock getMCPManager
+const mockFormatInstructions = jest.fn();
+jest.mock('~/config', () => ({
+  getMCPManager: jest.fn(() => ({
+    formatInstructionsForContext: mockFormatInstructions,
+  })),
 }));
 
 describe('AgentClient - titleConvo', () => {
@@ -41,8 +79,16 @@ describe('AgentClient - titleConvo', () => {
 
     // Mock request and response
     mockReq = {
-      app: {
-        locals: {
+      user: {
+        id: 'user-123',
+      },
+      body: {
+        model: 'gpt-4',
+        endpoint: EModelEndpoint.openAI,
+        key: null,
+      },
+      config: {
+        endpoints: {
           [EModelEndpoint.openAI]: {
             // Match the agent endpoint
             titleModel: 'gpt-3.5-turbo',
@@ -51,14 +97,6 @@ describe('AgentClient - titleConvo', () => {
             titlePromptTemplate: 'Template: {{content}}',
           },
         },
-      },
-      user: {
-        id: 'user-123',
-      },
-      body: {
-        model: 'gpt-4',
-        endpoint: EModelEndpoint.openAI,
-        key: null,
       },
     };
 
@@ -88,6 +126,52 @@ describe('AgentClient - titleConvo', () => {
       await expect(
         client.titleConvo({ text: 'Test', abortController: new AbortController() }),
       ).rejects.toThrow('Run not initialized');
+    });
+
+    it('waits for the run in immediate mode instead of throwing', async () => {
+      client.run = null;
+      const abortController = new AbortController();
+
+      const titlePromise = client.titleConvo({ text: 'Test', abortController, immediate: true });
+
+      // Simulate `chatCompletion` assigning the run (client.js: `this.run = run`).
+      client.run = mockRun;
+      client._resolveRun(mockRun);
+
+      await titlePromise;
+      expect(mockRun.generateTitle).toHaveBeenCalled();
+    });
+
+    it('passes empty contentParts in immediate mode (title from the user input only)', async () => {
+      client.contentParts = [{ type: 'text', text: 'Streaming response so far' }];
+      const abortController = new AbortController();
+
+      await client.titleConvo({ text: 'Hello there', abortController, immediate: true });
+
+      const call = mockRun.generateTitle.mock.calls[0][0];
+      expect(call.contentParts).toEqual([]);
+      expect(call.inputText).toBe('Hello there');
+    });
+
+    it('uses live contentParts in non-immediate (final) mode', async () => {
+      client.contentParts = [{ type: 'text', text: 'Full response' }];
+      const abortController = new AbortController();
+
+      await client.titleConvo({ text: 'Hello there', abortController });
+
+      const call = mockRun.generateTitle.mock.calls[0][0];
+      expect(call.contentParts).toEqual([{ type: 'text', text: 'Full response' }]);
+    });
+
+    it('rejects promptly when aborted before the run initializes in immediate mode', async () => {
+      client.run = null;
+      const abortController = new AbortController();
+      abortController.abort();
+
+      await expect(
+        client.titleConvo({ text: 'Test', abortController, immediate: true }),
+      ).rejects.toThrow('Aborted before run initialization');
+      expect(mockRun.generateTitle).not.toHaveBeenCalled();
     });
 
     it('should use titlePrompt from endpoint config', async () => {
@@ -141,9 +225,54 @@ describe('AgentClient - titleConvo', () => {
       expect(generateTitleCall.clientOptions.model).toBe('gpt-3.5-turbo');
     });
 
+    it('preserves Anthropic custom headers on title requests despite omitTitleOptions', async () => {
+      const prevKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'sk-ant-test';
+      try {
+        const req = {
+          user: { id: 'user-123' },
+          body: { model: 'claude-sonnet-4-5', endpoint: EModelEndpoint.anthropic, key: null },
+          config: {
+            endpoints: {
+              [EModelEndpoint.anthropic]: {
+                headers: { 'X-Conversation-Id': '{{LIBRECHAT_BODY_CONVERSATIONID}}' },
+              },
+            },
+          },
+        };
+        const agent = {
+          id: 'agent-anthropic',
+          endpoint: EModelEndpoint.anthropic,
+          provider: EModelEndpoint.anthropic,
+          model_parameters: { model: 'claude-sonnet-4-5' },
+        };
+        const anthropicClient = new AgentClient({ req, res: {}, agent, endpointTokenConfig: {} });
+        anthropicClient.run = mockRun;
+        anthropicClient.responseMessageId = 'response-123';
+        anthropicClient.conversationId = 'convo-123';
+        anthropicClient.contentParts = [{ type: 'text', text: 'Test content' }];
+        anthropicClient.recordCollectedUsage = jest.fn().mockResolvedValue();
+
+        await anthropicClient.titleConvo({ text: 'Hello', abortController: new AbortController() });
+
+        const defaultHeaders =
+          mockRun.generateTitle.mock.calls[0][0].clientOptions?.clientOptions?.defaultHeaders;
+        // Custom header survives the `omitTitleOptions` strip and resolves the conversationId
+        expect(defaultHeaders?.['X-Conversation-Id']).toBe('convo-123');
+        // Provider-managed beta header is preserved alongside it
+        expect(defaultHeaders?.['anthropic-beta']).toBeDefined();
+      } finally {
+        if (prevKey === undefined) {
+          delete process.env.ANTHROPIC_API_KEY;
+        } else {
+          process.env.ANTHROPIC_API_KEY = prevKey;
+        }
+      }
+    });
+
     it('should handle missing endpoint config gracefully', async () => {
       // Remove endpoint config
-      mockReq.app.locals[EModelEndpoint.openAI] = undefined;
+      mockReq.config = { endpoints: {} };
 
       const text = 'Test conversation text';
       const abortController = new AbortController();
@@ -161,7 +290,16 @@ describe('AgentClient - titleConvo', () => {
 
     it('should use agent model when titleModel is not provided', async () => {
       // Remove titleModel from config
-      delete mockReq.app.locals[EModelEndpoint.openAI].titleModel;
+      mockReq.config = {
+        endpoints: {
+          [EModelEndpoint.openAI]: {
+            titlePrompt: 'Custom title prompt',
+            titleMethod: 'structured',
+            titlePromptTemplate: 'Template: {{content}}',
+            // titleModel is omitted
+          },
+        },
+      };
 
       const text = 'Test conversation text';
       const abortController = new AbortController();
@@ -173,7 +311,16 @@ describe('AgentClient - titleConvo', () => {
     });
 
     it('should not use titleModel when it equals CURRENT_MODEL constant', async () => {
-      mockReq.app.locals[EModelEndpoint.openAI].titleModel = Constants.CURRENT_MODEL;
+      mockReq.config = {
+        endpoints: {
+          [EModelEndpoint.openAI]: {
+            titleModel: Constants.CURRENT_MODEL,
+            titlePrompt: 'Custom title prompt',
+            titleMethod: 'structured',
+            titlePromptTemplate: 'Template: {{content}}',
+          },
+        },
+      };
 
       const text = 'Test conversation text';
       const abortController = new AbortController();
@@ -216,6 +363,13 @@ describe('AgentClient - titleConvo', () => {
         model: 'gpt-3.5-turbo',
         context: 'title',
         collectedUsage: expect.any(Array),
+        balance: {
+          enabled: false,
+        },
+        transactions: {
+          enabled: true,
+        },
+        messageId: 'response-123',
       });
     });
 
@@ -226,6 +380,38 @@ describe('AgentClient - titleConvo', () => {
       const result = await client.titleConvo({ text, abortController });
 
       expect(result).toBe('Generated Title');
+    });
+
+    it('should sanitize the generated title by removing think blocks', async () => {
+      const titleWithThinkBlock = '<think>reasoning about the title</think> User Hi Greeting';
+      mockRun.generateTitle.mockResolvedValue({
+        title: titleWithThinkBlock,
+      });
+
+      const text = 'Test conversation text';
+      const abortController = new AbortController();
+
+      const result = await client.titleConvo({ text, abortController });
+
+      // Should remove the <think> block and return only the clean title
+      expect(result).toBe('User Hi Greeting');
+      expect(result).not.toContain('<think>');
+      expect(result).not.toContain('</think>');
+    });
+
+    it('should return fallback title when sanitization results in empty string', async () => {
+      const titleOnlyThinkBlock = '<think>only reasoning no actual title</think>';
+      mockRun.generateTitle.mockResolvedValue({
+        title: titleOnlyThinkBlock,
+      });
+
+      const text = 'Test conversation text';
+      const abortController = new AbortController();
+
+      const result = await client.titleConvo({ text, abortController });
+
+      // Should return the fallback title since sanitization would result in empty string
+      expect(result).toBe('Untitled Conversation');
     });
 
     it('should handle errors gracefully and return undefined', async () => {
@@ -239,16 +425,161 @@ describe('AgentClient - titleConvo', () => {
       expect(result).toBeUndefined();
     });
 
+    it('should skip title generation when titleConvo is set to false', async () => {
+      // Set titleConvo to false in endpoint config
+      mockReq.config = {
+        endpoints: {
+          [EModelEndpoint.openAI]: {
+            titleConvo: false,
+            titleModel: 'gpt-3.5-turbo',
+            titlePrompt: 'Custom title prompt',
+            titleMethod: 'structured',
+            titlePromptTemplate: 'Template: {{content}}',
+          },
+        },
+      };
+
+      const text = 'Test conversation text';
+      const abortController = new AbortController();
+
+      const result = await client.titleConvo({ text, abortController });
+
+      // Should return undefined without generating title
+      expect(result).toBeUndefined();
+
+      // generateTitle should NOT have been called
+      expect(mockRun.generateTitle).not.toHaveBeenCalled();
+
+      // recordCollectedUsage should NOT have been called
+      expect(client.recordCollectedUsage).not.toHaveBeenCalled();
+    });
+
+    it('should skip title generation for temporary chats', async () => {
+      // Set isTemporary to true
+      mockReq.body.isTemporary = true;
+
+      const text = 'Test temporary chat';
+      const abortController = new AbortController();
+
+      const result = await client.titleConvo({ text, abortController });
+
+      // Should return undefined without generating title
+      expect(result).toBeUndefined();
+
+      // generateTitle should NOT have been called
+      expect(mockRun.generateTitle).not.toHaveBeenCalled();
+
+      // recordCollectedUsage should NOT have been called
+      expect(client.recordCollectedUsage).not.toHaveBeenCalled();
+    });
+
+    it('should skip title generation when titleConvo is false in all config', async () => {
+      // Set titleConvo to false in "all" config
+      mockReq.config = {
+        endpoints: {
+          all: {
+            titleConvo: false,
+            titleModel: 'gpt-4o-mini',
+            titlePrompt: 'All config title prompt',
+            titleMethod: 'completion',
+            titlePromptTemplate: 'All config template',
+          },
+        },
+      };
+
+      const text = 'Test conversation text';
+      const abortController = new AbortController();
+
+      const result = await client.titleConvo({ text, abortController });
+
+      // Should return undefined without generating title
+      expect(result).toBeUndefined();
+
+      // generateTitle should NOT have been called
+      expect(mockRun.generateTitle).not.toHaveBeenCalled();
+
+      // recordCollectedUsage should NOT have been called
+      expect(client.recordCollectedUsage).not.toHaveBeenCalled();
+    });
+
+    it('should skip title generation when titleConvo is false for custom endpoint scenario', async () => {
+      // This test validates the behavior when customEndpointConfig (retrieved via
+      // getProviderConfig for custom endpoints) has titleConvo: false.
+      //
+      // The code path is:
+      // 1. endpoints?.all is checked (undefined in this test)
+      // 2. endpoints?.[endpoint] is checked (our test config)
+      // 3. Would fall back to titleProviderConfig.customEndpointConfig (for real custom endpoints)
+      //
+      // We simulate a custom endpoint scenario using a dynamically named endpoint config
+
+      // Create a unique endpoint name that represents a custom endpoint
+      const customEndpointName = 'customEndpoint';
+
+      // Configure the endpoint to have titleConvo: false
+      // This simulates what would be in customEndpointConfig for a real custom endpoint
+      mockReq.config = {
+        endpoints: {
+          // No 'all' config - so it will check endpoints[endpoint]
+          // This config represents what customEndpointConfig would contain
+          [customEndpointName]: {
+            titleConvo: false,
+            titleModel: 'custom-model-v1',
+            titlePrompt: 'Custom endpoint title prompt',
+            titleMethod: 'completion',
+            titlePromptTemplate: 'Custom template: {{content}}',
+            baseURL: 'https://api.custom-llm.com/v1',
+            apiKey: 'test-custom-key',
+            // Additional custom endpoint properties
+            models: {
+              default: ['custom-model-v1', 'custom-model-v2'],
+            },
+          },
+        },
+      };
+
+      // Set up agent to use our custom endpoint
+      // Use openAI as base but override with custom endpoint name for this test
+      mockAgent.endpoint = EModelEndpoint.openAI;
+      mockAgent.provider = EModelEndpoint.openAI;
+
+      // Override the endpoint in the config to point to our custom config
+      mockReq.config.endpoints[EModelEndpoint.openAI] =
+        mockReq.config.endpoints[customEndpointName];
+      delete mockReq.config.endpoints[customEndpointName];
+
+      const text = 'Test custom endpoint conversation';
+      const abortController = new AbortController();
+
+      const result = await client.titleConvo({ text, abortController });
+
+      // Should return undefined without generating title because titleConvo is false
+      expect(result).toBeUndefined();
+
+      // generateTitle should NOT have been called
+      expect(mockRun.generateTitle).not.toHaveBeenCalled();
+
+      // recordCollectedUsage should NOT have been called
+      expect(client.recordCollectedUsage).not.toHaveBeenCalled();
+    });
+
     it('should pass titleEndpoint configuration to generateTitle', async () => {
       // Mock the API key just for this test
       const originalApiKey = process.env.ANTHROPIC_API_KEY;
       process.env.ANTHROPIC_API_KEY = 'test-api-key';
 
       // Add titleEndpoint to the config
-      mockReq.app.locals[EModelEndpoint.openAI].titleEndpoint = EModelEndpoint.anthropic;
-      mockReq.app.locals[EModelEndpoint.openAI].titleMethod = 'structured';
-      mockReq.app.locals[EModelEndpoint.openAI].titlePrompt = 'Custom title prompt';
-      mockReq.app.locals[EModelEndpoint.openAI].titlePromptTemplate = 'Custom template';
+      mockReq.config = {
+        endpoints: {
+          [EModelEndpoint.openAI]: {
+            titleModel: 'gpt-3.5-turbo',
+            titleEndpoint: EModelEndpoint.anthropic,
+            titleMethod: 'structured',
+            titlePrompt: 'Custom title prompt',
+            titlePromptTemplate: 'Custom template',
+          },
+        },
+      };
 
       const text = 'Test conversation text';
       const abortController = new AbortController();
@@ -274,18 +605,16 @@ describe('AgentClient - titleConvo', () => {
     });
 
     it('should use all config when endpoint config is missing', async () => {
-      // Remove endpoint-specific config
-      delete mockReq.app.locals[EModelEndpoint.openAI].titleModel;
-      delete mockReq.app.locals[EModelEndpoint.openAI].titlePrompt;
-      delete mockReq.app.locals[EModelEndpoint.openAI].titleMethod;
-      delete mockReq.app.locals[EModelEndpoint.openAI].titlePromptTemplate;
-
-      // Set 'all' config
-      mockReq.app.locals.all = {
-        titleModel: 'gpt-4o-mini',
-        titlePrompt: 'All config title prompt',
-        titleMethod: 'completion',
-        titlePromptTemplate: 'All config template: {{content}}',
+      // Set 'all' config without endpoint-specific config
+      mockReq.config = {
+        endpoints: {
+          all: {
+            titleModel: 'gpt-4o-mini',
+            titlePrompt: 'All config title prompt',
+            titleMethod: 'completion',
+            titlePromptTemplate: 'All config template: {{content}}',
+          },
+        },
       };
 
       const text = 'Test conversation text';
@@ -309,17 +638,21 @@ describe('AgentClient - titleConvo', () => {
 
     it('should prioritize all config over endpoint config for title settings', async () => {
       // Set both endpoint and 'all' config
-      mockReq.app.locals[EModelEndpoint.openAI].titleModel = 'gpt-3.5-turbo';
-      mockReq.app.locals[EModelEndpoint.openAI].titlePrompt = 'Endpoint title prompt';
-      mockReq.app.locals[EModelEndpoint.openAI].titleMethod = 'structured';
-      // Remove titlePromptTemplate from endpoint config to test fallback
-      delete mockReq.app.locals[EModelEndpoint.openAI].titlePromptTemplate;
-
-      mockReq.app.locals.all = {
-        titleModel: 'gpt-4o-mini',
-        titlePrompt: 'All config title prompt',
-        titleMethod: 'completion',
-        titlePromptTemplate: 'All config template',
+      mockReq.config = {
+        endpoints: {
+          [EModelEndpoint.openAI]: {
+            titleModel: 'gpt-3.5-turbo',
+            titlePrompt: 'Endpoint title prompt',
+            titleMethod: 'structured',
+            // titlePromptTemplate is omitted to test fallback
+          },
+          all: {
+            titleModel: 'gpt-4o-mini',
+            titlePrompt: 'All config title prompt',
+            titleMethod: 'completion',
+            titlePromptTemplate: 'All config template',
+          },
+        },
       };
 
       const text = 'Test conversation text';
@@ -346,17 +679,18 @@ describe('AgentClient - titleConvo', () => {
       const originalApiKey = process.env.ANTHROPIC_API_KEY;
       process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
 
-      // Remove endpoint-specific config to test 'all' config
-      delete mockReq.app.locals[EModelEndpoint.openAI];
-
       // Set comprehensive 'all' config with all new title options
-      mockReq.app.locals.all = {
-        titleConvo: true,
-        titleModel: 'claude-3-haiku-20240307',
-        titleMethod: 'completion', // Testing the new default method
-        titlePrompt: 'Generate a concise, descriptive title for this conversation',
-        titlePromptTemplate: 'Conversation summary: {{content}}',
-        titleEndpoint: EModelEndpoint.anthropic, // Should switch provider to Anthropic
+      mockReq.config = {
+        endpoints: {
+          all: {
+            titleConvo: true,
+            titleModel: 'claude-3-haiku-20240307',
+            titleMethod: 'completion', // Testing the new default method
+            titlePrompt: 'Generate a concise, descriptive title for this conversation',
+            titlePromptTemplate: 'Conversation summary: {{content}}',
+            titleEndpoint: EModelEndpoint.anthropic, // Should switch provider to Anthropic
+          },
+        },
       };
 
       const text = 'Test conversation about AI and machine learning';
@@ -402,15 +736,16 @@ describe('AgentClient - titleConvo', () => {
         // Clear previous calls
         mockRun.generateTitle.mockClear();
 
-        // Remove endpoint config
-        delete mockReq.app.locals[EModelEndpoint.openAI];
-
         // Set 'all' config with specific titleMethod
-        mockReq.app.locals.all = {
-          titleModel: 'gpt-4o-mini',
-          titleMethod: method,
-          titlePrompt: `Testing ${method} method`,
-          titlePromptTemplate: `Template for ${method}: {{content}}`,
+        mockReq.config = {
+          endpoints: {
+            all: {
+              titleModel: 'gpt-4o-mini',
+              titleMethod: method,
+              titlePrompt: `Testing ${method} method`,
+              titlePromptTemplate: `Template for ${method}: {{content}}`,
+            },
+          },
         };
 
         const text = `Test conversation for ${method} method`;
@@ -455,27 +790,31 @@ describe('AgentClient - titleConvo', () => {
         // Set up Azure endpoint with serverless config
         mockAgent.endpoint = EModelEndpoint.azureOpenAI;
         mockAgent.provider = EModelEndpoint.azureOpenAI;
-        mockReq.app.locals[EModelEndpoint.azureOpenAI] = {
-          titleConvo: true,
-          titleModel: 'grok-3',
-          titleMethod: 'completion',
-          titlePrompt: 'Azure serverless title prompt',
-          streamRate: 35,
-          modelGroupMap: {
-            'grok-3': {
-              group: 'Azure AI Foundry',
-              deploymentName: 'grok-3',
-            },
-          },
-          groupMap: {
-            'Azure AI Foundry': {
-              apiKey: '${AZURE_API_KEY}',
-              baseURL: 'https://test.services.ai.azure.com/models',
-              version: '2024-05-01-preview',
-              serverless: true,
-              models: {
+        mockReq.config = {
+          endpoints: {
+            [EModelEndpoint.azureOpenAI]: {
+              titleConvo: true,
+              titleModel: 'grok-3',
+              titleMethod: 'completion',
+              titlePrompt: 'Azure serverless title prompt',
+              streamRate: 35,
+              modelGroupMap: {
                 'grok-3': {
+                  group: 'Azure AI Foundry',
                   deploymentName: 'grok-3',
+                },
+              },
+              groupMap: {
+                'Azure AI Foundry': {
+                  apiKey: '${AZURE_API_KEY}',
+                  baseURL: 'https://test.services.ai.azure.com/models',
+                  version: '2024-05-01-preview',
+                  serverless: true,
+                  models: {
+                    'grok-3': {
+                      deploymentName: 'grok-3',
+                    },
+                  },
                 },
               },
             },
@@ -503,26 +842,30 @@ describe('AgentClient - titleConvo', () => {
         // Set up Azure endpoint
         mockAgent.endpoint = EModelEndpoint.azureOpenAI;
         mockAgent.provider = EModelEndpoint.azureOpenAI;
-        mockReq.app.locals[EModelEndpoint.azureOpenAI] = {
-          titleConvo: true,
-          titleModel: 'gpt-4o',
-          titleMethod: 'structured',
-          titlePrompt: 'Azure instance title prompt',
-          streamRate: 35,
-          modelGroupMap: {
-            'gpt-4o': {
-              group: 'eastus',
-              deploymentName: 'gpt-4o',
-            },
-          },
-          groupMap: {
-            eastus: {
-              apiKey: '${EASTUS_API_KEY}',
-              instanceName: 'region-instance',
-              version: '2024-02-15-preview',
-              models: {
+        mockReq.config = {
+          endpoints: {
+            [EModelEndpoint.azureOpenAI]: {
+              titleConvo: true,
+              titleModel: 'gpt-4o',
+              titleMethod: 'structured',
+              titlePrompt: 'Azure instance title prompt',
+              streamRate: 35,
+              modelGroupMap: {
                 'gpt-4o': {
+                  group: 'eastus',
                   deploymentName: 'gpt-4o',
+                },
+              },
+              groupMap: {
+                eastus: {
+                  apiKey: '${EASTUS_API_KEY}',
+                  instanceName: 'region-instance',
+                  version: '2024-02-15-preview',
+                  models: {
+                    'gpt-4o': {
+                      deploymentName: 'gpt-4o',
+                    },
+                  },
                 },
               },
             },
@@ -551,27 +894,31 @@ describe('AgentClient - titleConvo', () => {
         mockAgent.endpoint = EModelEndpoint.azureOpenAI;
         mockAgent.provider = EModelEndpoint.azureOpenAI;
         mockAgent.model_parameters.model = 'gpt-4o-latest';
-        mockReq.app.locals[EModelEndpoint.azureOpenAI] = {
-          titleConvo: true,
-          titleModel: Constants.CURRENT_MODEL,
-          titleMethod: 'functions',
-          streamRate: 35,
-          modelGroupMap: {
-            'gpt-4o-latest': {
-              group: 'region-eastus',
-              deploymentName: 'gpt-4o-mini',
-              version: '2024-02-15-preview',
-            },
-          },
-          groupMap: {
-            'region-eastus': {
-              apiKey: '${EASTUS2_API_KEY}',
-              instanceName: 'test-instance',
-              version: '2024-12-01-preview',
-              models: {
+        mockReq.config = {
+          endpoints: {
+            [EModelEndpoint.azureOpenAI]: {
+              titleConvo: true,
+              titleModel: Constants.CURRENT_MODEL,
+              titleMethod: 'functions',
+              streamRate: 35,
+              modelGroupMap: {
                 'gpt-4o-latest': {
+                  group: 'region-eastus',
                   deploymentName: 'gpt-4o-mini',
                   version: '2024-02-15-preview',
+                },
+              },
+              groupMap: {
+                'region-eastus': {
+                  apiKey: '${EASTUS2_API_KEY}',
+                  instanceName: 'test-instance',
+                  version: '2024-12-01-preview',
+                  models: {
+                    'gpt-4o-latest': {
+                      deploymentName: 'gpt-4o-mini',
+                      version: '2024-02-15-preview',
+                    },
+                  },
                 },
               },
             },
@@ -598,54 +945,58 @@ describe('AgentClient - titleConvo', () => {
         // Set up Azure endpoint
         mockAgent.endpoint = EModelEndpoint.azureOpenAI;
         mockAgent.provider = EModelEndpoint.azureOpenAI;
-        mockReq.app.locals[EModelEndpoint.azureOpenAI] = {
-          titleConvo: true,
-          titleModel: 'o1-mini',
-          titleMethod: 'completion',
-          streamRate: 35,
-          modelGroupMap: {
-            'gpt-4o': {
-              group: 'eastus',
-              deploymentName: 'gpt-4o',
-            },
-            'o1-mini': {
-              group: 'region-eastus',
-              deploymentName: 'o1-mini',
-            },
-            'codex-mini': {
-              group: 'codex-mini',
-              deploymentName: 'codex-mini',
-            },
-          },
-          groupMap: {
-            eastus: {
-              apiKey: '${EASTUS_API_KEY}',
-              instanceName: 'region-eastus',
-              version: '2024-02-15-preview',
-              models: {
+        mockReq.config = {
+          endpoints: {
+            [EModelEndpoint.azureOpenAI]: {
+              titleConvo: true,
+              titleModel: 'o1-mini',
+              titleMethod: 'completion',
+              streamRate: 35,
+              modelGroupMap: {
                 'gpt-4o': {
+                  group: 'eastus',
                   deploymentName: 'gpt-4o',
                 },
-              },
-            },
-            'region-eastus': {
-              apiKey: '${EASTUS2_API_KEY}',
-              instanceName: 'region-eastus2',
-              version: '2024-12-01-preview',
-              models: {
                 'o1-mini': {
+                  group: 'region-eastus',
                   deploymentName: 'o1-mini',
                 },
-              },
-            },
-            'codex-mini': {
-              apiKey: '${AZURE_API_KEY}',
-              baseURL: 'https://example.cognitiveservices.azure.com/openai/',
-              version: '2025-04-01-preview',
-              serverless: true,
-              models: {
                 'codex-mini': {
+                  group: 'codex-mini',
                   deploymentName: 'codex-mini',
+                },
+              },
+              groupMap: {
+                eastus: {
+                  apiKey: '${EASTUS_API_KEY}',
+                  instanceName: 'region-eastus',
+                  version: '2024-02-15-preview',
+                  models: {
+                    'gpt-4o': {
+                      deploymentName: 'gpt-4o',
+                    },
+                  },
+                },
+                'region-eastus': {
+                  apiKey: '${EASTUS2_API_KEY}',
+                  instanceName: 'region-eastus2',
+                  version: '2024-12-01-preview',
+                  models: {
+                    'o1-mini': {
+                      deploymentName: 'o1-mini',
+                    },
+                  },
+                },
+                'codex-mini': {
+                  apiKey: '${AZURE_API_KEY}',
+                  baseURL: 'https://example.cognitiveservices.azure.com/openai/',
+                  version: '2025-04-01-preview',
+                  serverless: true,
+                  models: {
+                    'codex-mini': {
+                      deploymentName: 'codex-mini',
+                    },
+                  },
                 },
               },
             },
@@ -679,31 +1030,32 @@ describe('AgentClient - titleConvo', () => {
         mockReq.body.endpoint = EModelEndpoint.azureOpenAI;
         mockReq.body.model = 'gpt-4';
 
-        // Remove Azure-specific config
-        delete mockReq.app.locals[EModelEndpoint.azureOpenAI];
-
         // Set 'all' config as fallback with a serverless Azure config
-        mockReq.app.locals.all = {
-          titleConvo: true,
-          titleModel: 'gpt-4',
-          titleMethod: 'structured',
-          titlePrompt: 'Fallback title prompt from all config',
-          titlePromptTemplate: 'Template: {{content}}',
-          modelGroupMap: {
-            'gpt-4': {
-              group: 'default-group',
-              deploymentName: 'gpt-4',
-            },
-          },
-          groupMap: {
-            'default-group': {
-              apiKey: '${AZURE_API_KEY}',
-              baseURL: 'https://default.openai.azure.com/',
-              version: '2024-02-15-preview',
-              serverless: true,
-              models: {
+        mockReq.config = {
+          endpoints: {
+            all: {
+              titleConvo: true,
+              titleModel: 'gpt-4',
+              titleMethod: 'structured',
+              titlePrompt: 'Fallback title prompt from all config',
+              titlePromptTemplate: 'Template: {{content}}',
+              modelGroupMap: {
                 'gpt-4': {
+                  group: 'default-group',
                   deploymentName: 'gpt-4',
+                },
+              },
+              groupMap: {
+                'default-group': {
+                  apiKey: '${AZURE_API_KEY}',
+                  baseURL: 'https://default.openai.azure.com/',
+                  version: '2024-02-15-preview',
+                  serverless: true,
+                  models: {
+                    'gpt-4': {
+                      deploymentName: 'gpt-4',
+                    },
+                  },
                 },
               },
             },
@@ -726,5 +1078,2009 @@ describe('AgentClient - titleConvo', () => {
         );
       });
     });
+  });
+
+  describe('getOptions method - GPT-5+ model handling', () => {
+    let mockReq;
+    let mockRes;
+    let mockAgent;
+    let mockOptions;
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+
+      mockAgent = {
+        id: 'agent-123',
+        endpoint: EModelEndpoint.openAI,
+        provider: EModelEndpoint.openAI,
+        model_parameters: {
+          model: 'gpt-5',
+        },
+      };
+
+      mockReq = {
+        app: {
+          locals: {},
+        },
+        user: {
+          id: 'user-123',
+        },
+      };
+
+      mockRes = {};
+
+      mockOptions = {
+        req: mockReq,
+        res: mockRes,
+        agent: mockAgent,
+      };
+
+      client = new AgentClient(mockOptions);
+    });
+
+    it('should move maxTokens to modelKwargs.max_completion_tokens for GPT-5 models', () => {
+      const clientOptions = {
+        model: 'gpt-5',
+        maxTokens: 2048,
+        temperature: 0.7,
+      };
+
+      // Simulate the getOptions logic that handles GPT-5+ models
+      if (/\bgpt-[5-9](?:\.\d+)?\b/i.test(clientOptions.model) && clientOptions.maxTokens != null) {
+        clientOptions.modelKwargs = clientOptions.modelKwargs ?? {};
+        clientOptions.modelKwargs.max_completion_tokens = clientOptions.maxTokens;
+        delete clientOptions.maxTokens;
+      }
+
+      expect(clientOptions.maxTokens).toBeUndefined();
+      expect(clientOptions.modelKwargs).toBeDefined();
+      expect(clientOptions.modelKwargs.max_completion_tokens).toBe(2048);
+      expect(clientOptions.temperature).toBe(0.7); // Other options should remain
+    });
+
+    it('should move maxTokens to modelKwargs.max_output_tokens for GPT-5 models with useResponsesApi', () => {
+      const clientOptions = {
+        model: 'gpt-5',
+        maxTokens: 2048,
+        temperature: 0.7,
+        useResponsesApi: true,
+      };
+
+      if (/\bgpt-[5-9](?:\.\d+)?\b/i.test(clientOptions.model) && clientOptions.maxTokens != null) {
+        clientOptions.modelKwargs = clientOptions.modelKwargs ?? {};
+        const paramName =
+          clientOptions.useResponsesApi === true ? 'max_output_tokens' : 'max_completion_tokens';
+        clientOptions.modelKwargs[paramName] = clientOptions.maxTokens;
+        delete clientOptions.maxTokens;
+      }
+
+      expect(clientOptions.maxTokens).toBeUndefined();
+      expect(clientOptions.modelKwargs).toBeDefined();
+      expect(clientOptions.modelKwargs.max_output_tokens).toBe(2048);
+      expect(clientOptions.temperature).toBe(0.7); // Other options should remain
+    });
+
+    it('should handle GPT-5+ models with existing modelKwargs', () => {
+      const clientOptions = {
+        model: 'gpt-6',
+        maxTokens: 1500,
+        temperature: 0.8,
+        modelKwargs: {
+          customParam: 'value',
+        },
+      };
+
+      // Simulate the getOptions logic
+      if (/\bgpt-[5-9](?:\.\d+)?\b/i.test(clientOptions.model) && clientOptions.maxTokens != null) {
+        clientOptions.modelKwargs = clientOptions.modelKwargs ?? {};
+        clientOptions.modelKwargs.max_completion_tokens = clientOptions.maxTokens;
+        delete clientOptions.maxTokens;
+      }
+
+      expect(clientOptions.maxTokens).toBeUndefined();
+      expect(clientOptions.modelKwargs).toEqual({
+        customParam: 'value',
+        max_completion_tokens: 1500,
+      });
+    });
+
+    it('should not modify maxTokens for non-GPT-5+ models', () => {
+      const clientOptions = {
+        model: 'gpt-4',
+        maxTokens: 2048,
+        temperature: 0.7,
+      };
+
+      // Simulate the getOptions logic
+      if (/\bgpt-[5-9](?:\.\d+)?\b/i.test(clientOptions.model) && clientOptions.maxTokens != null) {
+        clientOptions.modelKwargs = clientOptions.modelKwargs ?? {};
+        clientOptions.modelKwargs.max_completion_tokens = clientOptions.maxTokens;
+        delete clientOptions.maxTokens;
+      }
+
+      // Should not be modified since it's GPT-4
+      expect(clientOptions.maxTokens).toBe(2048);
+      expect(clientOptions.modelKwargs).toBeUndefined();
+    });
+
+    it('should handle various GPT-5+ model formats', () => {
+      const testCases = [
+        { model: 'gpt-5.1', shouldTransform: true },
+        { model: 'gpt-5.1-chat-latest', shouldTransform: true },
+        { model: 'gpt-5.1-codex', shouldTransform: true },
+        { model: 'gpt-5', shouldTransform: true },
+        { model: 'gpt-5-turbo', shouldTransform: true },
+        { model: 'gpt-6', shouldTransform: true },
+        { model: 'gpt-7-preview', shouldTransform: true },
+        { model: 'gpt-8', shouldTransform: true },
+        { model: 'gpt-9-mini', shouldTransform: true },
+        { model: 'gpt-4', shouldTransform: false },
+        { model: 'gpt-4o', shouldTransform: false },
+        { model: 'gpt-3.5-turbo', shouldTransform: false },
+        { model: 'claude-3', shouldTransform: false },
+      ];
+
+      testCases.forEach(({ model, shouldTransform }) => {
+        const clientOptions = {
+          model,
+          maxTokens: 1000,
+        };
+
+        // Simulate the getOptions logic
+        if (
+          /\bgpt-[5-9](?:\.\d+)?\b/i.test(clientOptions.model) &&
+          clientOptions.maxTokens != null
+        ) {
+          clientOptions.modelKwargs = clientOptions.modelKwargs ?? {};
+          clientOptions.modelKwargs.max_completion_tokens = clientOptions.maxTokens;
+          delete clientOptions.maxTokens;
+        }
+
+        if (shouldTransform) {
+          expect(clientOptions.maxTokens).toBeUndefined();
+          expect(clientOptions.modelKwargs?.max_completion_tokens).toBe(1000);
+        } else {
+          expect(clientOptions.maxTokens).toBe(1000);
+          expect(clientOptions.modelKwargs).toBeUndefined();
+        }
+      });
+    });
+
+    it('should not swap max token param for older models when using useResponsesApi', () => {
+      const testCases = [
+        { model: 'gpt-5.1', shouldTransform: true },
+        { model: 'gpt-5.1-chat-latest', shouldTransform: true },
+        { model: 'gpt-5.1-codex', shouldTransform: true },
+        { model: 'gpt-5', shouldTransform: true },
+        { model: 'gpt-5-turbo', shouldTransform: true },
+        { model: 'gpt-6', shouldTransform: true },
+        { model: 'gpt-7-preview', shouldTransform: true },
+        { model: 'gpt-8', shouldTransform: true },
+        { model: 'gpt-9-mini', shouldTransform: true },
+        { model: 'gpt-4', shouldTransform: false },
+        { model: 'gpt-4o', shouldTransform: false },
+        { model: 'gpt-3.5-turbo', shouldTransform: false },
+        { model: 'claude-3', shouldTransform: false },
+      ];
+
+      testCases.forEach(({ model, shouldTransform }) => {
+        const clientOptions = {
+          model,
+          maxTokens: 1000,
+          useResponsesApi: true,
+        };
+
+        if (
+          /\bgpt-[5-9](?:\.\d+)?\b/i.test(clientOptions.model) &&
+          clientOptions.maxTokens != null
+        ) {
+          clientOptions.modelKwargs = clientOptions.modelKwargs ?? {};
+          const paramName =
+            clientOptions.useResponsesApi === true ? 'max_output_tokens' : 'max_completion_tokens';
+          clientOptions.modelKwargs[paramName] = clientOptions.maxTokens;
+          delete clientOptions.maxTokens;
+        }
+
+        if (shouldTransform) {
+          expect(clientOptions.maxTokens).toBeUndefined();
+          expect(clientOptions.modelKwargs?.max_output_tokens).toBe(1000);
+        } else {
+          expect(clientOptions.maxTokens).toBe(1000);
+          expect(clientOptions.modelKwargs).toBeUndefined();
+        }
+      });
+    });
+
+    it('should not transform if maxTokens is null or undefined', () => {
+      const testCases = [
+        { model: 'gpt-5', maxTokens: null },
+        { model: 'gpt-5', maxTokens: undefined },
+        { model: 'gpt-6', maxTokens: 0 }, // Should transform even if 0
+      ];
+
+      testCases.forEach(({ model, maxTokens }, index) => {
+        const clientOptions = {
+          model,
+          maxTokens,
+          temperature: 0.7,
+        };
+
+        // Simulate the getOptions logic
+        if (
+          /\bgpt-[5-9](?:\.\d+)?\b/i.test(clientOptions.model) &&
+          clientOptions.maxTokens != null
+        ) {
+          clientOptions.modelKwargs = clientOptions.modelKwargs ?? {};
+          clientOptions.modelKwargs.max_completion_tokens = clientOptions.maxTokens;
+          delete clientOptions.maxTokens;
+        }
+
+        if (index < 2) {
+          // null or undefined cases
+          expect(clientOptions.maxTokens).toBe(maxTokens);
+          expect(clientOptions.modelKwargs).toBeUndefined();
+        } else {
+          // 0 case - should transform
+          expect(clientOptions.maxTokens).toBeUndefined();
+          expect(clientOptions.modelKwargs?.max_completion_tokens).toBe(0);
+        }
+      });
+    });
+  });
+
+  describe('buildMessages with MCP server instructions', () => {
+    let client;
+    let mockReq;
+    let mockRes;
+    let mockAgent;
+    let mockOptions;
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+
+      // Reset the mock to default behavior
+      mockFormatInstructions.mockResolvedValue(
+        '# MCP Server Instructions\n\nTest MCP instructions here',
+      );
+
+      const { DynamicStructuredTool } = require('@librechat/agents/langchain/tools');
+
+      // Create mock MCP tools with the delimiter pattern
+      const mockMCPTool1 = new DynamicStructuredTool({
+        name: `tool1${Constants.mcp_delimiter}server1`,
+        description: 'Test MCP tool 1',
+        schema: {},
+        func: async () => 'result',
+      });
+
+      const mockMCPTool2 = new DynamicStructuredTool({
+        name: `tool2${Constants.mcp_delimiter}server2`,
+        description: 'Test MCP tool 2',
+        schema: {},
+        func: async () => 'result',
+      });
+
+      mockAgent = {
+        id: 'agent-123',
+        endpoint: EModelEndpoint.openAI,
+        provider: EModelEndpoint.openAI,
+        instructions: 'Base agent instructions',
+        model_parameters: {
+          model: 'gpt-4',
+        },
+        tools: [mockMCPTool1, mockMCPTool2],
+      };
+
+      mockReq = {
+        user: {
+          id: 'user-123',
+        },
+        body: {
+          endpoint: EModelEndpoint.openAI,
+        },
+        config: {},
+      };
+
+      mockRes = {};
+
+      mockOptions = {
+        req: mockReq,
+        res: mockRes,
+        agent: mockAgent,
+        endpoint: EModelEndpoint.agents,
+      };
+
+      client = new AgentClient(mockOptions);
+      client.conversationId = 'convo-123';
+      client.responseMessageId = 'response-123';
+      client.shouldSummarize = false;
+      client.maxContextTokens = 4096;
+    });
+
+    it('should await MCP instructions and not include [object Promise] in agent instructions', async () => {
+      // Set specific return value for this test
+      mockFormatInstructions.mockResolvedValue(
+        '# MCP Server Instructions\n\nUse these tools carefully',
+      );
+
+      const messages = [
+        {
+          messageId: 'msg-1',
+          parentMessageId: null,
+          sender: 'User',
+          text: 'Hello',
+          isCreatedByUser: true,
+        },
+      ];
+
+      await client.buildMessages(messages, null, {
+        instructions: 'Base instructions',
+        additional_instructions: null,
+      });
+
+      // Verify formatInstructionsForContext was called with correct server names
+      expect(mockFormatInstructions).toHaveBeenCalledWith(['server1', 'server2'], {});
+
+      // Verify the instructions do NOT contain [object Promise]
+      expect(client.options.agent.instructions).not.toContain('[object Promise]');
+
+      // Verify the instructions DO contain the MCP instructions
+      expect(client.options.agent.instructions).toContain('# MCP Server Instructions');
+      expect(client.options.agent.instructions).toContain('Use these tools carefully');
+
+      // Verify the base instructions are also included (from agent config, not buildOptions)
+      expect(client.options.agent.instructions).toContain('Base agent instructions');
+    });
+
+    it('should handle MCP instructions with ephemeral agent', async () => {
+      // Set specific return value for this test
+      mockFormatInstructions.mockResolvedValue(
+        '# Ephemeral MCP Instructions\n\nSpecial ephemeral instructions',
+      );
+
+      // Set up ephemeral agent with MCP servers
+      mockReq.body.ephemeralAgent = {
+        mcp: ['ephemeral-server1', 'ephemeral-server2'],
+      };
+
+      const messages = [
+        {
+          messageId: 'msg-1',
+          parentMessageId: null,
+          sender: 'User',
+          text: 'Test ephemeral',
+          isCreatedByUser: true,
+        },
+      ];
+
+      await client.buildMessages(messages, null, {
+        instructions: 'Ephemeral instructions',
+        additional_instructions: null,
+      });
+
+      // Verify formatInstructionsForContext was called with ephemeral server names
+      expect(mockFormatInstructions).toHaveBeenCalledWith(
+        ['ephemeral-server1', 'ephemeral-server2'],
+        {},
+      );
+
+      // Verify no [object Promise] in instructions
+      expect(client.options.agent.instructions).not.toContain('[object Promise]');
+
+      // Verify ephemeral MCP instructions are included
+      expect(client.options.agent.instructions).toContain('# Ephemeral MCP Instructions');
+      expect(client.options.agent.instructions).toContain('Special ephemeral instructions');
+    });
+
+    it('should handle empty MCP instructions gracefully', async () => {
+      // Set empty return value for this test
+      mockFormatInstructions.mockResolvedValue('');
+
+      const messages = [
+        {
+          messageId: 'msg-1',
+          parentMessageId: null,
+          sender: 'User',
+          text: 'Hello',
+          isCreatedByUser: true,
+        },
+      ];
+
+      await client.buildMessages(messages, null, {
+        instructions: 'Base instructions only',
+        additional_instructions: null,
+      });
+
+      // Verify the instructions still work without MCP content (from agent config, not buildOptions)
+      expect(client.options.agent.instructions).toBe('Base agent instructions');
+      expect(client.options.agent.instructions).not.toContain('[object Promise]');
+    });
+
+    it('should handle MCP instructions error gracefully', async () => {
+      // Set error return for this test
+      mockFormatInstructions.mockRejectedValue(new Error('MCP error'));
+
+      const messages = [
+        {
+          messageId: 'msg-1',
+          parentMessageId: null,
+          sender: 'User',
+          text: 'Hello',
+          isCreatedByUser: true,
+        },
+      ];
+
+      // Should not throw
+      await client.buildMessages(messages, null, {
+        instructions: 'Base instructions',
+        additional_instructions: null,
+      });
+
+      // Should still have base instructions without MCP content (from agent config, not buildOptions)
+      expect(client.options.agent.instructions).toContain('Base agent instructions');
+      expect(client.options.agent.instructions).not.toContain('[object Promise]');
+    });
+  });
+
+  describe('buildMessages with request and agent-scoped context attachments', () => {
+    let client;
+    let mockReq;
+    let mockRes;
+    let mockAgent;
+
+    const makeTextFile = (file_id, filename, text) => ({
+      user: 'user-123',
+      file_id,
+      filename,
+      filepath: `/uploads/${filename}`,
+      object: 'file',
+      type: 'text/plain',
+      bytes: text.length,
+      embedded: false,
+      usage: 0,
+      source: 'text',
+      text,
+    });
+
+    const makeUploadedFile = (file_id, filename, type) => ({
+      user: 'user-123',
+      file_id,
+      filename,
+      filepath: `/uploads/${filename}`,
+      object: 'file',
+      type,
+      bytes: 128,
+      embedded: false,
+      usage: 0,
+      source: 'local',
+    });
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+      mockFormatInstructions.mockResolvedValue('');
+      require('@librechat/api').countFormattedMessageTokens.mockImplementation(() => 42);
+
+      mockAgent = {
+        id: 'primary-agent',
+        endpoint: EModelEndpoint.openAI,
+        provider: EModelEndpoint.openAI,
+        instructions: 'Primary instructions',
+        model_parameters: {
+          model: 'gpt-4',
+        },
+        tools: [],
+      };
+
+      mockReq = {
+        user: {
+          id: 'user-123',
+          personalization: {
+            memories: true,
+          },
+        },
+        body: {
+          endpoint: EModelEndpoint.openAI,
+          fileTokenLimit: 1000,
+        },
+        config: {
+          memory: {
+            disabled: true,
+          },
+        },
+      };
+      mockRes = {};
+
+      client = new AgentClient({
+        req: mockReq,
+        res: mockRes,
+        agent: mockAgent,
+        endpoint: EModelEndpoint.agents,
+      });
+      client.conversationId = 'convo-123';
+      client.responseMessageId = 'response-123';
+      client.shouldSummarize = false;
+      client.maxContextTokens = 4096;
+      client.useMemory = jest.fn().mockResolvedValue(undefined);
+    });
+
+    it.each([
+      ['CSV', 'csv-file', 'sample.csv', 'text/csv'],
+      [
+        'XLSX',
+        'xlsx-file',
+        'sample.xlsx',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      ],
+    ])(
+      'routes default-supported provider uploads like %s as request documents without custom file config',
+      async (_label, file_id, filename, type) => {
+        const currentFile = makeUploadedFile(file_id, filename, type);
+        const message = {
+          messageId: 'msg-1',
+          parentMessageId: null,
+          sender: 'User',
+          text: `Read this ${filename}.`,
+          isCreatedByUser: true,
+        };
+
+        client.addDocuments = jest.fn(async (targetMessage, attachments) => {
+          targetMessage.documents = attachments.map((file) => ({
+            type: 'input_file',
+            filename: file.filename,
+            file_data: `data:${file.type};base64,Y29sMQox`,
+          }));
+          return attachments;
+        });
+
+        const files = await client.processAttachments(message, [currentFile]);
+
+        expect(client.addDocuments).toHaveBeenCalledWith(message, [currentFile]);
+        expect(message.documents).toEqual([
+          expect.objectContaining({
+            type: 'input_file',
+            filename,
+          }),
+        ]);
+        expect(files).toEqual([currentFile]);
+      },
+    );
+
+    it('places request context inline and applies each agent context doc only once', async () => {
+      const requestFile = makeTextFile('request-file', 'request.txt', 'Shared request context');
+      const primaryContext = makeTextFile(
+        'primary-context',
+        'primary.txt',
+        'Primary private context',
+      );
+      const handoffContext = makeTextFile(
+        'handoff-context',
+        'handoff.txt',
+        'Handoff private context',
+      );
+      const handoffAgent = {
+        id: 'handoff-agent',
+        endpoint: EModelEndpoint.openAI,
+        provider: EModelEndpoint.openAI,
+        instructions: 'Handoff instructions',
+        model_parameters: {
+          model: 'gpt-4',
+        },
+        tools: [],
+      };
+
+      client.options.attachments = [requestFile];
+      client.options.agentContextAttachmentsByAgentId = new Map([
+        ['primary-agent', [primaryContext]],
+        ['handoff-agent', [handoffContext]],
+      ]);
+      client.agentConfigs = new Map([['handoff-agent', handoffAgent]]);
+
+      const result = await client.buildMessages(
+        [
+          {
+            messageId: 'msg-1',
+            parentMessageId: null,
+            sender: 'User',
+            text: 'Use the available context.',
+            isCreatedByUser: true,
+          },
+        ],
+        'msg-1',
+        {},
+      );
+
+      expect(result.prompt[0].content).toContain('Shared request context');
+
+      expect(mockAgent.additional_instructions).toContain('Primary private context');
+      expect(mockAgent.additional_instructions).not.toContain('Shared request context');
+      expect(mockAgent.additional_instructions).not.toContain('Handoff private context');
+
+      expect(handoffAgent.additional_instructions).toContain('Handoff private context');
+      expect(handoffAgent.additional_instructions).not.toContain('Shared request context');
+      expect(handoffAgent.additional_instructions).not.toContain('Primary private context');
+    });
+
+    it('places current request file context on the latest user message', async () => {
+      const currentFile = makeTextFile('current-file', 'current.txt', 'Current turn file body');
+      const previousFileContext =
+        'Attached document(s):\n```md\n# "previous.txt"\nPrevious turn file body\n```';
+
+      client.options.attachments = [currentFile];
+
+      const result = await client.buildMessages(
+        [
+          {
+            messageId: 'msg-1',
+            parentMessageId: null,
+            sender: 'User',
+            text: 'What is written here?',
+            isCreatedByUser: true,
+            fileContext: previousFileContext,
+          },
+          {
+            messageId: 'msg-2',
+            parentMessageId: 'msg-1',
+            sender: 'Assistant',
+            text: 'It describes the previous file.',
+            isCreatedByUser: false,
+          },
+          {
+            messageId: 'msg-3',
+            parentMessageId: 'msg-2',
+            sender: 'User',
+            text: 'What is written here?',
+            isCreatedByUser: true,
+          },
+        ],
+        'msg-3',
+        {},
+      );
+
+      expect(result.prompt[0].content).toContain('Previous turn file body');
+      expect(result.prompt[2].content).toContain('Current turn file body');
+      expect(result.prompt[2].content).toContain('What is written here?');
+      expect(result.prompt[2].content).not.toContain('Previous turn file body');
+      expect(client.memoryPayload[2].content).toContain('What is written here?');
+      expect(client.memoryPayload[2].content).not.toContain('Current turn file body');
+      expect(mockAgent.additional_instructions ?? '').not.toContain('Current turn file body');
+      expect(result.prompt[2].content.indexOf('Current turn file body')).toBeLessThan(
+        result.prompt[2].content.indexOf('What is written here?'),
+      );
+    });
+
+    it('persists canonical token counts while counting request file context for the prompt', async () => {
+      const { countFormattedMessageTokens } = require('@librechat/api');
+      const currentFile = makeTextFile('current-file', 'current.txt', 'Current turn file body');
+
+      countFormattedMessageTokens.mockImplementation(({ content }) => {
+        const text = Array.isArray(content)
+          ? content.map((part) => part.text ?? part[ContentTypes.TEXT] ?? '').join('\n')
+          : String(content ?? '');
+        return text.includes('Current turn file body') ? 200 : 20;
+      });
+
+      client.options.attachments = [currentFile];
+
+      const result = await client.buildMessages(
+        [
+          {
+            messageId: 'msg-1',
+            parentMessageId: null,
+            sender: 'User',
+            text: 'What is written here?',
+            isCreatedByUser: true,
+          },
+        ],
+        'msg-1',
+        {},
+      );
+
+      expect(result.prompt[0].content).toContain('Current turn file body');
+      expect(result.tokenCountMap['msg-1']).toBe(20);
+      expect(result.promptTokens).toBe(200);
+      expect(client.indexTokenCountMap[0]).toBe(200);
+      expect(client.memoryPayload[0].content).toBe('What is written here?');
+    });
+
+    it('does not duplicate a file that is both request context and scoped context', async () => {
+      const sharedFile = makeTextFile('shared-file', 'shared.txt', 'Shared duplicate context');
+
+      client.options.attachments = [sharedFile];
+      client.options.agentContextAttachmentsByAgentId = new Map([['primary-agent', [sharedFile]]]);
+      client.agentConfigs = new Map();
+
+      const result = await client.buildMessages(
+        [
+          {
+            messageId: 'msg-1',
+            parentMessageId: null,
+            sender: 'User',
+            text: 'Use the available context.',
+            isCreatedByUser: true,
+          },
+        ],
+        'msg-1',
+        {},
+      );
+
+      const inlineOccurrences = (result.prompt[0].content.match(/Shared duplicate context/g) ?? [])
+        .length;
+      expect(inlineOccurrences).toBe(1);
+      expect(mockAgent.additional_instructions ?? '').not.toContain('Shared duplicate context');
+    });
+
+    it('keeps direct chats with context-doc agents working without request attachments', async () => {
+      const primaryContext = makeTextFile(
+        'primary-context',
+        'primary.txt',
+        'Direct primary context',
+      );
+
+      client.options.agentContextAttachmentsByAgentId = new Map([
+        ['primary-agent', [primaryContext]],
+      ]);
+      client.agentConfigs = new Map();
+
+      await client.buildMessages(
+        [
+          {
+            messageId: 'msg-1',
+            parentMessageId: null,
+            sender: 'User',
+            text: 'Answer from your context.',
+            isCreatedByUser: true,
+          },
+        ],
+        'msg-1',
+        {},
+      );
+
+      expect(mockAgent.additional_instructions).toContain('Direct primary context');
+    });
+  });
+
+  describe('runMemory method', () => {
+    let client;
+    let mockReq;
+    let mockRes;
+    let mockAgent;
+    let mockOptions;
+    let mockProcessMemory;
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+
+      mockAgent = {
+        id: 'agent-123',
+        endpoint: EModelEndpoint.openAI,
+        provider: EModelEndpoint.openAI,
+        model_parameters: {
+          model: 'gpt-4',
+        },
+      };
+
+      mockReq = {
+        user: {
+          id: 'user-123',
+          personalization: {
+            memories: true,
+          },
+        },
+      };
+
+      // Mock getAppConfig for memory tests
+      mockReq.config = {
+        memory: {
+          messageWindowSize: 3,
+        },
+      };
+
+      mockRes = {};
+
+      mockOptions = {
+        req: mockReq,
+        res: mockRes,
+        agent: mockAgent,
+      };
+
+      mockProcessMemory = jest.fn().mockResolvedValue([]);
+
+      client = new AgentClient(mockOptions);
+      client.processMemory = mockProcessMemory;
+      client.conversationId = 'convo-123';
+      client.responseMessageId = 'response-123';
+    });
+
+    it('should filter out image URLs from message content', async () => {
+      const { HumanMessage, AIMessage } = require('@librechat/agents/langchain/messages');
+      const messages = [
+        new HumanMessage({
+          content: [
+            {
+              type: 'text',
+              text: 'What is in this image?',
+            },
+            {
+              type: 'image_url',
+              image_url: {
+                url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+                detail: 'auto',
+              },
+            },
+          ],
+        }),
+        new AIMessage('I can see a small red pixel in the image.'),
+        new HumanMessage({
+          content: [
+            {
+              type: 'text',
+              text: 'What about this one?',
+            },
+            {
+              type: 'image_url',
+              image_url: {
+                url: 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/',
+                detail: 'high',
+              },
+            },
+          ],
+        }),
+      ];
+
+      await client.runMemory(messages);
+
+      expect(mockProcessMemory).toHaveBeenCalledTimes(1);
+      const processedMessage = mockProcessMemory.mock.calls[0][0][0];
+
+      // Verify the buffer message was created
+      expect(processedMessage.constructor.name).toBe('HumanMessage');
+      expect(processedMessage.content).toContain('# Current Chat:');
+
+      // Verify that image URLs are not in the buffer string
+      expect(processedMessage.content).not.toContain('image_url');
+      expect(processedMessage.content).not.toContain('data:image');
+      expect(processedMessage.content).not.toContain('base64');
+
+      // Verify text content is preserved
+      expect(processedMessage.content).toContain('What is in this image?');
+      expect(processedMessage.content).toContain('I can see a small red pixel in the image.');
+      expect(processedMessage.content).toContain('What about this one?');
+    });
+
+    it('should handle messages with only text content', async () => {
+      const { HumanMessage, AIMessage } = require('@librechat/agents/langchain/messages');
+      const messages = [
+        new HumanMessage('Hello, how are you?'),
+        new AIMessage('I am doing well, thank you!'),
+        new HumanMessage('That is great to hear.'),
+      ];
+
+      await client.runMemory(messages);
+
+      expect(mockProcessMemory).toHaveBeenCalledTimes(1);
+      const processedMessage = mockProcessMemory.mock.calls[0][0][0];
+
+      expect(processedMessage.content).toContain('Hello, how are you?');
+      expect(processedMessage.content).toContain('I am doing well, thank you!');
+      expect(processedMessage.content).toContain('That is great to hear.');
+    });
+
+    it('should handle mixed content types correctly', async () => {
+      const { HumanMessage } = require('@librechat/agents/langchain/messages');
+      const { ContentTypes } = require('librechat-data-provider');
+
+      const messages = [
+        new HumanMessage({
+          content: [
+            {
+              type: 'text',
+              text: 'Here is some text',
+            },
+            {
+              type: ContentTypes.IMAGE_URL,
+              image_url: {
+                url: 'https://example.com/image.png',
+              },
+            },
+            {
+              type: 'text',
+              text: ' and more text',
+            },
+          ],
+        }),
+      ];
+
+      await client.runMemory(messages);
+
+      expect(mockProcessMemory).toHaveBeenCalledTimes(1);
+      const processedMessage = mockProcessMemory.mock.calls[0][0][0];
+
+      // Should contain text parts but not image URLs
+      expect(processedMessage.content).toContain('Here is some text');
+      expect(processedMessage.content).toContain('and more text');
+      expect(processedMessage.content).not.toContain('example.com/image.png');
+      expect(processedMessage.content).not.toContain('IMAGE_URL');
+    });
+
+    it('should preserve original messages without mutation', async () => {
+      const { HumanMessage } = require('@librechat/agents/langchain/messages');
+      const originalContent = [
+        {
+          type: 'text',
+          text: 'Original text',
+        },
+        {
+          type: 'image_url',
+          image_url: {
+            url: 'data:image/png;base64,ABC123',
+          },
+        },
+      ];
+
+      const messages = [
+        new HumanMessage({
+          content: [...originalContent],
+        }),
+      ];
+
+      await client.runMemory(messages);
+
+      // Verify original message wasn't mutated
+      expect(messages[0].content).toHaveLength(2);
+      expect(messages[0].content[1].type).toBe('image_url');
+      expect(messages[0].content[1].image_url.url).toBe('data:image/png;base64,ABC123');
+    });
+
+    it('should handle message window size correctly', async () => {
+      const { HumanMessage, AIMessage } = require('@librechat/agents/langchain/messages');
+      const messages = [
+        new HumanMessage('Message 1'),
+        new AIMessage('Response 1'),
+        new HumanMessage('Message 2'),
+        new AIMessage('Response 2'),
+        new HumanMessage('Message 3'),
+        new AIMessage('Response 3'),
+      ];
+
+      // Window size is set to 3 in mockReq
+      await client.runMemory(messages);
+
+      expect(mockProcessMemory).toHaveBeenCalledTimes(1);
+      const processedMessage = mockProcessMemory.mock.calls[0][0][0];
+
+      // Should only include last 3 messages due to window size
+      expect(processedMessage.content).toContain('Message 3');
+      expect(processedMessage.content).toContain('Response 3');
+      expect(processedMessage.content).not.toContain('Message 1');
+      expect(processedMessage.content).not.toContain('Response 1');
+    });
+
+    it('should cap memory input tokens and preserve recent content', async () => {
+      const { HumanMessage, AIMessage } = require('@librechat/agents/langchain/messages');
+      mockReq.config.memory.maxInputTokens = 12;
+      const messages = [
+        new HumanMessage(`OLDER_CONTENT ${'a'.repeat(600)}`),
+        new AIMessage('Intermediate response'),
+        new HumanMessage('Please remember LATEST_MEMORY_MARKER'),
+      ];
+
+      await client.runMemory(messages);
+
+      expect(mockProcessMemory).toHaveBeenCalledTimes(1);
+      const processedMessage = mockProcessMemory.mock.calls[0][0][0];
+
+      expect(processedMessage.content).toContain('LATEST_MEMORY_MARKER');
+      expect(processedMessage.content).not.toContain('OLDER_CONTENT');
+      expect(Math.ceil(processedMessage.content.length / 4)).toBeLessThanOrEqual(12);
+    });
+
+    it('should return early if processMemory is not set', async () => {
+      const { HumanMessage } = require('@librechat/agents/langchain/messages');
+      client.processMemory = null;
+
+      const result = await client.runMemory([new HumanMessage('Test')]);
+
+      expect(result).toBeUndefined();
+      expect(mockProcessMemory).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getMessagesForConversation - mapMethod and mapCondition', () => {
+    const createMessage = (id, parentId, text, extras = {}) => ({
+      messageId: id,
+      parentMessageId: parentId,
+      text,
+      isCreatedByUser: false,
+      ...extras,
+    });
+
+    it('should apply mapMethod to all messages when mapCondition is not provided', () => {
+      const messages = [
+        createMessage('msg-1', null, 'First message'),
+        createMessage('msg-2', 'msg-1', 'Second message'),
+        createMessage('msg-3', 'msg-2', 'Third message'),
+      ];
+
+      const mapMethod = jest.fn((msg) => ({ ...msg, mapped: true }));
+
+      const result = AgentClient.getMessagesForConversation({
+        messages,
+        parentMessageId: 'msg-3',
+        mapMethod,
+      });
+
+      expect(result).toHaveLength(3);
+      expect(mapMethod).toHaveBeenCalledTimes(3);
+      result.forEach((msg) => {
+        expect(msg.mapped).toBe(true);
+      });
+    });
+
+    it('should apply mapMethod only to messages where mapCondition returns true', () => {
+      const messages = [
+        createMessage('msg-1', null, 'First message', { addedConvo: false }),
+        createMessage('msg-2', 'msg-1', 'Second message', { addedConvo: true }),
+        createMessage('msg-3', 'msg-2', 'Third message', { addedConvo: true }),
+        createMessage('msg-4', 'msg-3', 'Fourth message', { addedConvo: false }),
+      ];
+
+      const mapMethod = jest.fn((msg) => ({ ...msg, mapped: true }));
+      const mapCondition = (msg) => msg.addedConvo === true;
+
+      const result = AgentClient.getMessagesForConversation({
+        messages,
+        parentMessageId: 'msg-4',
+        mapMethod,
+        mapCondition,
+      });
+
+      expect(result).toHaveLength(4);
+      expect(mapMethod).toHaveBeenCalledTimes(2);
+
+      expect(result[0].mapped).toBeUndefined();
+      expect(result[1].mapped).toBe(true);
+      expect(result[2].mapped).toBe(true);
+      expect(result[3].mapped).toBeUndefined();
+    });
+
+    it('should not apply mapMethod when mapCondition returns false for all messages', () => {
+      const messages = [
+        createMessage('msg-1', null, 'First message', { addedConvo: false }),
+        createMessage('msg-2', 'msg-1', 'Second message', { addedConvo: false }),
+      ];
+
+      const mapMethod = jest.fn((msg) => ({ ...msg, mapped: true }));
+      const mapCondition = (msg) => msg.addedConvo === true;
+
+      const result = AgentClient.getMessagesForConversation({
+        messages,
+        parentMessageId: 'msg-2',
+        mapMethod,
+        mapCondition,
+      });
+
+      expect(result).toHaveLength(2);
+      expect(mapMethod).not.toHaveBeenCalled();
+      result.forEach((msg) => {
+        expect(msg.mapped).toBeUndefined();
+      });
+    });
+
+    it('should not call mapMethod when mapMethod is null', () => {
+      const messages = [
+        createMessage('msg-1', null, 'First message'),
+        createMessage('msg-2', 'msg-1', 'Second message'),
+      ];
+
+      const mapCondition = jest.fn(() => true);
+
+      const result = AgentClient.getMessagesForConversation({
+        messages,
+        parentMessageId: 'msg-2',
+        mapMethod: null,
+        mapCondition,
+      });
+
+      expect(result).toHaveLength(2);
+      expect(mapCondition).not.toHaveBeenCalled();
+    });
+
+    it('should handle mapCondition with complex logic', () => {
+      const messages = [
+        createMessage('msg-1', null, 'User message', { isCreatedByUser: true, addedConvo: true }),
+        createMessage('msg-2', 'msg-1', 'Assistant response', { addedConvo: true }),
+        createMessage('msg-3', 'msg-2', 'Another user message', { isCreatedByUser: true }),
+        createMessage('msg-4', 'msg-3', 'Another response', { addedConvo: true }),
+      ];
+
+      const mapMethod = jest.fn((msg) => ({ ...msg, processed: true }));
+      const mapCondition = (msg) => msg.addedConvo === true && !msg.isCreatedByUser;
+
+      const result = AgentClient.getMessagesForConversation({
+        messages,
+        parentMessageId: 'msg-4',
+        mapMethod,
+        mapCondition,
+      });
+
+      expect(result).toHaveLength(4);
+      expect(mapMethod).toHaveBeenCalledTimes(2);
+
+      expect(result[0].processed).toBeUndefined();
+      expect(result[1].processed).toBe(true);
+      expect(result[2].processed).toBeUndefined();
+      expect(result[3].processed).toBe(true);
+    });
+
+    it('should preserve message order after applying mapMethod with mapCondition', () => {
+      const messages = [
+        createMessage('msg-1', null, 'First', { addedConvo: true }),
+        createMessage('msg-2', 'msg-1', 'Second', { addedConvo: false }),
+        createMessage('msg-3', 'msg-2', 'Third', { addedConvo: true }),
+      ];
+
+      const mapMethod = (msg) => ({ ...msg, text: `[MAPPED] ${msg.text}` });
+      const mapCondition = (msg) => msg.addedConvo === true;
+
+      const result = AgentClient.getMessagesForConversation({
+        messages,
+        parentMessageId: 'msg-3',
+        mapMethod,
+        mapCondition,
+      });
+
+      expect(result[0].text).toBe('[MAPPED] First');
+      expect(result[1].text).toBe('Second');
+      expect(result[2].text).toBe('[MAPPED] Third');
+    });
+
+    it('should work with summary option alongside mapMethod and mapCondition', () => {
+      const messages = [
+        createMessage('msg-1', null, 'First', { addedConvo: false }),
+        createMessage('msg-2', 'msg-1', 'Second', {
+          summary: 'Summary of conversation',
+          addedConvo: true,
+        }),
+        createMessage('msg-3', 'msg-2', 'Third', { addedConvo: true }),
+        createMessage('msg-4', 'msg-3', 'Fourth', { addedConvo: false }),
+      ];
+
+      const mapMethod = jest.fn((msg) => ({ ...msg, mapped: true }));
+      const mapCondition = (msg) => msg.addedConvo === true;
+
+      const result = AgentClient.getMessagesForConversation({
+        messages,
+        parentMessageId: 'msg-4',
+        mapMethod,
+        mapCondition,
+        summary: true,
+      });
+
+      /** Traversal stops at msg-2 (has summary), so we get msg-4 -> msg-3 -> msg-2 */
+      expect(result).toHaveLength(3);
+      expect(result[0].content).toEqual([{ type: 'text', text: 'Summary of conversation' }]);
+      expect(result[0].role).toBe('system');
+      expect(result[0].mapped).toBe(true);
+      expect(result[1].mapped).toBe(true);
+      expect(result[2].mapped).toBeUndefined();
+    });
+
+    it('should handle empty messages array', () => {
+      const mapMethod = jest.fn();
+      const mapCondition = jest.fn();
+
+      const result = AgentClient.getMessagesForConversation({
+        messages: [],
+        parentMessageId: 'msg-1',
+        mapMethod,
+        mapCondition,
+      });
+
+      expect(result).toHaveLength(0);
+      expect(mapMethod).not.toHaveBeenCalled();
+      expect(mapCondition).not.toHaveBeenCalled();
+    });
+
+    it('should handle undefined mapCondition explicitly', () => {
+      const messages = [
+        createMessage('msg-1', null, 'First'),
+        createMessage('msg-2', 'msg-1', 'Second'),
+      ];
+
+      const mapMethod = jest.fn((msg) => ({ ...msg, mapped: true }));
+
+      const result = AgentClient.getMessagesForConversation({
+        messages,
+        parentMessageId: 'msg-2',
+        mapMethod,
+        mapCondition: undefined,
+      });
+
+      expect(result).toHaveLength(2);
+      expect(mapMethod).toHaveBeenCalledTimes(2);
+      result.forEach((msg) => {
+        expect(msg.mapped).toBe(true);
+      });
+    });
+  });
+
+  describe('buildMessages - memory context for parallel agents', () => {
+    let client;
+    let mockReq;
+    let mockRes;
+    let mockAgent;
+    let mockOptions;
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+
+      mockAgent = {
+        id: 'primary-agent',
+        name: 'Primary Agent',
+        endpoint: EModelEndpoint.openAI,
+        provider: EModelEndpoint.openAI,
+        instructions: 'Primary agent instructions',
+        model_parameters: {
+          model: 'gpt-4',
+        },
+        tools: [],
+      };
+
+      mockReq = {
+        user: {
+          id: 'user-123',
+          personalization: {
+            memories: true,
+          },
+        },
+        body: {
+          endpoint: EModelEndpoint.openAI,
+        },
+        config: {
+          memory: {
+            disabled: false,
+          },
+        },
+      };
+
+      mockRes = {};
+
+      mockOptions = {
+        req: mockReq,
+        res: mockRes,
+        agent: mockAgent,
+        endpoint: EModelEndpoint.agents,
+      };
+
+      client = new AgentClient(mockOptions);
+      client.conversationId = 'convo-123';
+      client.responseMessageId = 'response-123';
+      client.shouldSummarize = false;
+      client.maxContextTokens = 4096;
+    });
+
+    it('should only pass memory context to the primary agent by default', async () => {
+      const memoryContent = 'User prefers dark mode. User is a software developer.';
+      client.useMemory = jest.fn().mockResolvedValue(memoryContent);
+
+      const parallelAgent1 = {
+        id: 'parallel-agent-1',
+        name: 'Parallel Agent 1',
+        instructions: 'Parallel agent 1 instructions',
+        provider: EModelEndpoint.openAI,
+      };
+
+      const parallelAgent2 = {
+        id: 'parallel-agent-2',
+        name: 'Parallel Agent 2',
+        instructions: 'Parallel agent 2 instructions',
+        provider: EModelEndpoint.anthropic,
+      };
+
+      client.agentConfigs = new Map([
+        ['parallel-agent-1', parallelAgent1],
+        ['parallel-agent-2', parallelAgent2],
+      ]);
+
+      const messages = [
+        {
+          messageId: 'msg-1',
+          parentMessageId: null,
+          sender: 'User',
+          text: 'Hello',
+          isCreatedByUser: true,
+        },
+      ];
+
+      await client.buildMessages(messages, null, {
+        instructions: 'Base instructions',
+        additional_instructions: null,
+      });
+
+      expect(client.useMemory).toHaveBeenCalled();
+
+      expect(client.options.agent.instructions).toContain('Primary agent instructions');
+      expect(client.options.agent.instructions).not.toContain(memoryContent);
+      expect(client.options.agent.additional_instructions).toContain(memoryContent);
+
+      expect(parallelAgent1.instructions).toContain('Parallel agent 1 instructions');
+      expect(parallelAgent1.instructions).not.toContain(memoryContent);
+      expect(parallelAgent1.additional_instructions ?? '').not.toContain(memoryContent);
+
+      expect(parallelAgent2.instructions).toContain('Parallel agent 2 instructions');
+      expect(parallelAgent2.instructions).not.toContain(memoryContent);
+      expect(parallelAgent2.additional_instructions ?? '').not.toContain(memoryContent);
+    });
+
+    it('should pass memory context to parallel agents when automatic memory updates are enabled', async () => {
+      const memoryContent = 'User prefers dark mode. User is a software developer.';
+      client.useMemory = jest.fn().mockResolvedValue(memoryContent);
+      mockReq.config.memory.agent = {
+        enabled: true,
+        id: 'memory-agent',
+      };
+
+      const parallelAgent = {
+        id: 'parallel-agent-1',
+        name: 'Parallel Agent 1',
+        instructions: 'Parallel agent instructions',
+        provider: EModelEndpoint.openAI,
+      };
+
+      client.agentConfigs = new Map([['parallel-agent-1', parallelAgent]]);
+
+      const messages = [
+        {
+          messageId: 'msg-1',
+          parentMessageId: null,
+          sender: 'User',
+          text: 'Hello',
+          isCreatedByUser: true,
+        },
+      ];
+
+      await client.buildMessages(messages, null, {
+        instructions: 'Base instructions',
+        additional_instructions: null,
+      });
+
+      expect(client.options.agent.instructions).toContain('Primary agent instructions');
+      expect(client.options.agent.instructions).not.toContain(memoryContent);
+      expect(client.options.agent.additional_instructions).toContain(memoryContent);
+
+      expect(parallelAgent.instructions).toContain('Parallel agent instructions');
+      expect(parallelAgent.instructions).not.toContain(memoryContent);
+      expect(parallelAgent.additional_instructions).toContain(memoryContent);
+    });
+
+    it('should not modify parallel agents when no memory context is available', async () => {
+      client.useMemory = jest.fn().mockResolvedValue(undefined);
+
+      const parallelAgent = {
+        id: 'parallel-agent-1',
+        name: 'Parallel Agent 1',
+        instructions: 'Original parallel instructions',
+        provider: EModelEndpoint.openAI,
+      };
+
+      client.agentConfigs = new Map([['parallel-agent-1', parallelAgent]]);
+
+      const messages = [
+        {
+          messageId: 'msg-1',
+          parentMessageId: null,
+          sender: 'User',
+          text: 'Hello',
+          isCreatedByUser: true,
+        },
+      ];
+
+      await client.buildMessages(messages, null, {
+        instructions: 'Base instructions',
+        additional_instructions: null,
+      });
+
+      expect(parallelAgent.instructions).toBe('Original parallel instructions');
+    });
+
+    it('should handle parallel agents without existing instructions when memory stays primary-only', async () => {
+      const memoryContent = 'User is a data scientist.';
+      client.useMemory = jest.fn().mockResolvedValue(memoryContent);
+
+      const parallelAgentNoInstructions = {
+        id: 'parallel-agent-no-instructions',
+        name: 'Parallel Agent No Instructions',
+        provider: EModelEndpoint.openAI,
+      };
+
+      client.agentConfigs = new Map([
+        ['parallel-agent-no-instructions', parallelAgentNoInstructions],
+      ]);
+
+      const messages = [
+        {
+          messageId: 'msg-1',
+          parentMessageId: null,
+          sender: 'User',
+          text: 'Hello',
+          isCreatedByUser: true,
+        },
+      ];
+
+      await client.buildMessages(messages, null, {
+        instructions: null,
+        additional_instructions: null,
+      });
+
+      expect(client.options.agent.additional_instructions).toContain(memoryContent);
+      expect(parallelAgentNoInstructions.instructions).toBeUndefined();
+      expect(parallelAgentNoInstructions.additional_instructions ?? '').not.toContain(
+        memoryContent,
+      );
+    });
+
+    it('should not modify agentConfigs when none exist', async () => {
+      const memoryContent = 'User prefers concise responses.';
+      client.useMemory = jest.fn().mockResolvedValue(memoryContent);
+
+      client.agentConfigs = null;
+
+      const messages = [
+        {
+          messageId: 'msg-1',
+          parentMessageId: null,
+          sender: 'User',
+          text: 'Hello',
+          isCreatedByUser: true,
+        },
+      ];
+
+      await expect(
+        client.buildMessages(messages, null, {
+          instructions: 'Base instructions',
+          additional_instructions: null,
+        }),
+      ).resolves.not.toThrow();
+
+      expect(client.options.agent.additional_instructions).toContain(memoryContent);
+    });
+
+    it('should handle empty agentConfigs map', async () => {
+      const memoryContent = 'User likes detailed explanations.';
+      client.useMemory = jest.fn().mockResolvedValue(memoryContent);
+
+      client.agentConfigs = new Map();
+
+      const messages = [
+        {
+          messageId: 'msg-1',
+          parentMessageId: null,
+          sender: 'User',
+          text: 'Hello',
+          isCreatedByUser: true,
+        },
+      ];
+
+      await expect(
+        client.buildMessages(messages, null, {
+          instructions: 'Base instructions',
+          additional_instructions: null,
+        }),
+      ).resolves.not.toThrow();
+
+      expect(client.options.agent.additional_instructions).toContain(memoryContent);
+    });
+  });
+
+  describe('useMemory method - prelimAgent assignment', () => {
+    let client;
+    let mockReq;
+    let mockRes;
+    let mockAgent;
+    let mockOptions;
+    let mockCheckAccess;
+    let mockLoadAgent;
+    let mockInitializeAgent;
+    let mockCreateMemoryProcessor;
+    let mockGetFormattedMemories;
+
+    beforeEach(() => {
+      jest.clearAllMocks();
+
+      mockAgent = {
+        id: 'agent-123',
+        endpoint: EModelEndpoint.openAI,
+        provider: EModelEndpoint.openAI,
+        instructions: 'Test instructions',
+        model: 'gpt-4',
+        model_parameters: {
+          model: 'gpt-4',
+        },
+      };
+
+      mockReq = {
+        user: {
+          id: 'user-123',
+          personalization: {
+            memories: true,
+          },
+        },
+        config: {
+          memory: {
+            agent: {
+              enabled: true,
+              id: 'agent-123',
+            },
+          },
+          endpoints: {
+            [EModelEndpoint.agents]: {
+              allowedProviders: [EModelEndpoint.openAI],
+            },
+          },
+        },
+      };
+
+      mockRes = {};
+
+      mockOptions = {
+        req: mockReq,
+        res: mockRes,
+        agent: mockAgent,
+      };
+
+      mockCheckAccess = require('@librechat/api').checkAccess;
+      mockLoadAgent = require('@librechat/api').loadAgent;
+      mockInitializeAgent = require('@librechat/api').initializeAgent;
+      mockCreateMemoryProcessor = require('@librechat/api').createMemoryProcessor;
+      mockGetFormattedMemories = require('~/models').getFormattedMemories;
+      mockGetFormattedMemories.mockResolvedValue({
+        withKeys: '',
+        withoutKeys: '',
+        totalTokens: 0,
+      });
+    });
+
+    it('should use current agent when memory config agent.id matches current agent id', async () => {
+      mockCheckAccess.mockResolvedValue(true);
+      mockInitializeAgent.mockResolvedValue({
+        ...mockAgent,
+        provider: EModelEndpoint.openAI,
+      });
+      mockCreateMemoryProcessor.mockResolvedValue([undefined, jest.fn()]);
+
+      client = new AgentClient(mockOptions);
+      client.conversationId = 'convo-123';
+      client.responseMessageId = 'response-123';
+
+      await client.useMemory();
+
+      expect(mockLoadAgent).not.toHaveBeenCalled();
+      expect(mockInitializeAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agent: mockAgent,
+        }),
+        expect.any(Object),
+      );
+    });
+
+    it('should load different agent when memory config agent.id differs from current agent id', async () => {
+      const differentAgentId = 'different-agent-456';
+      const differentAgent = {
+        id: differentAgentId,
+        provider: EModelEndpoint.openAI,
+        model: 'gpt-4',
+        instructions: 'Different agent instructions',
+      };
+
+      mockReq.config.memory.agent.id = differentAgentId;
+
+      mockCheckAccess.mockResolvedValue(true);
+      mockLoadAgent.mockResolvedValue(differentAgent);
+      mockInitializeAgent.mockResolvedValue({
+        ...differentAgent,
+        provider: EModelEndpoint.openAI,
+      });
+      mockCreateMemoryProcessor.mockResolvedValue([undefined, jest.fn()]);
+
+      client = new AgentClient(mockOptions);
+      client.conversationId = 'convo-123';
+      client.responseMessageId = 'response-123';
+
+      await client.useMemory();
+
+      expect(mockLoadAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agent_id: differentAgentId,
+        }),
+        expect.any(Object),
+      );
+      expect(mockInitializeAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agent: differentAgent,
+        }),
+        expect.any(Object),
+      );
+    });
+
+    it('should return existing memories without auto-processing when memory agent is not enabled', async () => {
+      mockReq.config.memory = {
+        personalize: true,
+      };
+
+      mockCheckAccess.mockResolvedValue(true);
+      mockGetFormattedMemories.mockResolvedValue({
+        withKeys: 'food: likes pasta',
+        withoutKeys: 'likes pasta',
+        totalTokens: 3,
+      });
+
+      client = new AgentClient(mockOptions);
+      client.conversationId = 'convo-123';
+      client.responseMessageId = 'response-123';
+
+      const result = await client.useMemory();
+
+      expect(result).toBe('likes pasta');
+      expect(mockGetFormattedMemories).toHaveBeenCalledWith({ userId: 'user-123' });
+      expect(mockInitializeAgent).not.toHaveBeenCalled();
+      expect(mockCreateMemoryProcessor).not.toHaveBeenCalled();
+      expect(client.processMemory).toBeUndefined();
+    });
+
+    it('should not initialize auto-processing when no memories exist', async () => {
+      mockReq.config.memory = {
+        personalize: true,
+      };
+
+      mockCheckAccess.mockResolvedValue(true);
+      mockGetFormattedMemories.mockResolvedValue({
+        withKeys: '',
+        withoutKeys: '',
+        totalTokens: 0,
+      });
+
+      client = new AgentClient(mockOptions);
+      client.conversationId = 'convo-123';
+      client.responseMessageId = 'response-123';
+
+      const result = await client.useMemory();
+
+      expect(result).toBe('');
+      expect(mockGetFormattedMemories).toHaveBeenCalledWith({ userId: 'user-123' });
+      expect(mockInitializeAgent).not.toHaveBeenCalled();
+      expect(mockCreateMemoryProcessor).not.toHaveBeenCalled();
+      expect(client.processMemory).toBeUndefined();
+    });
+
+    it('should return existing memories without auto-processing when memory agent config lacks explicit enablement', async () => {
+      mockReq.config.memory.agent = {
+        id: 'agent-123',
+      };
+
+      mockCheckAccess.mockResolvedValue(true);
+      mockGetFormattedMemories.mockResolvedValue({
+        withKeys: 'tone: concise',
+        withoutKeys: 'prefers concise answers',
+        totalTokens: 4,
+      });
+
+      client = new AgentClient(mockOptions);
+      client.conversationId = 'convo-123';
+      client.responseMessageId = 'response-123';
+
+      const result = await client.useMemory();
+
+      expect(result).toBe('prefers concise answers');
+      expect(mockLoadAgent).not.toHaveBeenCalled();
+      expect(mockInitializeAgent).not.toHaveBeenCalled();
+      expect(mockCreateMemoryProcessor).not.toHaveBeenCalled();
+    });
+
+    it('should return undefined when loading memories fails without auto-processing', async () => {
+      const { logger } = require('@librechat/data-schemas');
+      const errorSpy = jest.spyOn(logger, 'error').mockImplementation(() => logger);
+      mockReq.config.memory = {
+        personalize: true,
+      };
+
+      mockCheckAccess.mockResolvedValue(true);
+      mockGetFormattedMemories.mockRejectedValue(new Error('DB connection failed'));
+
+      client = new AgentClient(mockOptions);
+      client.conversationId = 'convo-123';
+      client.responseMessageId = 'response-123';
+
+      const result = await client.useMemory();
+
+      expect(result).toBeUndefined();
+      expect(mockGetFormattedMemories).toHaveBeenCalledWith({ userId: 'user-123' });
+      expect(mockInitializeAgent).not.toHaveBeenCalled();
+      expect(mockCreateMemoryProcessor).not.toHaveBeenCalled();
+      expect(client.processMemory).toBeUndefined();
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[api/server/controllers/agents/client.js #useMemory] Error loading memories',
+        expect.any(Error),
+      );
+    });
+
+    it('should create ephemeral agent when no id but model and provider are specified', async () => {
+      mockReq.config.memory = {
+        agent: {
+          enabled: true,
+          model: 'gpt-4',
+          provider: EModelEndpoint.openAI,
+        },
+      };
+
+      mockCheckAccess.mockResolvedValue(true);
+      mockInitializeAgent.mockResolvedValue({
+        id: Constants.EPHEMERAL_AGENT_ID,
+        model: 'gpt-4',
+        provider: EModelEndpoint.openAI,
+      });
+      mockCreateMemoryProcessor.mockResolvedValue([undefined, jest.fn()]);
+
+      client = new AgentClient(mockOptions);
+      client.conversationId = 'convo-123';
+      client.responseMessageId = 'response-123';
+
+      await client.useMemory();
+
+      expect(mockLoadAgent).not.toHaveBeenCalled();
+      expect(mockInitializeAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agent: expect.objectContaining({
+            id: Constants.EPHEMERAL_AGENT_ID,
+            model: 'gpt-4',
+            provider: EModelEndpoint.openAI,
+          }),
+        }),
+        expect.any(Object),
+      );
+    });
+  });
+});
+
+describe('AgentClient - finalizeSubagentContent', () => {
+  /** Verifies the backend persistence path: per-subagent
+   *  `createContentAggregator` instances (populated by the callbacks
+   *  ON_SUBAGENT_UPDATE handler) have their `contentParts` harvested
+   *  onto the matching parent `subagent` tool_call at message-save time
+   *  so a page refresh shows the same activity the user saw live. */
+  const { GraphEvents } = jest.requireActual('@librechat/agents');
+  const { getDefaultHandlers } = require('./callbacks');
+
+  const makeClient = (subagentAggregatorsByToolCallId) => {
+    const client = new AgentClient({
+      req: { user: { id: 'u' }, body: {}, config: { endpoints: {} } },
+      res: {},
+      agent: {
+        id: 'agent',
+        endpoint: EModelEndpoint.openAI,
+        provider: EModelEndpoint.openAI,
+        model_parameters: { model: 'gpt-4' },
+      },
+      contentParts: [],
+      subagentAggregatorsByToolCallId,
+    });
+    return client;
+  };
+
+  const event = (phase, data, parentToolCallId = 'call_sub') => ({
+    runId: 'parent-run',
+    subagentRunId: 'child-run',
+    subagentType: 'self',
+    subagentAgentId: 'child',
+    parentToolCallId,
+    phase,
+    data,
+    timestamp: '2026-04-17T00:00:00Z',
+  });
+
+  /** Feeds a SubagentUpdateEvent sequence through the real
+   *  `ON_SUBAGENT_UPDATE` handler so we exercise the same get-or-create
+   *  aggregator logic the live request uses, rather than constructing
+   *  aggregators directly in the test. */
+  const runSubagentEvents = async (events) => {
+    const map = new Map();
+    const handlers = getDefaultHandlers({
+      res: { write: jest.fn(), writableEnded: false },
+      aggregateContent: jest.fn(),
+      toolEndCallback: jest.fn(),
+      collectedUsage: [],
+      subagentAggregatorsByToolCallId: map,
+    });
+    const handler = handlers[GraphEvents.ON_SUBAGENT_UPDATE];
+    for (const e of events) {
+      await handler.handle(GraphEvents.ON_SUBAGENT_UPDATE, e);
+    }
+    return map;
+  };
+
+  it('attaches aggregated subagent_content to the matching subagent tool_call part', async () => {
+    const buffer = await runSubagentEvents([
+      event('run_step', {
+        id: 'step_msg',
+        index: 0,
+        stepDetails: { type: 'message_creation' },
+      }),
+      event('message_delta', {
+        id: 'step_msg',
+        delta: { content: [{ type: 'text', text: 'Hello ' }] },
+      }),
+      event('message_delta', {
+        id: 'step_msg',
+        delta: { content: [{ type: 'text', text: 'world!' }] },
+      }),
+      event('run_step', {
+        id: 'step_tool',
+        index: 1,
+        stepDetails: {
+          type: 'tool_calls',
+          tool_calls: [{ id: 'inner_1', name: 'calculator', args: '{}' }],
+        },
+      }),
+      event('run_step_completed', {
+        id: 'step_tool',
+        index: 1,
+        result: {
+          id: 'step_tool',
+          type: 'tool_call',
+          tool_call: {
+            id: 'inner_1',
+            name: 'calculator',
+            output: '4',
+            progress: 1,
+          },
+        },
+      }),
+    ]);
+
+    const client = makeClient(buffer);
+    client.contentParts = [
+      {
+        type: 'tool_call',
+        tool_call: {
+          id: 'call_sub',
+          name: Constants.SUBAGENT,
+          args: '{}',
+          output: 'final text',
+          progress: 1,
+        },
+      },
+    ];
+
+    client.finalizeSubagentContent();
+
+    const attached = client.contentParts[0].tool_call.subagent_content;
+    expect(Array.isArray(attached)).toBe(true);
+    expect(attached).toHaveLength(2);
+    expect(attached[0].type).toBe('text');
+    expect(attached[0].text).toBe('Hello world!');
+    expect(attached[1].type).toBe('tool_call');
+    expect(attached[1].tool_call.name).toBe('calculator');
+    expect(attached[1].tool_call.output).toBe('4');
+    /** Buffer drained so a second call (e.g. resumable retry) doesn't
+     *  double-append. */
+    expect(buffer.size).toBe(0);
+  });
+
+  it('ignores tool_call parts whose name is not SUBAGENT', async () => {
+    const buffer = await runSubagentEvents([
+      event(
+        'run_step',
+        {
+          id: 'step_msg',
+          index: 0,
+          stepDetails: { type: 'message_creation' },
+        },
+        'call_regular',
+      ),
+      event(
+        'message_delta',
+        {
+          id: 'step_msg',
+          delta: { content: [{ type: 'text', text: 'x' }] },
+        },
+        'call_regular',
+      ),
+    ]);
+    const client = makeClient(buffer);
+    client.contentParts = [
+      {
+        type: 'tool_call',
+        tool_call: { id: 'call_regular', name: 'calculator', args: '{}' },
+      },
+    ];
+    client.finalizeSubagentContent();
+    expect(client.contentParts[0].tool_call.subagent_content).toBeUndefined();
+  });
+
+  it('is a safe no-op when the aggregator map is empty or missing', () => {
+    const client = makeClient(undefined);
+    client.contentParts = [
+      {
+        type: 'tool_call',
+        tool_call: { id: 'call_sub', name: Constants.SUBAGENT, args: '{}' },
+      },
+    ];
+    expect(() => client.finalizeSubagentContent()).not.toThrow();
+    expect(client.contentParts[0].tool_call.subagent_content).toBeUndefined();
+  });
+
+  it('discards aggregators keyed by a tool_call_id not present in contentParts', async () => {
+    const buffer = await runSubagentEvents([
+      event(
+        'run_step',
+        {
+          id: 'step_msg',
+          index: 0,
+          stepDetails: { type: 'message_creation' },
+        },
+        'call_missing',
+      ),
+      event(
+        'message_delta',
+        {
+          id: 'step_msg',
+          delta: { content: [{ type: 'text', text: 'x' }] },
+        },
+        'call_missing',
+      ),
+    ]);
+    const client = makeClient(buffer);
+    client.contentParts = [
+      {
+        type: 'tool_call',
+        tool_call: { id: 'call_other', name: Constants.SUBAGENT, args: '{}' },
+      },
+    ];
+    client.finalizeSubagentContent();
+    expect(client.contentParts[0].tool_call.subagent_content).toBeUndefined();
+  });
+
+  it('keeps per-parent tool_call aggregators isolated for parallel subagents', async () => {
+    const buffer = await runSubagentEvents([
+      event(
+        'run_step',
+        {
+          id: 'step_a',
+          index: 0,
+          stepDetails: { type: 'message_creation' },
+        },
+        'call_a',
+      ),
+      event(
+        'message_delta',
+        { id: 'step_a', delta: { content: [{ type: 'text', text: 'A' }] } },
+        'call_a',
+      ),
+      event(
+        'run_step',
+        {
+          id: 'step_b',
+          index: 0,
+          stepDetails: { type: 'message_creation' },
+        },
+        'call_b',
+      ),
+      event(
+        'message_delta',
+        { id: 'step_b', delta: { content: [{ type: 'text', text: 'B' }] } },
+        'call_b',
+      ),
+    ]);
+    const client = makeClient(buffer);
+    client.contentParts = [
+      { type: 'tool_call', tool_call: { id: 'call_a', name: Constants.SUBAGENT, args: '{}' } },
+      { type: 'tool_call', tool_call: { id: 'call_b', name: Constants.SUBAGENT, args: '{}' } },
+    ];
+    client.finalizeSubagentContent();
+    expect(client.contentParts[0].tool_call.subagent_content).toEqual([
+      expect.objectContaining({ type: 'text', text: 'A' }),
+    ]);
+    expect(client.contentParts[1].tool_call.subagent_content).toEqual([
+      expect.objectContaining({ type: 'text', text: 'B' }),
+    ]);
   });
 });
