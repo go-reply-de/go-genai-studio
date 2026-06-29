@@ -513,7 +513,7 @@ spec:
             - mountPath: /app/api/logs
               name: api-claim4
             - name: vertex-ai-sa-credentials
-              mountPath: /app/api/data/auth.json
+              mountPath: /app/api/api/data/auth.json
               subPath: auth.json
               readOnly: true
       restartPolicy: Always
