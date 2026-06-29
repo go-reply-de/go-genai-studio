@@ -18,15 +18,6 @@ function FileSearch() {
     return null;
   }
 
-  const canUseFileSearch = useHasAccess({
-    permissionType: PermissionTypes.FILE_SEARCH,
-    permission: Permissions.USE,
-  });
-
-  if (!canUseFileSearch) {
-    return null;
-  }
-
   return (
     <>
       {(fileSearchEnabled || isPinned) && (
