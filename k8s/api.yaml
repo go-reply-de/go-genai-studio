@@ -477,6 +477,11 @@ spec:
                 configMapKeyRef:
                   key: CUSTOM_FOOTER
                   name: env
+            - name: GOOGLE_SERVICE_KEY_FILE
+              valueFrom:
+                secretKeyRef:
+                  key: GOOGLE_SERVICE_KEY_FILE
+                  name: librechat-credentials-env
           image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
           resources:
             requests:
@@ -513,7 +518,7 @@ spec:
             - mountPath: /app/api/logs
               name: api-claim4
             - name: vertex-ai-sa-credentials
-              mountPath: /app/api/api/data/auth.json
+              mountPath: /app/api/data/auth.json
               subPath: auth.json
               readOnly: true
       restartPolicy: Always
