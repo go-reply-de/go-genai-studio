@@ -1,7 +1,8 @@
+const path = require('path');
 const { z } = require('zod');
-const { Tool } = require('@langchain/core/tools');
+const { Tool } = require('@librechat/agents/langchain/tools');
 const { VertexAI } = require('@google-cloud/vertexai');
-const { logger } = require('~/config');
+const { logger } = require('@librechat/data-schemas');
 
 class WebGroundingEnterprise extends Tool {
 
@@ -10,7 +11,7 @@ class WebGroundingEnterprise extends Tool {
         return field || process.env[envVar] || defaultValue;
     }
 
-    constructor(fields = {}, geminiModel) {
+    constructor(fields = {}) {
         super();
         this.name = 'web_grounding_enterprise';
         this.description =
@@ -18,12 +19,14 @@ class WebGroundingEnterprise extends Tool {
 
         /* Used to initialize the Tool without necessary variables. */
         this.override = fields.override ?? false;
+        this.geminiModel = fields.geminiModel || 'gemini-2.5-flash';
 
         let serviceKey = {};
         try {
-            serviceKey = require('~/data/auth.json');
+            const keyPath = process.env.GOOGLE_SERVICE_KEY_FILE || path.join(process.cwd(), 'api', 'data', 'auth.json');
+            serviceKey = require(keyPath);
         } catch (e) {
-            logger.error("Please upload a service account to this path: ~/data/auth.json")
+            logger.error("No Service account found.");
         }
 
         this.serviceKey =
@@ -85,7 +88,7 @@ class WebGroundingEnterprise extends Tool {
             });
 
             this.generativeModel = this.vertexAI.preview.getGenerativeModel({
-                model: geminiModel,
+                model: this.geminiModel,
                 tools: [{
                     "enterpriseWebSearch": {
                     }

@@ -191,13 +191,20 @@ const loadTools = async ({
   };
 
   const customConstructors = {
-    vertex_ai: async (_toolContextMap) => {
-      const authFields = getAuthFields('vertex_ai');
+    vertex_ai_search: async (_toolContextMap) => {
+      const authFields = getAuthFields('vertex_ai_search');
       const authValues = await loadAuthValues({ userId: user, authFields });
-      return new GoogleVertexAI(authValues, agent?.model);
+      const fields = {
+        ...authValues,
+        geminiModel: 'gemini-2.5-pro'
+      };
+      return new GoogleVertexAI(fields);
     },
     web_grounding_enterprise: async (_toolContextMap) => {
-      return new WebGroundingEnterprise({ isAgent: !!agent }, agent?.model);
+      const fields = {
+        geminiModel: agent?.model || 'gemini-2.5-pro'
+      };
+      return new WebGroundingEnterprise(fields);
     },
     image_gen_oai: async (_toolContextMap, dynamicToolContextMap) => {
       const authFields = getAuthFields('image_gen_oai');

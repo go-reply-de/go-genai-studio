@@ -25,6 +25,7 @@ module.exports = {
   StructuredACS,
   GoogleSearchAPI,
   GoogleVertexAI,
+  WebGroundingEnterprise,
   TraversaalSearch,
   StructuredWolfram,
   TavilySearchResults,
