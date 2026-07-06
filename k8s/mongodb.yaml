@@ -21,7 +21,7 @@ spec:
         - args:
             - mongod
             - --noauth
-          image: mongo
+          image: mongo:8.0
           resources:
             requests:
               cpu: 10m
