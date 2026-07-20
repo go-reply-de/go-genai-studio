@@ -75,6 +75,11 @@ spec:
                 configMapKeyRef:
                   key: APP_TITLE
                   name: env
+            - name: ADMIN_PANEL_URL
+              valueFrom:
+                configMapKeyRef:
+                  key: ADMIN_PANEL_URL
+                  name: env
             - name: ASSISTANTS_API_KEY
               valueFrom:
                 configMapKeyRef:

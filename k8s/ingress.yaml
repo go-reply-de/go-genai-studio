@@ -18,6 +18,19 @@ metadata:
     kubernetes.io/ingress.class: gce
     networking.gke.io/v1beta1.FrontendConfig: genai-studio-managed-ingress-###ENVIRONMENT###-frontend-config
 spec:
+  rules:
+    - http:
+        paths:
+          # Only resolves when the admin panel is deployed (admin_panel_enabled=true
+          # in Terraform for this environment); otherwise this backend is unhealthy
+          # but the rest of the ingress is unaffected.
+          - path: /admin
+            pathType: Prefix
+            backend:
+              service:
+                name: admin-service
+                port:
+                  number: 3000
   defaultBackend:
     service:
       name: api-service
