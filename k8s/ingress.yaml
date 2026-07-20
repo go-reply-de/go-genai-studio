@@ -6,6 +6,7 @@ metadata:
 spec:
   domains:
     - ###DOMAIN###
+    - admin.###DOMAIN###
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -19,12 +20,13 @@ metadata:
     networking.gke.io/v1beta1.FrontendConfig: genai-studio-managed-ingress-###ENVIRONMENT###-frontend-config
 spec:
   rules:
-    - http:
+    # Only resolves when the admin panel is deployed (admin_panel_enabled=true
+    # in Terraform for this environment); otherwise this backend is unhealthy
+    # but the rest of the ingress (main app on the primary domain) is unaffected.
+    - host: admin.###DOMAIN###
+      http:
         paths:
-          # Only resolves when the admin panel is deployed (admin_panel_enabled=true
-          # in Terraform for this environment); otherwise this backend is unhealthy
-          # but the rest of the ingress is unaffected.
-          - path: /admin
+          - path: /
             pathType: Prefix
             backend:
               service:
