@@ -6,7 +6,6 @@ metadata:
 spec:
   domains:
     - ###DOMAIN###
-    - admin.###DOMAIN###
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -19,20 +18,11 @@ metadata:
     kubernetes.io/ingress.class: gce
     networking.gke.io/v1beta1.FrontendConfig: genai-studio-managed-ingress-###ENVIRONMENT###-frontend-config
 spec:
-  rules:
-    # Only resolves when the admin panel is deployed (admin_panel_enabled=true
-    # in Terraform for this environment); otherwise this backend is unhealthy
-    # but the rest of the ingress (main app on the primary domain) is unaffected.
-    - host: admin.###DOMAIN###
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: admin-service
-                port:
-                  number: 3000
+  # This Ingress serves only the main app. Environments with the admin panel
+  # enabled (admin_panel_enabled=true) route admin.###DOMAIN### through a
+  # separate, Terraform-managed load balancer instead (see
+  # terraform/modules/load_balancer) so IAP access can be scoped independently
+  # per backend; this GKE-managed Ingress is skipped entirely for them.
   defaultBackend:
     service:
       name: api-service
