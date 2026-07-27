@@ -564,6 +564,7 @@ metadata:
   namespace: ###_GKE_NAMESPACE###
   annotations:
     cloud.google.com/backend-config: '{"default": "genai-studio-managed-ingress-###ENVIRONMENT###-backend-config"}'
+    cloud.google.com/neg: '{"exposed_ports": {"80":{"name": "neg-main-###ENVIRONMENT###"}}}'
 spec:
   ports:
     - protocol: TCP
