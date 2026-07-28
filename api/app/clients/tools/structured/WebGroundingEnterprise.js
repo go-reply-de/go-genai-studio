@@ -3,6 +3,19 @@ const { z } = require('zod');
 const { Tool } = require('@librechat/agents/langchain/tools');
 const { VertexAI } = require('@google-cloud/vertexai');
 const { logger } = require('@librechat/data-schemas');
+const { formatGroundingResponse } = require('../util/vertexGrounding');
+
+/**
+ * Vertex AI multi-region location values (e.g. `eu`, `us`) are not valid
+ * regional hostnames for the Gemini generateContent API. They must be
+ * mapped to their dedicated multi-region endpoint, mirroring the mapping
+ * used for the main chat Vertex AI client.
+ */
+const VERTEX_MULTI_REGION_ENDPOINTS = {
+    eu: 'aiplatform.eu.rep.googleapis.com',
+    us: 'aiplatform.us.rep.googleapis.com',
+    global: 'aiplatform.googleapis.com',
+};
 
 class WebGroundingEnterprise extends Tool {
 
@@ -81,10 +94,12 @@ class WebGroundingEnterprise extends Tool {
                 logger.debug('Using Service Account for authentication.');
             }
             // Initialize the Vertex AI client, passing in the authentication options
+            const multiRegionEndpoint = VERTEX_MULTI_REGION_ENDPOINTS[this.location];
             this.vertexAI = new VertexAI({
                 project: this.projectId,
                 location: this.location,
                 googleAuthOptions: authOptions,
+                ...(multiRegionEndpoint ? { apiEndpoint: multiRegionEndpoint } : {}),
             });
 
             this.generativeModel = this.vertexAI.preview.getGenerativeModel({
@@ -111,7 +126,7 @@ class WebGroundingEnterprise extends Tool {
                 contents: [{ role: 'user', parts: [{ text: query }] }]
             })
             const aggregatedResponse = await streamingResult.response;
-            return JSON.stringify(aggregatedResponse);
+            return formatGroundingResponse(aggregatedResponse);
         } catch (error) {
             logger.error('Web Grounding for Enterprise request failed', error);
             return 'There was an error with the Web Grounding for Enterprise Search.';

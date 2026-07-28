@@ -196,7 +196,7 @@ const loadTools = async ({
       const authValues = await loadAuthValues({ userId: user, authFields });
       const fields = {
         ...authValues,
-        geminiModel: 'gemini-2.5-pro'
+        geminiModel: agent?.model || 'gemini-2.5-pro'
       };
       return new GoogleVertexAI(fields);
     },
