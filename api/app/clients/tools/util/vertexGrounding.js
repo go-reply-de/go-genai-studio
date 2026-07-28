@@ -1,5 +1,3 @@
-const { logger } = require('@librechat/data-schemas');
-
 const MAX_OUTPUT_CHARS = 8000;
 
 /**
@@ -28,10 +26,6 @@ function formatGroundingResponse(response) {
     const sources = groundingChunks
         .map((chunk) => chunk.web ?? chunk.retrievedContext)
         .filter((source) => source?.uri);
-
-    logger.debug(
-        `[formatGroundingResponse] groundingChunks: ${groundingChunks.length}, sources with uri: ${sources.length}, webSearchQueries: ${candidate.groundingMetadata?.webSearchQueries?.length ?? 0}, retrievalQueries: ${candidate.groundingMetadata?.retrievalQueries?.length ?? 0}`,
-    );
 
     const uniqueSources = [...new Map(sources.map((source) => [source.uri, source])).values()];
 
