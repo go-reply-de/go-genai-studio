@@ -65,7 +65,7 @@ metadata:
   name: admin-service
   namespace: ###_GKE_NAMESPACE###
   annotations:
-    cloud.google.com/backend-config: '{"default": "genai-studio-admin-backend-config-###ENVIRONMENT###"}'
+    cloud.google.com/backend-config: '{"default": "genai-studio-managed-ingress-###ENVIRONMENT###-backend-config"}'
     cloud.google.com/neg: '{"exposed_ports": {"3000":{"name": "neg-admin-###ENVIRONMENT###"}}}'
 spec:
   ports:
