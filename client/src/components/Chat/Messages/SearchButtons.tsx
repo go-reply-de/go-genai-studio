@@ -45,7 +45,6 @@ export default function SearchButtons({ message }: { message: TMessage }) {
           conversationId,
           title,
         } as TConversation),
-      { resetLatestMessage: true },
     );
   };
 
@@ -61,7 +60,7 @@ export default function SearchButtons({ message }: { message: TMessage }) {
         onClick={clickHandler}
         title={localize('com_ui_go_to_conversation')}
       >
-        <Link className="icon-sm" />
+        <Link className="icon-sm" aria-hidden="true" />
         {message.title}
       </button>
     </div>

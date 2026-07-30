@@ -1,3 +1,5 @@
+import { QueryClient } from '@tanstack/react-query';
+import { LocalStorageKeys, QueryKeys } from 'librechat-data-provider';
 import {
   format,
   isToday,
@@ -8,8 +10,6 @@ import {
   startOfYear,
   isWithinInterval,
 } from 'date-fns';
-import { QueryClient } from '@tanstack/react-query';
-import { EModelEndpoint, LocalStorageKeys, QueryKeys } from 'librechat-data-provider';
 import type { TConversation, GroupedConversations } from 'librechat-data-provider';
 import type { InfiniteData } from '@tanstack/react-query';
 
@@ -78,6 +78,7 @@ const dateGroupsSet = new Set([
 
 export const groupConversationsByDate = (
   conversations: Array<TConversation | null>,
+  dateField: 'updatedAt' | 'createdAt' = 'updatedAt',
 ): GroupedConversations => {
   if (!Array.isArray(conversations)) {
     return [];
@@ -87,14 +88,19 @@ export const groupConversationsByDate = (
   const now = new Date(Date.now());
 
   conversations.forEach((conversation) => {
-    if (!conversation || seenConversationIds.has(conversation.conversationId)) {
+    if (
+      !conversation ||
+      seenConversationIds.has(conversation.conversationId) ||
+      conversation.pinned
+    ) {
       return;
     }
     seenConversationIds.add(conversation.conversationId);
 
     let date: Date;
-    if (conversation.updatedAt) {
-      date = parseISO(conversation.updatedAt);
+    const dateValue = conversation[dateField] ?? conversation.updatedAt ?? conversation.createdAt;
+    if (dateValue) {
+      date = parseISO(dateValue);
     } else {
       date = now;
     }
@@ -131,7 +137,8 @@ export const groupConversationsByDate = (
   sortedGroups.forEach((conversations) => {
     conversations.sort(
       (a: TConversation, b: TConversation) =>
-        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+        new Date(b[dateField] ?? b.updatedAt ?? 0).getTime() -
+        new Date(a[dateField] ?? a.updatedAt ?? 0).getTime(),
     );
   });
   return Array.from(sortedGroups, ([key, value]) => [key, value]);
@@ -141,6 +148,40 @@ export type ConversationCursorData = {
   conversations: TConversation[];
   nextCursor?: string | null;
 };
+
+function getConversationQueryProjectId(queryKey: readonly unknown[]): string | undefined {
+  const params = queryKey[1];
+  if (!params || typeof params !== 'object') {
+    return undefined;
+  }
+  return (params as { projectId?: string }).projectId;
+}
+
+function conversationMatchesProjectQuery(
+  queryKey: readonly unknown[],
+  conversation: Pick<TConversation, 'chatProjectId'>,
+): boolean {
+  const projectId = getConversationQueryProjectId(queryKey);
+  if (!projectId) {
+    return true;
+  }
+  if (projectId === 'unassigned') {
+    return !conversation.chatProjectId;
+  }
+  return conversation.chatProjectId === projectId;
+}
+
+/**
+ * Reads the project id from the current URL's `?projectId` param — the source of
+ * truth for a new chat's project scope (the conversation atom can lag behind it).
+ */
+export function getRouteChatProjectId(): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  const projectId = new URLSearchParams(window.location.search).get('projectId');
+  return projectId != null && /^[a-f\d]{24}$/i.test(projectId) ? projectId : null;
+}
 
 // === InfiniteData helpers for cursor-based convo queries ===
 
@@ -208,6 +249,9 @@ export function addConversationToAllConversationsQueries(
     .findAll([QueryKeys.allConversations], { exact: false });
 
   for (const query of queries) {
+    if (!conversationMatchesProjectQuery(query.queryKey, newConversation)) {
+      continue;
+    }
     queryClient.setQueryData<InfiniteData<ConversationCursorData>>(query.queryKey, (old) => {
       if (
         !old ||
@@ -306,15 +350,12 @@ export function storeEndpointSettings(conversation: TConversation | null) {
   if (!conversation) {
     return;
   }
-  const { endpoint, model, agentOptions } = conversation;
+  const { endpoint, model } = conversation;
   if (!endpoint) {
     return;
   }
   const lastModel = JSON.parse(localStorage.getItem(LocalStorageKeys.LAST_MODEL) ?? '{}');
   lastModel[endpoint] = model;
-  if (endpoint === EModelEndpoint.gptPlugins) {
-    lastModel.secondaryModel = agentOptions?.model ?? model ?? '';
-  }
   localStorage.setItem(LocalStorageKeys.LAST_MODEL, JSON.stringify(lastModel));
 }
 
@@ -325,6 +366,9 @@ export function addConvoToAllQueries(queryClient: QueryClient, newConvo: TConver
     .findAll([QueryKeys.allConversations], { exact: false });
 
   for (const query of queries) {
+    if (!conversationMatchesProjectQuery(query.queryKey, newConvo)) {
+      continue;
+    }
     queryClient.setQueryData<InfiniteData<ConversationCursorData>>(query.queryKey, (oldData) => {
       if (!oldData) {
         return oldData;
@@ -350,11 +394,112 @@ export function addConvoToAllQueries(queryClient: QueryClient, newConvo: TConver
   }
 }
 
+export function upsertConvoInAllQueries(
+  queryClient: QueryClient,
+  nextConvo: TConversation,
+  moveToTop = true,
+) {
+  if (!nextConvo.conversationId) {
+    return;
+  }
+
+  const queries = queryClient
+    .getQueryCache()
+    .findAll([QueryKeys.allConversations], { exact: false });
+
+  for (const query of queries) {
+    queryClient.setQueryData<InfiniteData<ConversationCursorData>>(query.queryKey, (oldData) => {
+      if (!oldData) {
+        return oldData;
+      }
+
+      let pageIdx = -1;
+      let convoIdx = -1;
+      for (let pi = 0; pi < oldData.pages.length; pi++) {
+        const ci = oldData.pages[pi].conversations.findIndex(
+          (c) => c.conversationId === nextConvo.conversationId,
+        );
+        if (ci !== -1) {
+          pageIdx = pi;
+          convoIdx = ci;
+          break;
+        }
+      }
+
+      const now = new Date().toISOString();
+      if (pageIdx === -1) {
+        if (!conversationMatchesProjectQuery(query.queryKey, nextConvo)) {
+          return oldData;
+        }
+        const firstPage = oldData.pages[0] ?? { conversations: [], nextCursor: null };
+        return {
+          ...oldData,
+          pages: [
+            {
+              ...firstPage,
+              conversations: [
+                { ...nextConvo, updatedAt: nextConvo.updatedAt ?? now },
+                ...firstPage.conversations,
+              ],
+            },
+            ...oldData.pages.slice(1),
+          ],
+        };
+      }
+
+      const found = oldData.pages[pageIdx].conversations[convoIdx];
+      const updated = {
+        ...found,
+        ...nextConvo,
+        updatedAt: nextConvo.updatedAt ?? (moveToTop ? now : found.updatedAt),
+      };
+
+      if (!conversationMatchesProjectQuery(query.queryKey, updated)) {
+        return removeConvoFromInfinitePages(oldData, updated.conversationId ?? '');
+      }
+
+      if (!moveToTop || (pageIdx === 0 && convoIdx === 0)) {
+        return {
+          ...oldData,
+          pages: oldData.pages.map((page, pi) =>
+            pi === pageIdx
+              ? {
+                  ...page,
+                  conversations: page.conversations.map((c, ci) => (ci === convoIdx ? updated : c)),
+                }
+              : page,
+          ),
+        };
+      }
+
+      const pages = oldData.pages.map((page, pi) => {
+        if (pi === 0 && pageIdx === 0) {
+          const conversations = page.conversations.filter((_, ci) => ci !== convoIdx);
+          return { ...page, conversations: [updated, ...conversations] };
+        }
+        if (pi === 0) {
+          return { ...page, conversations: [updated, ...page.conversations] };
+        }
+        if (pi === pageIdx) {
+          return {
+            ...page,
+            conversations: page.conversations.filter((_, ci) => ci !== convoIdx),
+          };
+        }
+        return page;
+      });
+
+      return { ...oldData, pages };
+    });
+  }
+}
+
 // Update
 export function updateConvoInAllQueries(
   queryClient: QueryClient,
   conversationId: string,
   updater: (c: TConversation) => TConversation,
+  moveToTop = false,
 ) {
   const queries = queryClient
     .getQueryCache()
@@ -365,15 +510,71 @@ export function updateConvoInAllQueries(
       if (!oldData) {
         return oldData;
       }
-      return {
-        ...oldData,
-        pages: oldData.pages.map((page) => ({
-          ...page,
-          conversations: page.conversations.map((c) =>
-            c.conversationId === conversationId ? updater(c) : c,
+
+      // Find conversation location (single pass with early exit)
+      let pageIdx = -1;
+      let convoIdx = -1;
+      for (let pi = 0; pi < oldData.pages.length; pi++) {
+        const ci = oldData.pages[pi].conversations.findIndex(
+          (c) => c.conversationId === conversationId,
+        );
+        if (ci !== -1) {
+          pageIdx = pi;
+          convoIdx = ci;
+          break;
+        }
+      }
+
+      if (pageIdx === -1) {
+        return oldData;
+      }
+
+      const found = oldData.pages[pageIdx].conversations[convoIdx];
+      const updated = moveToTop
+        ? { ...updater(found), updatedAt: new Date().toISOString() }
+        : updater(found);
+
+      if (!conversationMatchesProjectQuery(query.queryKey, updated)) {
+        return removeConvoFromInfinitePages(oldData, conversationId);
+      }
+
+      // If not moving to top, or already at top of page 0, update in place
+      if (!moveToTop || (pageIdx === 0 && convoIdx === 0)) {
+        return {
+          ...oldData,
+          pages: oldData.pages.map((page, pi) =>
+            pi === pageIdx
+              ? {
+                  ...page,
+                  conversations: page.conversations.map((c, ci) => (ci === convoIdx ? updated : c)),
+                }
+              : page,
           ),
-        })),
-      };
+        };
+      }
+
+      // Move to top: only modify affected pages
+      const newPages = oldData.pages.map((page, pi) => {
+        if (pi === 0 && pageIdx === 0) {
+          // Source is page 0: remove from current position, add to front
+          const convos = page.conversations.filter((_, ci) => ci !== convoIdx);
+          return { ...page, conversations: [updated, ...convos] };
+        }
+        if (pi === 0) {
+          // Add to front of page 0
+          return { ...page, conversations: [updated, ...page.conversations] };
+        }
+        if (pi === pageIdx) {
+          // Remove from source page
+          return {
+            ...page,
+            conversations: page.conversations.filter((_, ci) => ci !== convoIdx),
+          };
+        }
+        return page;
+      });
+
+      return { ...oldData, pages: newPages };
     });
   }
 }

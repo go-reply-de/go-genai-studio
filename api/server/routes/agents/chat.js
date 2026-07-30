@@ -1,21 +1,19 @@
 const express = require('express');
-const { generateCheckAccess, skipAgentCheck } = require('@librechat/api');
-const { PermissionTypes, Permissions } = require('librechat-data-provider');
+const { createMessageFilterPii, generateCheckAccess, skipAgentCheck } = require('@librechat/api');
+const { PermissionTypes, Permissions, PermissionBits } = require('librechat-data-provider');
 const {
-  setHeaders,
   moderateText,
   // validateModel,
   validateConvoAccess,
   buildEndpointOption,
+  canAccessAgentFromBody,
 } = require('~/server/middleware');
 const { initializeClient } = require('~/server/services/Endpoints/agents');
 const AgentController = require('~/server/controllers/agents/request');
 const addTitle = require('~/server/services/Endpoints/agents/title');
-const { getRoleByName } = require('~/models/Role');
+const { getRoleByName } = require('~/models');
 
 const router = express.Router();
-
-router.use(moderateText);
 
 const checkAgentAccess = generateCheckAccess({
   permissionType: PermissionTypes.AGENTS,
@@ -23,11 +21,16 @@ const checkAgentAccess = generateCheckAccess({
   skipCheck: skipAgentCheck,
   getRoleByName,
 });
+const checkAgentResourceAccess = canAccessAgentFromBody({
+  requiredPermission: PermissionBits.VIEW,
+});
 
+router.use(createMessageFilterPii({ getConfig: (req) => req.config?.messageFilter?.pii }));
+router.use(moderateText);
 router.use(checkAgentAccess);
+router.use(checkAgentResourceAccess);
 router.use(validateConvoAccess);
 router.use(buildEndpointOption);
-router.use(setHeaders);
 
 const controller = async (req, res, next) => {
   await AgentController(req, res, next, initializeClient, addTitle);

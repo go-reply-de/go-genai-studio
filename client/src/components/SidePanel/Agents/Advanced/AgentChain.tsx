@@ -1,13 +1,18 @@
 import { X, Link2, PlusCircle } from 'lucide-react';
 import { EModelEndpoint } from 'librechat-data-provider';
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import {
+  ControlCombobox,
+  HoverCard,
+  HoverCardPortal,
+  HoverCardContent,
+  HoverCardTrigger,
+  CircleHelpIcon,
+} from '@librechat/client';
 import type { ControllerRenderProps } from 'react-hook-form';
 import type { TMessage } from 'librechat-data-provider';
 import type { AgentForm, OptionWithIcon } from '~/common';
-import ControlCombobox from '~/components/ui/ControlCombobox';
-import { HoverCard, HoverCardPortal, HoverCardContent, HoverCardTrigger } from '~/components/ui';
 import MessageIcon from '~/components/Share/MessageIcon';
-import { CircleHelpIcon } from '~/components/svg';
 import { useAgentsMapContext } from '~/Providers';
 import { useLocalize } from '~/hooks';
 import { ESide } from '~/common';
@@ -89,7 +94,7 @@ const AgentChain: React.FC<AgentChainProps> = ({ field, currentAgentId }) => {
       </div>
       <div className="space-y-1">
         {/* Current fixed agent */}
-        <div className="flex h-10 items-center justify-between rounded-md border border-border-medium bg-surface-primary-contrast px-3 py-2">
+        <div className="flex h-9 items-center justify-between rounded-md border border-border-medium bg-surface-primary-contrast px-3 py-2">
           <div className="flex items-center gap-2">
             <div className="flex h-6 w-6 items-center justify-center overflow-hidden rounded-full">
               <MessageIcon
@@ -110,7 +115,7 @@ const AgentChain: React.FC<AgentChainProps> = ({ field, currentAgentId }) => {
         {<Link2 className="mx-auto text-text-secondary" size={14} />}
         {agentIds.map((agentId, idx) => (
           <React.Fragment key={agentId}>
-            <div className="flex h-10 items-center gap-2 rounded-md border border-border-medium bg-surface-tertiary pr-2">
+            <div className="flex h-9 items-center gap-2 rounded-md border border-border-medium bg-surface-tertiary pr-2">
               <ControlCombobox
                 isCollapsed={false}
                 ariaLabel={localize('com_ui_agent_var', { 0: localize('com_ui_select') })}
@@ -141,8 +146,11 @@ const AgentChain: React.FC<AgentChainProps> = ({ field, currentAgentId }) => {
               <button
                 className="rounded-xl p-1 transition hover:bg-surface-hover"
                 onClick={() => removeAgentAt(idx)}
+                aria-label={localize('com_ui_remove_agent_from_chain', {
+                  0: getAgentDetails(agentId)?.name || localize('com_ui_agent'),
+                })}
               >
-                <X size={18} className="text-text-secondary" />
+                <X size={18} className="text-text-secondary" aria-hidden="true" />
               </button>
             </div>
             {idx < agentIds.length - 1 && (
@@ -162,7 +170,7 @@ const AgentChain: React.FC<AgentChainProps> = ({ field, currentAgentId }) => {
               selectPlaceholder={localize('com_ui_agent_var', { 0: localize('com_ui_add') })}
               searchPlaceholder={localize('com_ui_agent_var', { 0: localize('com_ui_search') })}
               items={selectableAgents}
-              className="h-10 w-full border-dashed border-border-heavy text-center text-text-secondary hover:text-text-primary"
+              className="h-9 w-full border-dashed border-border-heavy text-center text-text-secondary hover:text-text-primary"
               containerClassName="px-0"
               SelectIcon={<PlusCircle size={16} className="text-text-secondary" />}
             />

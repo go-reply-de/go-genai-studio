@@ -3,8 +3,7 @@ const { logger } = require('@librechat/data-schemas');
 const { CacheKeys, RunStatus, isUUID } = require('librechat-data-provider');
 const { initializeClient } = require('~/server/services/Endpoints/assistants');
 const { checkMessageGaps, recordUsage } = require('~/server/services/Threads');
-const { deleteMessages } = require('~/models/Message');
-const { getConvo } = require('~/models/Conversation');
+const { deleteMessages, getConvo } = require('~/models');
 const getLogStores = require('~/cache/getLogStores');
 
 const three_minutes = 1000 * 60 * 3;
@@ -16,6 +15,7 @@ async function abortRun(req, res) {
   const conversation = await getConvo(req.user.id, conversationId);
 
   if (conversation?.model) {
+    req.body = req.body || {}; // Express 5: ensure req.body exists
     req.body.model = conversation.model;
   }
 
@@ -47,7 +47,7 @@ async function abortRun(req, res) {
 
   try {
     await cache.set(cacheKey, 'cancelled', three_minutes);
-    const cancelledRun = await openai.beta.threads.runs.cancel(thread_id, run_id);
+    const cancelledRun = await openai.beta.threads.runs.cancel(run_id, { thread_id });
     logger.debug('[abortRun] Cancelled run:', cancelledRun);
   } catch (error) {
     logger.error('[abortRun] Error cancelling run', error);
@@ -60,7 +60,7 @@ async function abortRun(req, res) {
   }
 
   try {
-    const run = await openai.beta.threads.runs.retrieve(thread_id, run_id);
+    const run = await openai.beta.threads.runs.retrieve(run_id, { thread_id });
     await recordUsage({
       ...run.usage,
       model: run.model,

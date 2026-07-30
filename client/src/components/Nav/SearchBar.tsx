@@ -5,6 +5,7 @@ import { Search, X } from 'lucide-react';
 import { QueryKeys } from 'librechat-data-provider';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useShortcutAriaKey } from '~/hooks/useKeyboardShortcuts';
 import { useLocalize, useNewConvo } from '~/hooks';
 import { cn } from '~/utils';
 import store from '~/store';
@@ -23,36 +24,47 @@ const SearchBar = forwardRef((props: SearchBarProps, ref: React.Ref<HTMLDivEleme
   const [text, setText] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const [showClearIcon, setShowClearIcon] = useState(false);
+  const focusSearchAriaKey = useShortcutAriaKey('focusSearch');
 
-  const { newConversation } = useNewConvo();
+  const { newConversation: newConvo } = useNewConvo();
   const [search, setSearchState] = useRecoilState(store.search);
 
-  const clearSearch = useCallback(() => {
-    if (location.pathname.includes('/search')) {
-      newConversation({ disableFocus: true });
-      navigate('/c/new', { replace: true });
-    }
-  }, [newConversation, location.pathname, navigate]);
+  const clearSearch = useCallback(
+    (pathname?: string) => {
+      if (pathname?.includes('/search') || pathname === '/c/new') {
+        queryClient.removeQueries([QueryKeys.messages]);
+        newConvo({ disableFocus: true });
+        navigate('/c/new');
+      }
+    },
+    [newConvo, navigate, queryClient],
+  );
 
-  const clearText = useCallback(() => {
-    setShowClearIcon(false);
-    setText('');
-    setSearchState((prev) => ({
-      ...prev,
-      query: '',
-      debouncedQuery: '',
-      isTyping: false,
-    }));
-    clearSearch();
-    inputRef.current?.focus();
-  }, [setSearchState, clearSearch]);
+  const clearText = useCallback(
+    (pathname?: string) => {
+      setShowClearIcon(false);
+      setText('');
+      setSearchState((prev) => ({
+        ...prev,
+        query: '',
+        debouncedQuery: '',
+        isTyping: false,
+      }));
+      clearSearch(pathname);
+      inputRef.current?.focus();
+    },
+    [setSearchState, clearSearch],
+  );
 
-  const handleKeyUp = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    const { value } = e.target as HTMLInputElement;
-    if (e.key === 'Backspace' && value === '') {
-      clearText();
-    }
-  };
+  const handleKeyUp = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      const { value } = e.target as HTMLInputElement;
+      if (e.key === 'Backspace' && value === '') {
+        clearText(location.pathname);
+      }
+    },
+    [clearText, location.pathname],
+  );
 
   const sendRequest = useCallback(
     (value: string) => {
@@ -85,8 +97,6 @@ const SearchBar = forwardRef((props: SearchBarProps, ref: React.Ref<HTMLDivEleme
     debouncedSetDebouncedQuery(value);
     if (value.length > 0 && location.pathname !== '/search') {
       navigate('/search', { replace: true });
-    } else if (value.length === 0 && location.pathname === '/search') {
-      navigate('/c/new', { replace: true });
     }
   };
 
@@ -101,14 +111,15 @@ const SearchBar = forwardRef((props: SearchBarProps, ref: React.Ref<HTMLDivEleme
   return (
     <div
       ref={ref}
-      className={cn(
-        'group relative mt-1 flex h-10 cursor-pointer items-center gap-3 rounded-lg border-border-medium px-3 py-2 text-text-primary transition-colors duration-200 focus-within:bg-surface-hover hover:bg-surface-hover',
-        isSmallScreen === true ? 'mb-2 h-14 rounded-xl' : '',
-      )}
+      className="group relative flex h-9 min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-lg border-2 border-transparent px-3 py-1.5 text-text-primary focus-within:border-ring-primary focus-within:bg-surface-active-alt hover:bg-surface-active-alt"
     >
-      <Search className="absolute left-3 h-4 w-4 text-text-secondary group-focus-within:text-text-primary group-hover:text-text-primary" />
+      <Search
+        aria-hidden="true"
+        className="absolute left-3 h-4 w-4 text-text-secondary group-focus-within:text-text-primary group-hover:text-text-primary"
+      />
       <input
         type="text"
+        data-testid="nav-search-input"
         ref={inputRef}
         className="m-0 mr-0 w-full border-none bg-transparent p-0 pl-7 text-sm leading-tight placeholder-text-secondary placeholder-opacity-100 focus-visible:outline-none group-focus-within:placeholder-text-primary group-hover:placeholder-text-primary"
         value={text}
@@ -117,6 +128,7 @@ const SearchBar = forwardRef((props: SearchBarProps, ref: React.Ref<HTMLDivEleme
           e.code === 'Space' ? e.stopPropagation() : null;
         }}
         aria-label={localize('com_nav_search_placeholder')}
+        aria-keyshortcuts={focusSearchAriaKey}
         placeholder={localize('com_nav_search_placeholder')}
         onKeyUp={handleKeyUp}
         onFocus={() => setSearchState((prev) => ({ ...prev, isSearching: true }))}
@@ -126,17 +138,17 @@ const SearchBar = forwardRef((props: SearchBarProps, ref: React.Ref<HTMLDivEleme
       />
       <button
         type="button"
-        aria-label={`${localize('com_ui_clear')} ${localize('com_ui_search')}`}
+        aria-label={localize('com_ui_clear_search')}
         className={cn(
           'absolute right-[7px] flex h-5 w-5 items-center justify-center rounded-full border-none bg-transparent p-0 transition-opacity duration-200',
           showClearIcon ? 'opacity-100' : 'opacity-0',
           isSmallScreen === true ? 'right-[16px]' : '',
         )}
-        onClick={clearText}
+        onClick={() => clearText(location.pathname)}
         tabIndex={showClearIcon ? 0 : -1}
         disabled={!showClearIcon}
       >
-        <X className="h-5 w-5 cursor-pointer" />
+        <X className="h-5 w-5 cursor-pointer" aria-hidden="true" />
       </button>
     </div>
   );

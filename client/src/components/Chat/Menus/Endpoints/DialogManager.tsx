@@ -1,7 +1,6 @@
 import React from 'react';
-import { EModelEndpoint } from 'librechat-data-provider';
+import { EModelEndpoint, getEndpointField } from 'librechat-data-provider';
 import { SetKeyDialog } from '~/components/Input/SetKeyDialog';
-import { getEndpointField } from '~/utils';
 
 interface DialogManagerProps {
   keyDialogOpen: boolean;
@@ -25,6 +24,26 @@ const DialogManager = ({
           endpointType={getEndpointField(endpointsConfig, keyDialogEndpoint, 'type')}
           onOpenChange={onOpenChange}
           userProvideURL={getEndpointField(endpointsConfig, keyDialogEndpoint, 'userProvideURL')}
+          userProvideAccessKeyId={getEndpointField(
+            endpointsConfig,
+            keyDialogEndpoint,
+            'userProvideAccessKeyId',
+          )}
+          userProvideSecretAccessKey={getEndpointField(
+            endpointsConfig,
+            keyDialogEndpoint,
+            'userProvideSecretAccessKey',
+          )}
+          userProvideSessionToken={getEndpointField(
+            endpointsConfig,
+            keyDialogEndpoint,
+            'userProvideSessionToken',
+          )}
+          userProvideBearerToken={getEndpointField(
+            endpointsConfig,
+            keyDialogEndpoint,
+            'userProvideBearerToken',
+          )}
         />
       )}
     </>

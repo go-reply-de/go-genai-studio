@@ -75,6 +75,11 @@ spec:
                 configMapKeyRef:
                   key: APP_TITLE
                   name: env
+            - name: ADMIN_PANEL_URL
+              valueFrom:
+                configMapKeyRef:
+                  key: ADMIN_PANEL_URL
+                  name: env
             - name: ASSISTANTS_API_KEY
               valueFrom:
                 configMapKeyRef:
@@ -477,6 +482,11 @@ spec:
                 configMapKeyRef:
                   key: CUSTOM_FOOTER
                   name: env
+            - name: GOOGLE_SERVICE_KEY_FILE
+              valueFrom:
+                secretKeyRef:
+                  key: GOOGLE_SERVICE_KEY_FILE
+                  name: librechat-credentials-env
           image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
           resources:
             requests:
@@ -554,6 +564,7 @@ metadata:
   namespace: ###_GKE_NAMESPACE###
   annotations:
     cloud.google.com/backend-config: '{"default": "genai-studio-managed-ingress-###ENVIRONMENT###-backend-config"}'
+    cloud.google.com/neg: '{"exposed_ports": {"80":{"name": "neg-main-###ENVIRONMENT###"}}}'
 spec:
   ports:
     - protocol: TCP

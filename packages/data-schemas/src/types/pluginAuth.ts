@@ -7,6 +7,7 @@ export interface IPluginAuth extends Document {
   pluginKey?: string;
   createdAt?: Date;
   updatedAt?: Date;
+  tenantId?: string;
 }
 
 export interface PluginAuthQuery {
@@ -18,6 +19,7 @@ export interface PluginAuthQuery {
 export interface FindPluginAuthParams {
   userId: string;
   authField: string;
+  pluginKey?: string;
 }
 
 export interface FindPluginAuthsByKeysParams {

@@ -7,9 +7,11 @@ export interface IBanner extends Document {
   displayTo?: Date;
   type: 'banner' | 'popup';
   isPublic: boolean;
+  persistable: boolean;
+  tenantId?: string;
 }
 
-const bannerSchema = new Schema<IBanner>(
+const bannerSchema: Schema<IBanner> = new Schema<IBanner>(
   {
     bannerId: {
       type: String,
@@ -35,6 +37,14 @@ const bannerSchema = new Schema<IBanner>(
     isPublic: {
       type: Boolean,
       default: false,
+    },
+    persistable: {
+      type: Boolean,
+      default: false,
+    },
+    tenantId: {
+      type: String,
+      index: true,
     },
   },
   { timestamps: true },

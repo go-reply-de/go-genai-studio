@@ -1,7 +1,7 @@
 import { OptionTypes } from 'librechat-data-provider';
+import { Label, Input, HoverCard, HoverCardTrigger } from '@librechat/client';
 import type { DynamicSettingProps } from 'librechat-data-provider';
 import { useLocalize, useDebouncedInput, useParameterEffects, TranslationKeys } from '~/hooks';
-import { Label, Input, HoverCard, HoverCardTrigger } from '~/components/ui';
 import { useChatContext } from '~/Providers';
 import OptionHover from './OptionHover';
 import { ESide } from '~/common';
@@ -61,7 +61,7 @@ function DynamicInput({
           <div className="flex w-full justify-between">
             <Label
               htmlFor={`${settingKey}-dynamic-input`}
-              className="text-left text-sm font-medium"
+              className="text-left text-xs font-medium"
             >
               {labelCode ? localize(label as TranslationKeys) || label : label || settingKey}{' '}
               {showDefault && (
@@ -82,7 +82,7 @@ function DynamicInput({
             onChange={handleInputChange}
             placeholder={placeholderText}
             className={cn(
-              'flex h-10 max-h-10 w-full resize-none border-none bg-surface-secondary px-3 py-2',
+              'flex h-9 max-h-9 w-full resize-none rounded-lg border border-border-light bg-surface-secondary px-3 py-2',
             )}
           />
         </HoverCardTrigger>

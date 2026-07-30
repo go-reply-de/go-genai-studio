@@ -1,17 +1,35 @@
 const path = require('path');
+const fs = require('fs/promises');
 const { logger } = require('@librechat/data-schemas');
 const { loadServiceKey, isUserProvided } = require('@librechat/api');
-const { EModelEndpoint } = require('librechat-data-provider');
 const { config } = require('./EndpointService');
 
-const { openAIApiKey, azureOpenAIApiKey, useAzurePlugins, userProvidedOpenAI, googleKey } = config;
+const defaultServiceKeyPath = path.join(__dirname, '../../..', 'data', 'auth.json');
 
-/**
- * Load async endpoints and return a configuration object
- * @param {Express.Request} req - The request object
- */
-async function loadAsyncEndpoints(req) {
-  let serviceKey, googleUserProvides;
+async function getServiceKeyPath() {
+  const serviceKeyPath = process.env.GOOGLE_SERVICE_KEY_FILE?.trim();
+  if (serviceKeyPath) {
+    return serviceKeyPath;
+  }
+
+  try {
+    await fs.access(defaultServiceKeyPath);
+    return defaultServiceKeyPath;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      logger.warn(
+        `Unable to access default Google service key file: ${defaultServiceKeyPath}`,
+        error,
+      );
+    }
+    return null;
+  }
+}
+
+async function loadAsyncEndpoints() {
+  let serviceKey;
+  let googleUserProvides = false;
+  const { googleKey } = config;
 
   /** Check if GOOGLE_KEY is provided at all(including 'user_provided') */
   const isGoogleKeyProvided = googleKey && googleKey.trim() !== '';
@@ -20,35 +38,21 @@ async function loadAsyncEndpoints(req) {
     /** If GOOGLE_KEY is provided, check if it's user_provided */
     googleUserProvides = isUserProvided(googleKey);
   } else {
-    /** Only attempt to load service key if GOOGLE_KEY is not provided */
-    const serviceKeyPath =
-      process.env.GOOGLE_SERVICE_KEY_FILE || path.join(__dirname, '../../..', 'data', 'auth.json');
+    const serviceKeyPath = await getServiceKeyPath();
 
-    try {
-      serviceKey = await loadServiceKey(serviceKeyPath);
-    } catch (error) {
-      logger.error('Error loading service key', error);
-      serviceKey = null;
+    if (serviceKeyPath) {
+      try {
+        serviceKey = await loadServiceKey(serviceKeyPath);
+      } catch (error) {
+        logger.warn('Error loading Google service key', error);
+        serviceKey = null;
+      }
     }
   }
 
   const google = serviceKey || isGoogleKeyProvided ? { userProvide: googleUserProvides } : false;
 
-  const useAzure = req.app.locals[EModelEndpoint.azureOpenAI]?.plugins;
-  const gptPlugins =
-    useAzure || openAIApiKey || azureOpenAIApiKey
-      ? {
-          availableAgents: ['classic', 'functions'],
-          userProvide: useAzure ? false : userProvidedOpenAI,
-          userProvideURL: useAzure
-            ? false
-            : config[EModelEndpoint.openAI]?.userProvideURL ||
-              config[EModelEndpoint.azureOpenAI]?.userProvideURL,
-          azure: useAzurePlugins || useAzure,
-        }
-      : false;
-
-  return { google, gptPlugins };
+  return { google };
 }
 
 module.exports = loadAsyncEndpoints;

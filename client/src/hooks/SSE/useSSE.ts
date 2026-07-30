@@ -4,38 +4,24 @@ import { SSE } from 'sse.js';
 import { useSetRecoilState } from 'recoil';
 import {
   request,
-  Constants,
-  /* @ts-ignore */
+  UsageEvents,
+  StepEvents,
   createPayload,
-  LocalStorageKeys,
   removeNullishValues,
 } from 'librechat-data-provider';
 import type { TMessage, TPayload, TSubmission, EventSubmission } from 'librechat-data-provider';
 import type { EventHandlerParams } from './useEventHandlers';
 import type { TResData } from '~/common';
-import { useGenTitleMutation, useGetStartupConfig, useGetUserBalance } from '~/data-provider';
+import { useGetStartupConfig, useGetUserBalance } from '~/data-provider';
 import { useAuthContext } from '~/hooks/AuthContext';
 import useEventHandlers from './useEventHandlers';
+import useUsageHandler from './useUsageHandler';
+import { clearAllDrafts } from '~/utils';
 import store from '~/store';
-
-const clearDraft = (conversationId?: string | null) => {
-  if (conversationId) {
-    localStorage.removeItem(`${LocalStorageKeys.TEXT_DRAFT}${conversationId}`);
-    localStorage.removeItem(`${LocalStorageKeys.FILES_DRAFT}${conversationId}`);
-  } else {
-    localStorage.removeItem(`${LocalStorageKeys.TEXT_DRAFT}${Constants.NEW_CONVO}`);
-    localStorage.removeItem(`${LocalStorageKeys.FILES_DRAFT}${Constants.NEW_CONVO}`);
-  }
-};
 
 type ChatHelpers = Pick<
   EventHandlerParams,
-  | 'setMessages'
-  | 'getMessages'
-  | 'setConversation'
-  | 'setIsSubmitting'
-  | 'newConversation'
-  | 'resetLatestMessage'
+  'setMessages' | 'getMessages' | 'setConversation' | 'setIsSubmitting' | 'newConversation'
 >;
 
 export default function useSSE(
@@ -44,7 +30,6 @@ export default function useSSE(
   isAddedRequest = false,
   runIndex = 0,
 ) {
-  const genTitle = useGenTitleMutation();
   const setActiveRunId = useSetRecoilState(store.activeRunFamily(runIndex));
 
   const { token, isAuthenticated } = useAuthContext();
@@ -52,16 +37,11 @@ export default function useSSE(
   const setAbortScroll = useSetRecoilState(store.abortScrollFamily(runIndex));
   const setShowStopButton = useSetRecoilState(store.showStopButtonByIndex(runIndex));
 
-  const {
-    setMessages,
-    getMessages,
-    setConversation,
-    setIsSubmitting,
-    newConversation,
-    resetLatestMessage,
-  } = chatHelpers;
+  const { setMessages, getMessages, setConversation, setIsSubmitting, newConversation } =
+    chatHelpers;
 
   const {
+    clearStepMaps,
     stepHandler,
     syncHandler,
     finalHandler,
@@ -69,10 +49,10 @@ export default function useSSE(
     messageHandler,
     contentHandler,
     createdHandler,
+    titleHandler,
     attachmentHandler,
     abortConversation,
   } = useEventHandlers({
-    genTitle,
     setMessages,
     getMessages,
     setCompleted,
@@ -81,13 +61,21 @@ export default function useSSE(
     setIsSubmitting,
     newConversation,
     setShowStopButton,
-    resetLatestMessage,
   });
 
   const { data: startupConfig } = useGetStartupConfig();
   const balanceQuery = useGetUserBalance({
     enabled: !!isAuthenticated && startupConfig?.balance?.enabled,
   });
+  const {
+    contextHandler,
+    usageHandler,
+    tapStream,
+    tapContent,
+    finalizeUsage,
+    resetLive,
+    attributePending,
+  } = useUsageHandler();
 
   useEffect(() => {
     if (submission == null || Object.keys(submission).length === 0) {
@@ -101,6 +89,7 @@ export default function useSSE(
     payload = removeNullishValues(payload) as TPayload;
 
     let textIndex = null;
+    clearStepMaps();
 
     const sse = new SSE(payloadData.server, {
       payload: JSON.stringify(payload),
@@ -120,9 +109,15 @@ export default function useSSE(
       const data = JSON.parse(e.data);
 
       if (data.final != null) {
-        clearDraft(submission.conversation?.conversationId);
-        const { plugins } = data;
-        finalHandler(data, { ...submission, plugins } as EventSubmission);
+        clearAllDrafts(submission.conversation?.conversationId);
+        try {
+          finalHandler(data, submission as EventSubmission);
+          finalizeUsage(data, { ...submission, userMessage });
+        } catch (error) {
+          console.error('Error in finalHandler:', error);
+          setIsSubmitting(false);
+          setShowStopButton(false);
+        }
         (startupConfig?.balance?.enabled ?? false) && balanceQuery.refetch();
         console.log('final', data);
         return;
@@ -136,7 +131,19 @@ export default function useSSE(
         };
 
         createdHandler(data, { ...submission, userMessage } as EventSubmission);
+      } else if (data.event === 'title') {
+        titleHandler(data);
+      } else if (data.event === UsageEvents.ON_CONTEXT_USAGE) {
+        contextHandler(data.data, { ...submission, userMessage });
+      } else if (data.event === UsageEvents.ON_TOKEN_USAGE) {
+        usageHandler(data.data, { ...submission, userMessage });
       } else if (data.event != null) {
+        if (
+          data.event === StepEvents.ON_MESSAGE_DELTA ||
+          data.event === StepEvents.ON_REASONING_DELTA
+        ) {
+          tapStream(data.data, { ...submission, userMessage });
+        }
         stepHandler(data, { ...submission, userMessage } as EventSubmission);
       } else if (data.sync != null) {
         const runId = v4();
@@ -149,10 +156,10 @@ export default function useSSE(
           textIndex = index;
         }
 
+        tapContent(text, { ...submission, userMessage });
         contentHandler({ data, submission: submission as EventSubmission });
       } else {
         const text = data.text ?? data.response;
-        const { plugin, plugins } = data;
 
         const initialResponse = {
           ...(submission.initialResponse as TMessage),
@@ -161,7 +168,10 @@ export default function useSSE(
         };
 
         if (data.message != null) {
-          messageHandler(text, { ...submission, plugin, plugins, userMessage, initialResponse });
+          /** Legacy non-agent streams (handleText) send cumulative text here,
+           *  not via the content path — feed it to the live estimate too */
+          tapContent(text, { ...submission, userMessage });
+          messageHandler(text, { ...submission, userMessage, initialResponse });
         }
       }
     });
@@ -185,14 +195,27 @@ export default function useSSE(
       setCompleted((prev) => new Set(prev.add(streamKey)));
       const latestMessages = getMessages();
       const conversationId = latestMessages?.[latestMessages.length - 1]?.conversationId;
-      return await abortConversation(
-        conversationId ??
-          userMessage.conversationId ??
-          submission.conversation?.conversationId ??
-          '',
-        submission as EventSubmission,
-        latestMessages,
-      );
+      /** Attribute usage billed before the stop to the partial response (the
+       *  branch tail), then reset pending — so it neither drops nor leaks into
+       *  the next response. Falls back to a plain reset when no response exists. */
+      const tail = latestMessages?.[latestMessages.length - 1];
+      const partialResponseId =
+        tail != null && tail.isCreatedByUser === false ? tail.messageId : null;
+      attributePending(partialResponseId, { ...submission, userMessage });
+      try {
+        await abortConversation(
+          conversationId ??
+            userMessage.conversationId ??
+            submission.conversation?.conversationId ??
+            '',
+          submission as EventSubmission,
+          latestMessages,
+        );
+      } catch (error) {
+        console.error('Error during abort:', error);
+        setIsSubmitting(false);
+        setShowStopButton(false);
+      }
     });
 
     sse.addEventListener('error', async (e: MessageEvent) => {
@@ -221,6 +244,7 @@ export default function useSSE(
 
       console.log('error in server stream.');
       (startupConfig?.balance?.enabled ?? false) && balanceQuery.refetch();
+      resetLive({ ...submission, userMessage });
 
       let data: TResData | undefined = undefined;
       try {

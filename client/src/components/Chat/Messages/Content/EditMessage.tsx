@@ -1,10 +1,11 @@
 import { useRef, useEffect, useCallback } from 'react';
-import { useRecoilState, useRecoilValue } from 'recoil';
+import { useRecoilValue } from 'recoil';
 import { useForm } from 'react-hook-form';
+import { TextareaAutosize, TooltipAnchor } from '@librechat/client';
 import { useUpdateMessageMutation } from 'librechat-data-provider/react-query';
 import type { TEditProps } from '~/common';
-import { useChatContext, useAddedChatContext } from '~/Providers';
-import { TextareaAutosize, TooltipAnchor } from '~/components/ui';
+import { useMessagesOperations, useMessagesConversation } from '~/Providers';
+import { useGetAddedConvo } from '~/hooks/Chat';
 import { cn, removeFocusRings } from '~/utils';
 import { useLocalize } from '~/hooks';
 import Container from './Container';
@@ -19,13 +20,10 @@ const EditMessage = ({
   siblingIdx,
   setSiblingIdx,
 }: TEditProps) => {
-  const { addedIndex } = useAddedChatContext();
   const saveButtonRef = useRef<HTMLButtonElement | null>(null);
   const submitButtonRef = useRef<HTMLButtonElement | null>(null);
-  const { getMessages, setMessages, conversation } = useChatContext();
-  const [latestMultiMessage, setLatestMultiMessage] = useRecoilState(
-    store.latestMessageFamily(addedIndex),
-  );
+  const { conversation } = useMessagesConversation();
+  const { getMessages, setMessages } = useMessagesOperations();
 
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -35,6 +33,8 @@ const EditMessage = ({
 
   const chatDirection = useRecoilValue(store.chatDirection).toLowerCase();
   const isRTL = chatDirection === 'rtl';
+
+  const getAddedConvo = useGetAddedConvo();
 
   const { register, handleSubmit, setValue } = useForm({
     defaultValues: {
@@ -61,6 +61,14 @@ const EditMessage = ({
         },
         {
           overrideFiles: message.files,
+          /** Pills on the edited user message stay visible after save-and-submit;
+           *  carry the picks forward so the new turn primes the same skills
+           *  instead of running unprimed. */
+          overrideManualSkills: message.manualSkills,
+          /** Carry the edited user message's quoted excerpts forward so the new
+           *  turn sends the same referenced context the pills still show. */
+          overrideQuotes: message.quotes,
+          addedConvo: getAddedConvo() || undefined,
         },
       );
 
@@ -79,6 +87,14 @@ const EditMessage = ({
           editedMessageId: messageId,
           isRegenerate: true,
           isEdited: true,
+          /** Edit-assistant-response flow replays the parent user turn; keep
+           *  the same manual skills so the regenerated response is primed
+           *  identically. */
+          overrideManualSkills: parentMessage.manualSkills,
+          /** Replaying the parent user turn: keep its quoted excerpts so the
+           *  regenerated response is sent the same referenced context. */
+          overrideQuotes: parentMessage.quotes,
+          addedConvo: getAddedConvo() || undefined,
         },
       );
 
@@ -99,10 +115,6 @@ const EditMessage = ({
       text: data.text,
       messageId,
     });
-
-    if (message.messageId === latestMultiMessage?.messageId) {
-      setLatestMultiMessage({ ...latestMultiMessage, text: data.text });
-    }
 
     const isInMessages = messages.some((message) => message.messageId === messageId);
     if (!isInMessages) {
@@ -150,7 +162,7 @@ const EditMessage = ({
 
   return (
     <Container message={message}>
-      <div className="bg-token-main-surface-primary relative flex w-full flex-grow flex-col overflow-hidden rounded-2xl border border-border-medium text-text-primary [&:has(textarea:focus)]:border-border-heavy [&:has(textarea:focus)]:shadow-[0_2px_6px_rgba(0,0,0,.05)]">
+      <div className="bg-token-main-surface-primary relative mt-2 flex w-full flex-grow flex-col overflow-hidden rounded-2xl border border-border-medium text-text-primary [&:has(textarea:focus)]:border-border-heavy [&:has(textarea:focus)]:shadow-[0_2px_6px_rgba(0,0,0,.05)]">
         <TextareaAutosize
           {...registerProps}
           ref={(e) => {
@@ -167,6 +179,7 @@ const EditMessage = ({
             'max-h-[65vh] pr-3 md:max-h-[75vh] md:pr-4',
             removeFocusRings,
           )}
+          aria-label={localize('com_ui_message_input')}
           dir={isRTL ? 'rtl' : 'ltr'}
         />
       </div>

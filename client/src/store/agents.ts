@@ -16,6 +16,18 @@ export const ephemeralAgentByConvoId = atomFamily<TEphemeralAgent | null, string
   ] as const,
 });
 
+export function useUpdateEphemeralAgent() {
+  const updateEphemeralAgent = useRecoilCallback(
+    ({ set }) =>
+      (convoId: string, agent: TEphemeralAgent | null) => {
+        set(ephemeralAgentByConvoId(convoId), agent);
+      },
+    [],
+  );
+
+  return updateEphemeralAgent;
+}
+
 /**
  * Creates a callback function to apply the ephemeral agent state
  * from the "new" conversation template to a specified conversation ID.
@@ -31,7 +43,7 @@ export function useApplyNewAgentTemplate() {
         const sourceId = _sourceId || Constants.NEW_CONVO;
         logger.log('agents', `Attempting to apply template from "${sourceId}" to "${targetId}"`);
 
-        if (targetId === sourceId) {
+        if (targetId === sourceId && ephemeralAgentState == null) {
           logger.warn('agents', `Attempted to apply template to itself ("${sourceId}"). Skipping.`);
           return;
         }

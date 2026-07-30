@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: admin
+  name: admin
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: admin
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: admin
+    spec:
+      containers:
+        - name: admin
+          image: registry.librechat.ai/clickhouse/librechat-admin-panel:latest
+          imagePullPolicy: Always
+          env:
+            - name: PORT
+              value: "3000"
+            - name: API_SERVER_URL
+              value: http://api-service:80
+            - name: VITE_API_BASE_URL
+              value: https://###DOMAIN###
+            - name: SESSION_COOKIE_SECURE
+              value: "true"
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  key: ADMIN_PANEL_SESSION_SECRET
+                  name: librechat-credentials-env
+          resources:
+            requests:
+              cpu: 10m
+              memory: 256Mi
+          ports:
+            - containerPort: 3000
+          readinessProbe:
+            tcpSocket:
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: 3000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 3
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: admin-service
+  name: admin-service
+  namespace: ###_GKE_NAMESPACE###
+  annotations:
+    cloud.google.com/backend-config: '{"default": "genai-studio-managed-ingress-###ENVIRONMENT###-backend-config"}'
+    cloud.google.com/neg: '{"exposed_ports": {"3000":{"name": "neg-admin-###ENVIRONMENT###"}}}'
+spec:
+  ports:
+    - protocol: TCP
+      port: 3000
+      targetPort: 3000
+  type: NodePort
+  selector:
+    app: admin

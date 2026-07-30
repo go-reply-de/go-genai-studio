@@ -56,7 +56,7 @@ export default function useCopyToClipboard({
       if (content) {
         messageText = content.reduce((acc, curr, i) => {
           if (curr.type === ContentTypes.TEXT) {
-            const text = typeof curr.text === 'string' ? curr.text : curr.text.value;
+            const text = typeof curr.text === 'string' ? curr.text : (curr.text?.value ?? '');
             return acc + text + (i === content.length - 1 ? '' : '\n');
           }
           return acc;
@@ -129,7 +129,7 @@ function processCitations(text: string, searchResults: { [key: string]: SearchRe
 
   // Step 1: Process highlighted text first (simplify by just making it bold in markdown)
   formattedText = formattedText.replace(SPAN_REGEX, (match) => {
-    const text = match.replace(/\\ue203|\\ue204/g, '');
+    const text = match.replace(/\\ue203|\\ue204|\ue203|\ue204/g, '');
     return `**${text}**`;
   });
 

@@ -2,11 +2,10 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import typescriptEslintEslintPlugin from '@typescript-eslint/eslint-plugin';
 import { fixupConfigRules, fixupPluginRules } from '@eslint/compat';
-// import perfectionist from 'eslint-plugin-perfectionist';
 import reactHooks from 'eslint-plugin-react-hooks';
-import prettier from 'eslint-plugin-prettier';
 import tsParser from '@typescript-eslint/parser';
 import importPlugin from 'eslint-plugin-import';
+import prettier from 'eslint-plugin-prettier';
 import { FlatCompat } from '@eslint/eslintrc';
 import jsxA11Y from 'eslint-plugin-jsx-a11y';
 import i18next from 'eslint-plugin-i18next';
@@ -26,7 +25,6 @@ const compat = new FlatCompat({
 export default [
   {
     ignores: [
-      'client/vite.config.ts',
       'client/dist/**/*',
       'client/public/**/*',
       'client/coverage/**/*',
@@ -35,12 +33,16 @@ export default [
       'packages/api/dist/**/*',
       'packages/api/test_bundle/**/*',
       'api/demo/**/*',
+      'packages/client/dist/**/*',
       'packages/data-provider/types/**/*',
       'packages/data-provider/dist/**/*',
       'packages/data-provider/test_bundle/**/*',
+      'packages/data-schemas/dist/**/*',
+      'packages/data-schemas/misc/**/*',
       'data-node/**/*',
       'meili_data/**/*',
       '**/node_modules/**/*',
+      '.devcontainer/**/*',
     ],
   },
   ...fixupConfigRules(
@@ -62,7 +64,6 @@ export default [
       'jsx-a11y': fixupPluginRules(jsxA11Y),
       'import/parsers': tsParser,
       i18next,
-      // perfectionist,
       prettier: fixupPluginRules(prettier),
     },
 
@@ -119,7 +120,7 @@ export default [
       'jsx-a11y/img-redundant-alt': 'off',
       'jsx-a11y/no-noninteractive-tabindex': 'off',
       // common rules
-      'no-nested-ternary': 'warn',
+      'no-nested-ternary': 'error',
       'no-constant-binary-expression': 'warn',
       'no-unused-vars': [
         'warn',
@@ -139,47 +140,6 @@ export default [
       'no-restricted-syntax': 'off',
       'react/prop-types': 'off',
       'react/display-name': 'off',
-
-      // 'perfectionist/sort-imports': [
-      //   'error',
-      //   {
-      //     type: 'line-length',
-      //     order: 'desc',
-      //     newlinesBetween: 'never',
-      //     customGroups: {
-      //       value: {
-      //         react: ['^react$'],
-      //         // react: ['^react$', '^fs', '^zod', '^path'],
-      //         local: ['^(\\.{1,2}|~)/', '^librechat-data-provider'],
-      //       },
-      //     },
-      //     groups: [
-      //       'react',
-      //       'builtin',
-      //       'external',
-      //       ['builtin-type', 'external-type'],
-      //       ['internal-type'],
-      //       'local',
-      //       ['parent', 'sibling', 'index'],
-      //       'object',
-      //       'unknown',
-      //     ],
-      //   },
-      // ],
-
-      // 'perfectionist/sort-named-imports': [
-      //   'error',
-      //   {
-      //     type: 'line-length',
-      //     order: 'asc',
-      //     ignoreAlias: false,
-      //     ignoreCase: true,
-      //     specialCharacters: 'keep',
-      //     groupKind: 'mixed',
-      //     partitionByNewLine: false,
-      //     partitionByComment: false,
-      //   },
-      // ],
     },
   },
   {
@@ -209,11 +169,14 @@ export default [
     },
   },
   {
-    files: ['**/rollup.config.js', '**/.eslintrc.js', '**/jest.config.js'],
+    files: ['**/rollup.config.js', '**/.eslintrc.js', '**/jest.config.js', 'client/vite.config.ts'],
     languageOptions: {
       globals: {
         ...globals.node,
       },
+    },
+    rules: {
+      'import/no-cycle': 'off',
     },
   },
   {
@@ -256,7 +219,10 @@ export default [
     })),
   {
     files: ['**/*.ts', '**/*.tsx'],
-    ignores: ['packages/**/*'],
+    // e2e specs are not part of `client/tsconfig.json`'s program, so typed
+    // linting them errors with "file not found in project"; they still get
+    // the non-type-checked recommended rules from the block above.
+    ignores: ['packages/**/*', 'client/vite.config.ts', 'e2e/**/*'],
     plugins: {
       '@typescript-eslint': typescriptEslintEslintPlugin,
       jest: fixupPluginRules(jest),
@@ -279,6 +245,7 @@ export default [
         },
       ],
       //
+      'lines-between-class-members': ['error', 'always', { exceptAfterSingleLine: true }],
       '@typescript-eslint/no-unused-expressions': 'off',
       '@typescript-eslint/no-unused-vars': [
         'warn',
@@ -312,12 +279,34 @@ export default [
         project: './packages/data-provider/tsconfig.json',
       },
     },
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+        },
+      ],
+    },
   },
   {
     files: ['./api/demo/**/*.ts'],
   },
   {
     files: ['./packages/api/**/*.ts'],
+    rules: {
+      'lines-between-class-members': ['error', 'always', { exceptAfterSingleLine: true }],
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+          destructuredArrayIgnorePattern: '^_',
+        },
+      ],
+    },
   },
   {
     files: ['./config/translations/**/*.ts'],
@@ -361,7 +350,7 @@ export default [
     },
   },
   {
-    // **New Data-schemas configuration block**
+    // **Data-schemas — shared rules for all TS files**
     files: ['./packages/data-schemas/**/*.ts'],
     languageOptions: {
       parser: tsParser,
@@ -370,6 +359,38 @@ export default [
       parserOptions: {
         project: './packages/data-schemas/tsconfig.json',
       },
+    },
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+          destructuredArrayIgnorePattern: '^_',
+        },
+      ],
+    },
+  },
+  {
+    // **Data-schemas — ban raw bulkWrite/collection.* in production code**
+    // Tests and the tenantSafeBulkWrite wrapper itself are excluded.
+    files: ['./packages/data-schemas/**/*.ts'],
+    ignores: ['**/*.spec.ts', '**/*.test.ts', '**/utils/tenantBulkWrite.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "CallExpression[callee.property.name='bulkWrite']",
+          message:
+            'Use tenantSafeBulkWrite() instead of Model.bulkWrite() — Mongoose middleware does not fire for bulkWrite, so the tenant isolation plugin cannot intercept it.',
+        },
+        {
+          selector: "MemberExpression[property.name='collection'][parent.type='MemberExpression']",
+          message:
+            'Avoid Model.collection.* — raw driver calls bypass all Mongoose middleware including tenant isolation. Use Mongoose model methods or tenantSafeBulkWrite() instead.',
+        },
+      ],
     },
   },
 ];

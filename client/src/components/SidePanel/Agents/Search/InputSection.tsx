@@ -1,12 +1,9 @@
-import { useState } from 'react';
-import { ChevronDown, Eye, EyeOff } from 'lucide-react';
 import * as Menu from '@ariakit/react/menu';
-import type { UseFormRegister } from 'react-hook-form';
+import { ChevronDown } from 'lucide-react';
+import { Input, Label, SecretInput, DropdownPopup } from '@librechat/client';
 import type { SearchApiKeyFormData } from '~/hooks/Plugins/useAuthSearchTool';
+import type { UseFormRegister } from 'react-hook-form';
 import type { MenuItemProps } from '~/common';
-import { Input, Label } from '~/components/ui';
-import DropdownPopup from '~/components/ui/DropdownPopup';
-import { useLocalize } from '~/hooks';
 
 interface InputConfig {
   placeholder: string;
@@ -46,20 +43,11 @@ export default function InputSection({
   setDropdownOpen,
   dropdownKey,
 }: InputSectionProps) {
-  const localize = useLocalize();
-  const [passwordVisibility, setPasswordVisibility] = useState<Record<string, boolean>>({});
   const selectedOption = dropdownOptions.find((opt) => opt.key === selectedKey);
   const dropdownItems: MenuItemProps[] = dropdownOptions.map((option) => ({
     label: option.label,
     onClick: () => onSelectionChange(option.key),
   }));
-
-  const togglePasswordVisibility = (fieldName: string) => {
-    setPasswordVisibility((prev) => ({
-      ...prev,
-      [fieldName]: !prev[fieldName],
-    }));
-  };
 
   return (
     <div className="mb-6">
@@ -86,41 +74,27 @@ export default function InputSection({
         )}
       </div>
       {selectedOption?.inputs &&
-        Object.entries(selectedOption.inputs).map(([name, config], index) => (
+        Object.entries(selectedOption.inputs).map(([name, config]) => (
           <div key={name}>
             <div className="relative">
-              <Input
-                type={'text'} // so password autofill doesn't show
-                placeholder={config.placeholder}
-                autoComplete={config.type === 'password' ? 'one-time-code' : 'off'}
-                readOnly={config.type === 'password'}
-                onFocus={
-                  config.type === 'password' ? (e) => (e.target.readOnly = false) : undefined
-                }
-                className={`${index > 0 ? 'mb-2' : 'mb-2'} ${
-                  config.type === 'password' ? 'pr-10' : ''
-                }`}
-                {...register(name as keyof SearchApiKeyFormData)}
-              />
-              {config.type === 'password' && (
-                <button
-                  type="button"
-                  onClick={() => togglePasswordVisibility(name)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-text-secondary transition-colors hover:text-text-primary"
-                  aria-label={
-                    passwordVisibility[name]
-                      ? localize('com_ui_hide_password')
-                      : localize('com_ui_show_password')
-                  }
-                >
-                  <div className="relative h-4 w-4">
-                    {passwordVisibility[name] ? (
-                      <EyeOff className="absolute inset-0 h-4 w-4 duration-200 animate-in fade-in" />
-                    ) : (
-                      <Eye className="absolute inset-0 h-4 w-4 duration-200 animate-in fade-in" />
-                    )}
-                  </div>
-                </button>
+              {config.type === 'password' ? (
+                <SecretInput
+                  placeholder={config.placeholder}
+                  autoComplete="one-time-code"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  controlsOnHover
+                  className="mb-2"
+                  {...register(name as keyof SearchApiKeyFormData)}
+                />
+              ) : (
+                <Input
+                  type="text"
+                  placeholder={config.placeholder}
+                  autoComplete="off"
+                  className="mb-2"
+                  {...register(name as keyof SearchApiKeyFormData)}
+                />
               )}
             </div>
             {config.link && (

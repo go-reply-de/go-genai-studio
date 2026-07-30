@@ -1,21 +1,27 @@
 /** Memories */
 import { z } from 'zod';
-import { tool } from '@langchain/core/tools';
 import { Tools } from 'librechat-data-provider';
 import { logger } from '@librechat/data-schemas';
+import { tool } from '@librechat/agents/langchain/tools';
 import { Run, Providers, GraphEvents } from '@librechat/agents';
+import { HumanMessage } from '@librechat/agents/langchain/messages';
 import type {
+  OpenAIClientOptions,
   StreamEventData,
   ToolEndCallback,
   EventHandler,
   ToolEndData,
   LLMConfig,
 } from '@librechat/agents';
+import type { BaseMessage, ToolMessage } from '@librechat/agents/langchain/messages';
+import type { DynamicStructuredTool } from '@librechat/agents/langchain/tools';
+import type { ObjectId, MemoryMethods, IUser } from '@librechat/data-schemas';
 import type { TAttachment, MemoryArtifact } from 'librechat-data-provider';
-import type { ObjectId, MemoryMethods } from '@librechat/data-schemas';
-import type { BaseMessage } from '@langchain/core/messages';
 import type { Response as ServerResponse } from 'express';
-import { Tokenizer } from '~/utils';
+import type { RunLLMConfig } from '~/types';
+import { GenerationJobManager } from '~/stream/GenerationJobManager';
+import { resolveConfigHeaders, createSafeUser } from '~/utils';
+import Tokenizer from '~/utils/tokenizer';
 
 type RequiredMemoryMethods = Pick<
   MemoryMethods,
@@ -27,11 +33,21 @@ type ToolEndMetadata = Record<string, unknown> & {
   thread_id?: string;
 };
 
+type SanitizedMemoryLLMConfig = Omit<Partial<LLMConfig>, 'apiKey'> & { apiKey?: string };
+
 export interface MemoryConfig {
   validKeys?: string[];
   instructions?: string;
   llmConfig?: Partial<LLMConfig>;
   tokenLimit?: number;
+}
+
+function normalizeMemoryLLMConfig(llmConfig?: Partial<LLMConfig>): SanitizedMemoryLLMConfig {
+  const config = { ...(llmConfig ?? {}) } as Record<string, unknown>;
+  if (typeof config.apiKey !== 'string') {
+    delete config.apiKey;
+  }
+  return config as SanitizedMemoryLLMConfig;
 }
 
 export const memoryInstructions =
@@ -83,7 +99,7 @@ export const createMemoryTool = ({
   validKeys?: string[];
   tokenLimit?: number;
   totalTokens?: number;
-}) => {
+}): DynamicStructuredTool => {
   const remainingTokens = tokenLimit ? tokenLimit - totalTokens : Infinity;
   const isOverflowing = tokenLimit ? remainingTokens <= 0 : false;
 
@@ -248,6 +264,7 @@ export class BasicToolEndHandler implements EventHandler {
   constructor(callback?: ToolEndCallback) {
     this.callback = callback;
   }
+
   handle(
     event: string,
     data: StreamEventData | undefined,
@@ -280,6 +297,8 @@ export async function processMemory({
   llmConfig,
   tokenLimit,
   totalTokens = 0,
+  streamId = null,
+  user,
 }: {
   res: ServerResponse;
   setMemory: MemoryMethods['setMemory'];
@@ -294,6 +313,8 @@ export async function processMemory({
   tokenLimit?: number;
   totalTokens?: number;
   llmConfig?: Partial<LLMConfig>;
+  streamId?: string | null;
+  user?: IUser;
 }): Promise<(TAttachment | null)[] | undefined> {
   try {
     const memoryTool = createMemoryTool({
@@ -334,19 +355,111 @@ ${memory ?? 'No existing memories'}`;
 
     const finalLLMConfig = {
       ...defaultLLMConfig,
-      ...llmConfig,
+      ...normalizeMemoryLLMConfig(llmConfig),
+      maxRetries: 0,
       /**
        * Ensure streaming is always disabled for memory processing
        */
       streaming: false,
       disableStreaming: true,
+    } as LLMConfig;
+
+    // Handle GPT-5+ models
+    if ('model' in finalLLMConfig && /\bgpt-[5-9](?:\.\d+)?\b/i.test(finalLLMConfig.model ?? '')) {
+      // Remove temperature for GPT-5+ models
+      delete finalLLMConfig.temperature;
+
+      // Move maxTokens to modelKwargs for GPT-5+ models
+      if ('maxTokens' in finalLLMConfig && finalLLMConfig.maxTokens != null) {
+        const modelKwargs = (finalLLMConfig as OpenAIClientOptions).modelKwargs ?? {};
+        const paramName =
+          (finalLLMConfig as OpenAIClientOptions).useResponsesApi === true
+            ? 'max_output_tokens'
+            : 'max_completion_tokens';
+        modelKwargs[paramName] = finalLLMConfig.maxTokens;
+        delete finalLLMConfig.maxTokens;
+        (finalLLMConfig as OpenAIClientOptions).modelKwargs = modelKwargs;
+      }
+    }
+
+    const bedrockConfig = finalLLMConfig as {
+      additionalModelRequestFields?: { thinking?: unknown };
+      temperature?: number;
     };
+    if (
+      llmConfig?.provider === Providers.BEDROCK &&
+      bedrockConfig.additionalModelRequestFields?.thinking != null &&
+      bedrockConfig.temperature != null
+    ) {
+      (finalLLMConfig as unknown as Record<string, unknown>).temperature = 1;
+    }
+
+    const anthropicConfig = finalLLMConfig as {
+      thinking?: { type?: string };
+      temperature?: number;
+    };
+    if (
+      llmConfig?.provider === Providers.ANTHROPIC &&
+      anthropicConfig.thinking?.type === 'enabled' &&
+      anthropicConfig.temperature != null
+    ) {
+      delete (finalLLMConfig as Record<string, unknown>).temperature;
+    }
+
+    /**
+     * Resolve request-based headers across provider-specific carriers (OpenAI
+     * `configuration.defaultHeaders`, native Anthropic `clientOptions.defaultHeaders`)
+     * so gateway-fronted built-in providers receive resolved metadata/auth headers
+     * on memory extraction too. Native Google headers are resolved at init.
+     */
+    resolveConfigHeaders({
+      llmConfig: finalLLMConfig as unknown as RunLLMConfig,
+      user: user ? createSafeUser(user) : undefined,
+      body: { conversationId, messageId },
+    });
 
     const artifactPromises: Promise<TAttachment | null>[] = [];
-    const memoryCallback = createMemoryCallback({ res, artifactPromises });
+    const memoryCallback = createMemoryCallback({ res, artifactPromises, streamId });
     const customHandlers = {
       [GraphEvents.TOOL_END]: new BasicToolEndHandler(memoryCallback),
     };
+
+    /**
+     * For Bedrock provider, include instructions in the user message instead of as a system prompt.
+     * Bedrock's Converse API requires conversations to start with a user message, not a system message.
+     * Other providers can use the standard system prompt approach.
+     */
+    const isBedrock = llmConfig?.provider === Providers.BEDROCK;
+
+    let graphInstructions: string | undefined = instructions;
+    let graphAdditionalInstructions: string | undefined = memoryStatus;
+    let processedMessages = messages;
+
+    if (isBedrock) {
+      const combinedInstructions = [instructions, memoryStatus].filter(Boolean).join('\n\n');
+
+      if (messages.length > 0) {
+        const firstMessage = messages[0];
+        const originalContent =
+          typeof firstMessage.content === 'string' ? firstMessage.content : '';
+
+        if (typeof firstMessage.content !== 'string') {
+          logger.warn(
+            'Bedrock memory processing: First message has non-string content, using empty string',
+          );
+        }
+
+        const bedrockUserMessage = new HumanMessage(
+          `${combinedInstructions}\n\n${originalContent}`,
+        );
+        processedMessages = [bedrockUserMessage, ...messages.slice(1)];
+      } else {
+        processedMessages = [new HumanMessage(combinedInstructions)];
+      }
+
+      graphInstructions = undefined;
+      graphAdditionalInstructions = undefined;
+    }
 
     const run = await Run.create({
       runId: messageId,
@@ -354,8 +467,8 @@ ${memory ?? 'No existing memories'}`;
         type: 'standard',
         llmConfig: finalLLMConfig,
         tools: [memoryTool, deleteMemoryTool],
-        instructions,
-        additional_instructions: memoryStatus,
+        instructions: graphInstructions,
+        additional_instructions: graphAdditionalInstructions,
         toolEnd: true,
       },
       customHandlers,
@@ -363,9 +476,11 @@ ${memory ?? 'No existing memories'}`;
     });
 
     const config = {
+      runName: 'MemoryRun',
       configurable: {
+        user_id: userId,
+        thread_id: conversationId,
         provider: llmConfig?.provider,
-        thread_id: `memory-run-${conversationId}`,
       },
       streamMode: 'values',
       recursionLimit: 3,
@@ -373,17 +488,25 @@ ${memory ?? 'No existing memories'}`;
     } as const;
 
     const inputs = {
-      messages,
+      messages: processedMessages,
     };
     const content = await run.processStream(inputs, config);
     if (content) {
-      logger.debug('Memory Agent processed memory successfully', content);
+      logger.debug('[MemoryAgent] Processed successfully', {
+        userId,
+        conversationId,
+        messageId,
+        provider: llmConfig?.provider,
+      });
     } else {
-      logger.warn('Memory Agent processed memory but returned no content');
+      logger.debug('[MemoryAgent] Returned no content', { userId, conversationId, messageId });
     }
     return await Promise.all(artifactPromises);
   } catch (error) {
-    logger.error('Memory Agent failed to process memory', error);
+    logger.error(
+      `[MemoryAgent] Failed to process memory | userId: ${userId} | conversationId: ${conversationId} | messageId: ${messageId}`,
+      { error },
+    );
   }
 }
 
@@ -394,6 +517,8 @@ export async function createMemoryProcessor({
   memoryMethods,
   conversationId,
   config = {},
+  streamId = null,
+  user,
 }: {
   res: ServerResponse;
   messageId: string;
@@ -401,6 +526,8 @@ export async function createMemoryProcessor({
   userId: string | ObjectId;
   memoryMethods: RequiredMemoryMethods;
   config?: MemoryConfig;
+  streamId?: string | null;
+  user?: IUser;
 }): Promise<[string, (messages: BaseMessage[]) => Promise<(TAttachment | null)[] | undefined>]> {
   const { validKeys, instructions, llmConfig, tokenLimit } = config;
   const finalInstructions = instructions || getDefaultInstructions(validKeys, tokenLimit);
@@ -421,12 +548,14 @@ export async function createMemoryProcessor({
           llmConfig,
           messageId,
           tokenLimit,
+          streamId,
           conversationId,
           memory: withKeys,
           totalTokens: totalTokens || 0,
           instructions: finalInstructions,
           setMemory: memoryMethods.setMemory,
           deleteMemory: memoryMethods.deleteMemory,
+          user,
         });
       } catch (error) {
         logger.error('Memory Agent failed to process memory', error);
@@ -439,12 +568,14 @@ async function handleMemoryArtifact({
   res,
   data,
   metadata,
+  streamId = null,
 }: {
   res: ServerResponse;
   data: ToolEndData;
   metadata?: ToolEndMetadata;
+  streamId?: string | null;
 }) {
-  const output = data?.output;
+  const output = data?.output as ToolMessage | undefined;
   if (!output) {
     return null;
   }
@@ -468,7 +599,11 @@ async function handleMemoryArtifact({
   if (!res.headersSent) {
     return attachment;
   }
-  res.write(`event: attachment\ndata: ${JSON.stringify(attachment)}\n\n`);
+  if (streamId) {
+    GenerationJobManager.emitChunk(streamId, { event: 'attachment', data: attachment });
+  } else {
+    res.write(`event: attachment\ndata: ${JSON.stringify(attachment)}\n\n`);
+  }
   return attachment;
 }
 
@@ -477,23 +612,26 @@ async function handleMemoryArtifact({
  * @param params - The parameters object
  * @param params.res - The server response object
  * @param params.artifactPromises - Array to collect artifact promises
+ * @param params.streamId - The stream ID for resumable mode, or null for standard mode
  * @returns The memory callback function
  */
 export function createMemoryCallback({
   res,
   artifactPromises,
+  streamId = null,
 }: {
   res: ServerResponse;
   artifactPromises: Promise<Partial<TAttachment> | null>[];
+  streamId?: string | null;
 }): ToolEndCallback {
   return async (data: ToolEndData, metadata?: Record<string, unknown>) => {
-    const output = data?.output;
+    const output = data?.output as ToolMessage | undefined;
     const memoryArtifact = output?.artifact?.[Tools.memory] as MemoryArtifact;
     if (memoryArtifact == null) {
       return;
     }
     artifactPromises.push(
-      handleMemoryArtifact({ res, data, metadata }).catch((error) => {
+      handleMemoryArtifact({ res, data, metadata, streamId }).catch((error) => {
         logger.error('Error processing memory artifact content:', error);
         return null;
       }),

@@ -171,6 +171,21 @@ steps:
       --from-k8s-manifest=./k8s/api.yaml
 
 - name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy Admin Panel'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      if [ "${_ADMIN_PANEL_ENABLED}" = "true" ]; then
+        kubectl apply -f ./k8s/admin.yaml --namespace=${_GKE_NAMESPACE}
+      else
+        echo "Admin panel disabled for this environment, skipping."
+      fi
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+- name: "gcr.io/cloud-builders/kubectl"
   id: 'Deploy ingress'
   args: ["apply", "-f", "./k8s/ingress.yaml", "--namespace=${_GKE_NAMESPACE}"]
   env:

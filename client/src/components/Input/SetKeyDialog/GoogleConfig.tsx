@@ -1,11 +1,11 @@
 import React from 'react';
 import { object, string } from 'zod';
+import { Label } from '@librechat/client';
 import { AuthKeys } from 'librechat-data-provider';
 import type { TConfigProps } from '~/common';
 import FileUpload from '~/components/Chat/Input/Files/FileUpload';
 import { useLocalize, useMultipleKeys } from '~/hooks';
 import InputWithLabel from './InputWithLabel';
-import { Label } from '~/components/ui';
 
 const CredentialsSchema = object({
   client_email: string().email().min(3),
@@ -53,6 +53,7 @@ const GoogleConfig = ({ userKey, setUserKey }: Pick<TConfigProps, 'userKey' | 's
         }
         label={localize('com_endpoint_config_google_api_key')}
         subLabel={localize('com_endpoint_config_google_gemini_api')}
+        secret
       />
     </>
   );

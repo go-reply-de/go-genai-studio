@@ -1,7 +1,21 @@
 const { z } = require('zod');
-const { Tool } = require('@langchain/core/tools');
+const { Tool } = require('@librechat/agents/langchain/tools');
 const { VertexAI } = require('@google-cloud/vertexai');
-const { logger } = require('~/config');
+const { logger } = require('@librechat/data-schemas');
+const path = require('path');
+const { formatGroundingResponse } = require('../util/vertexGrounding');
+
+/**
+ * Vertex AI multi-region location values (e.g. `eu`, `us`) are not valid
+ * regional hostnames for the Gemini generateContent API. They must be
+ * mapped to their dedicated multi-region endpoint, mirroring the mapping
+ * used for the main chat Vertex AI client.
+ */
+const VERTEX_MULTI_REGION_ENDPOINTS = {
+    eu: 'aiplatform.eu.rep.googleapis.com',
+    us: 'aiplatform.us.rep.googleapis.com',
+    global: 'aiplatform.googleapis.com',
+};
 
 class GoogleVertexAI extends Tool {
 
@@ -10,20 +24,26 @@ class GoogleVertexAI extends Tool {
         return field || process.env[envVar] || defaultValue;
     }
 
-    constructor(fields = {}, geminiModel) {
+    constructor(fields = {}) {
         super();
-        this.name = 'vertex_ai';
+        this.name = 'vertex_ai_search';
         this.description =
-            'Use the \'vertex-ai\' tool to retrieve search results from a Vertex AI Search data store relevant to your input.';
+            'Use the \'vertex_ai_search\' tool to retrieve search results from a Vertex AI Search data store relevant to your input.';
 
-        /* Used to initialize the Tool without necessary variables. */
         this.override = fields.override ?? false;
+        this.geminiModel = fields.geminiModel || 'gemini-2.5-flash';
+        
+        /** @type {boolean} */
+        if (!this.override && !fields.isAgent) {
+            throw new Error('This tool is only available for agents.');
+        }
 
         let serviceKey = {};
         try {
-            serviceKey = require('~/data/auth.json');
+            const keyPath = process.env.GOOGLE_SERVICE_KEY_FILE || path.join(process.cwd(), 'api', 'data', 'auth.json');
+            serviceKey = require(keyPath);
         } catch (e) {
-            logger.error("Please upload a service account to this path: ~/data/auth.json")
+            logger.error("No Service account found.");
         }
 
         this.serviceKey =
@@ -61,7 +81,7 @@ class GoogleVertexAI extends Tool {
                 throw new Error('Missing required field: VERTEX_AI_DATASTORE_ID.');
             }
         }
-        
+
         if (!this.client_email && !this.private_key) {
             console.warn(
                 'Warning: No Service Account credentials provided.  Ensure the Compute Engine default service account has the Vertex AI User role if running on a Compute Engine instance.',
@@ -85,16 +105,18 @@ class GoogleVertexAI extends Tool {
                 logger.debug('Using Service Account for authentication.');
             }
             // Initialize the Vertex AI client, passing in the authentication options
+            const multiRegionEndpoint = VERTEX_MULTI_REGION_ENDPOINTS[this.location];
             this.vertexAI = new VertexAI({
                 project: this.projectId,
                 location: this.location,
                 googleAuthOptions: authOptions,
+                ...(multiRegionEndpoint ? { apiEndpoint: multiRegionEndpoint } : {}),
             });
 
             const retrievalTool = this.createGroundingTool()
 
             this.generativeModel = this.vertexAI.preview.getGenerativeModel({
-                model: geminiModel,
+                model: this.geminiModel,
                 tools: [retrievalTool]
             });
 
@@ -125,7 +147,7 @@ class GoogleVertexAI extends Tool {
                 contents: [{ role: 'user', parts: [{ text: query }] }]
             })
             const aggregatedResponse = await streamingResult.response;
-            return JSON.stringify(aggregatedResponse);
+            return formatGroundingResponse(aggregatedResponse);
         } catch (error) {
             logger.error('Vertex AI Search request failed', error);
             return 'There was an error with Vertex AI Search.';
