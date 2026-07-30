@@ -12,6 +12,7 @@ describe('getGoogleConfig', () => {
     process.env = { ...originalEnv };
     delete process.env.GOOGLE_EXCLUDE_SAFETY_SETTINGS;
     delete process.env.GOOGLE_LOC;
+    delete process.env.GOOGLE_LOC_OVERRIDES;
   });
 
   afterAll(() => {
@@ -395,6 +396,54 @@ describe('getGoogleConfig', () => {
       const result = getGoogleConfig(credentials, {
         modelOptions: {
           model: 'gemini-1.5-pro',
+        },
+      });
+
+      expect(result.llmConfig).toHaveProperty('location', 'europe-west1');
+    });
+
+    it('should override GOOGLE_LOC for a specific model via GOOGLE_LOC_OVERRIDES', () => {
+      process.env.GOOGLE_LOC = 'eu';
+      process.env.GOOGLE_LOC_OVERRIDES = JSON.stringify({ 'gemini-2.5-pro': 'europe-west1' });
+
+      const credentials = {
+        [AuthKeys.GOOGLE_SERVICE_KEY]: {
+          project_id: 'test-project',
+        },
+      };
+
+      const overriddenModel = getGoogleConfig(credentials, {
+        modelOptions: {
+          model: 'gemini-2.5-pro',
+        },
+      });
+      expect(overriddenModel.llmConfig).toHaveProperty('location', 'europe-west1');
+      expect(overriddenModel.llmConfig).not.toHaveProperty('endpoint');
+
+      const unaffectedModel = getGoogleConfig(credentials, {
+        modelOptions: {
+          model: 'gemini-3.5-flash',
+        },
+      });
+      expect(unaffectedModel.llmConfig).toMatchObject({
+        location: 'eu',
+        endpoint: 'aiplatform.eu.rep.googleapis.com',
+      });
+    });
+
+    it('should fall back to GOOGLE_LOC when GOOGLE_LOC_OVERRIDES is invalid JSON', () => {
+      process.env.GOOGLE_LOC = 'europe-west1';
+      process.env.GOOGLE_LOC_OVERRIDES = 'not-json';
+
+      const credentials = {
+        [AuthKeys.GOOGLE_SERVICE_KEY]: {
+          project_id: 'test-project',
+        },
+      };
+
+      const result = getGoogleConfig(credentials, {
+        modelOptions: {
+          model: 'gemini-2.5-pro',
         },
       });
 

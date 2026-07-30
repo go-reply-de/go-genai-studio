@@ -164,6 +164,36 @@ function getVertexMultiRegionEndpoint(location: string): string | undefined {
   return vertexMultiRegionEndpoints.get(location);
 }
 
+/**
+ * Some Vertex AI models aren't available on the multi-region endpoint used for the rest of
+ * the deployment (e.g. an older `-pro` model that only exists in a specific region like
+ * `europe-west1`, while the default fleet runs on the `eu` multi-region). `GOOGLE_LOC_OVERRIDES`
+ * lets ops pin individual models to a different location than `GOOGLE_LOC` via a JSON object,
+ * e.g. `{"gemini-2.5-pro":"europe-west1"}`, without changing the location for every other model.
+ */
+function resolveVertexLocation(model: string): string {
+  const defaultLocation = process.env.GOOGLE_LOC || 'us-central1';
+  const overridesRaw = process.env.GOOGLE_LOC_OVERRIDES;
+  if (!model || !overridesRaw) {
+    return defaultLocation;
+  }
+
+  try {
+    const overrides = JSON.parse(overridesRaw) as Record<string, string>;
+    const key = Object.keys(overrides).find(
+      (modelKey) => model === modelKey || model.startsWith(modelKey),
+    );
+    return (key && overrides[key]) || defaultLocation;
+  } catch (err: unknown) {
+    logger.warn(
+      `[getGoogleConfig] Failed to parse GOOGLE_LOC_OVERRIDES, falling back to GOOGLE_LOC: ${
+        err instanceof Error ? err.message : 'Unknown error'
+      }`,
+    );
+    return defaultLocation;
+  }
+}
+
 function sanitizeModelOptions(modelOptions: Partial<t.GoogleParameters> | undefined) {
   const sanitizedOptions: GoogleModelOptions = { ...(modelOptions ?? {}) };
   blockedModelOptionParams.forEach((param) => {
@@ -432,7 +462,7 @@ export function getGoogleConfig(
       },
       true,
     );
-    const location = process.env.GOOGLE_LOC || 'us-central1';
+    const location = resolveVertexLocation((llmConfig.model as string) ?? '');
     (llmConfig as VertexAIClientOptions).location = location;
   } else if (apiKey && provider === Providers.GOOGLE) {
     llmConfig.apiKey = apiKey;

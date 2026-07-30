@@ -257,6 +257,11 @@ spec:
                 configMapKeyRef:
                   key: GOOGLE_LOC
                   name: env
+            - name: GOOGLE_LOC_OVERRIDES
+              valueFrom:
+                configMapKeyRef:
+                  key: GOOGLE_LOC_OVERRIDES
+                  name: env
             - name: HELP_AND_FAQ_URL
               valueFrom:
                 configMapKeyRef:
