@@ -157,18 +157,12 @@ steps:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
-- name: 'google/cloud-sdk:latest'
+- name: "gcr.io/cloud-builders/kubectl"
   id: 'Deploy API'
-  entrypoint: 'bash'
-  args:
-  - -c
-  - |
-    set -e
-
-    gcloud deploy releases create "genai-${SHORT_SHA}-$(echo $BUILD_ID | cut -c1-7)" \
-      --delivery-pipeline=${_DELIVERY_PIPELINE_NAME} \
-      --region=$LOCATION \
-      --from-k8s-manifest=./k8s/api.yaml
+  args: ["apply", "-f", "./k8s/api.yaml", "--namespace=${_GKE_NAMESPACE}"]
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
 - name: "gcr.io/cloud-builders/kubectl"
   id: 'Deploy Admin Panel'
