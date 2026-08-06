@@ -1879,6 +1879,7 @@
   "com_user_message": "Du",
   "com_warning_resubmit_unsupported": "Das erneute Senden der KI-Nachricht wird für diesen Endpunkt nicht unterstützt.",
   "com_description": "\nEine umfassende KI-Chat-Plattform, die Ihnen die volle Kontrolle über Ihre Chat-Erlebnisse bietet. \nIndem sie mehrere KI-Anbieter und fortschrittliche Funktionen in einer einzigen, benutzerfreundlichen Oberfläche vereint, liefert sie die Flexibilität, KI-Assistenten für jede Art von Service oder Workflow mühelos zu erstellen, anzupassen und bereitzustellen.",
+  "com_header_description": "Ihr persönlicher KI-Chatbot",
   "com_ui_tos_instructions": "Lesen Sie bitte die folgenden Nutzungsbedingungen sorgfältig durch.",
   "com_ui_zoom_in": "Heranzoomen",
   "com_ui_zoom_level": "Zoomstufe",
