@@ -47,13 +47,9 @@ spec:
   redirectToHttps:
     enabled: true
     responseCodeName: "MOVED_PERMANENTLY_DEFAULT"
----
-apiVersion: cloud.google.com/v1
-kind: BackendConfig
-metadata:
-  name: genai-studio-managed-ingress-###ENVIRONMENT###-backend-config
-  namespace: ###_GKE_NAMESPACE###
-spec:
-  timeoutSec: 300
-  securityPolicy:
-    name: ###_SECURITY_POLICY###
+# The BackendConfig referenced by api-service and admin-service
+# (genai-studio-managed-ingress-###ENVIRONMENT###-backend-config) is deliberately
+# NOT defined here. Terraform owns it (terraform/modules/iap/iap.tf in the
+# go-genai-studio-setup repo) because it carries the IAP configuration. Defining
+# it here too would re-apply it without the iap block on every build and silently
+# turn IAP off until the next terraform apply.
