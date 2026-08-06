@@ -1,5 +1,5 @@
 import { useGetStartupConfig } from '~/data-provider';
-import React from 'react';
+import React, { useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { useLocalize } from '~/hooks';
@@ -8,6 +8,15 @@ function TermsOfService({ className }: { className?: string }) {
   const { data: config } = useGetStartupConfig();
 
   const localize = useLocalize();
+
+  // This route sits outside the main app layout, so it never goes through
+  // useAppStartup's document.title effect - set it here too, or the tab
+  // falls back to index.html's static default ("Go GenAI Studio").
+  useEffect(() => {
+    if (config?.appTitle) {
+      document.title = config.appTitle;
+    }
+  }, [config?.appTitle]);
 
   const termsOfService = config?.interface?.termsOfService;
 
