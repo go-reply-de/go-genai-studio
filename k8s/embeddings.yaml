@@ -1,0 +1,144 @@
+# ---------------------------------------------------------------------------
+# Embedding model served in-cluster by HuggingFace Text Embeddings Inference.
+#
+# Step one of moving the RAG embeddings off Vertex AI: get a model running and
+# verifiable. Nothing consumes it yet -- the RAG API keeps calling Vertex AI
+# until it is repointed, which is a separate change with a mandatory re-index.
+#
+# The model is a substitution rather than a literal because the choice is still
+# open and, until something consumes the vectors, changing it is free. Once the
+# RAG API points here, every change costs a re-index.
+#
+# Deliberately self-contained: no entry in the shared `env` ConfigMap, no change
+# to rag.yaml. Everything this pod needs is in this file, so enabling or removing
+# it cannot affect any other environment.
+#
+# TEI exposes the OpenAI /v1/embeddings route as well as its native /embed, so
+# whatever consumes it later has both options.
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: embeddings
+  name: embeddings
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: embeddings
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: embeddings
+    spec:
+      containers:
+        - name: embeddings
+          image: ###_EMBEDDINGS_IMAGE###
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MODEL_ID
+              value: ###_EMBEDDINGS_MODEL###
+            # Pooling is normally read from the model's 1_Pooling/config.json,
+            # which TEI does not always find. Set explicitly so a model swap
+            # cannot silently change how vectors are formed: cls for BGE, mean
+            # for E5, last-token for decoder-based embedders.
+            - name: POOLING
+              value: ###_EMBEDDINGS_POOLING###
+            # CPU inference: float32 is the only sensible dtype here, and Gemma3
+            # based encoders overflow in float16 anyway.
+            - name: DTYPE
+              value: float32
+            # TEI's own default is 32, which is below what a batching client
+            # sends. Raised so the consumer is not the thing that has to adapt.
+            - name: MAX_CLIENT_BATCH_SIZE
+              value: "256"
+            # Truncate rather than reject inputs beyond the model's 2048 token
+            # window.
+            - name: AUTO_TRUNCATE
+              value: "true"
+            # The single most memory-sensitive setting here. TEI warms up with a
+            # batch this large, and attention is quadratic in sequence length:
+            # at 8192 tokens one attention matrix of an XLM-R-large model is
+            # already ~4 GB, which OOM-kills the pod before it serves anything.
+            # 2048 covers roughly five 1500-character chunks per batch; TEI just
+            # runs more batches. Raise it only together with memory.
+            - name: MAX_BATCH_TOKENS
+              value: "2048"
+            - name: HOSTNAME
+              value: 0.0.0.0
+            - name: PORT
+              value: "8080"
+            # 1 once the weights are baked into the image and MODEL_ID points at
+            # a local path: a missing file then fails loudly instead of silently
+            # reaching out to the hub. 0 while the model is pulled at runtime.
+            # The same flag gates the NetworkPolicy in cloudbuild.yaml.
+            - name: HF_HUB_OFFLINE
+              value: "###_EMBEDDINGS_OFFLINE###"
+            - name: HF_HOME
+              value: /tmp/hf
+            - name: HUGGINGFACE_HUB_CACHE
+              value: /tmp/hf/hub
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          # Memory is sized for the ONNX warm-up, not for steady state: the
+          # warm-up allocation is the peak this pod ever sees.
+          resources:
+            requests:
+              cpu: ###_EMBEDDINGS_CPU###
+              memory: ###_EMBEDDINGS_MEMORY###
+              # Holds the downloaded weights plus HF cache overhead. ONNX
+              # weights are ~2.3 GB and the cache keeps blob and snapshot, so
+              # this needs real headroom. Autopilot caps a Pod at 10 GiB.
+              ephemeral-storage: 8Gi
+            limits:
+              cpu: ###_EMBEDDINGS_CPU###
+              memory: ###_EMBEDDINGS_MEMORY###
+              ephemeral-storage: 8Gi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: embeddings-###ENVIRONMENT###-service
+  name: embeddings-###ENVIRONMENT###-service
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  ports:
+    - name: "8080"
+      port: 8080
+      targetPort: 8080
+  selector:
+    app: embeddings

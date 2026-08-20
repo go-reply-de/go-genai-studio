@@ -1,0 +1,57 @@
+# ---------------------------------------------------------------------------
+# Egress lockdown for the embedding model.
+#
+# Only meaningful once the weights are baked into the image: the Pod then has no
+# legitimate reason to talk to anything except DNS. Applied by Cloud Build only
+# when _EMBEDDINGS_OFFLINE=1, because a Pod that still pulls from huggingface.co
+# at startup would stop being able to restart.
+#
+# Ingress is deliberately left unrestricted, so the RAG API can be pointed here
+# later without touching this policy.
+#
+# Enforced rather than decorative: this cluster runs Dataplane V2
+# (ADVANCED_DATAPATH), which implements NetworkPolicy.
+# ---------------------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: embeddings-egress-dns-only
+  namespace: ###_GKE_NAMESPACE###
+  labels:
+    app: embeddings
+spec:
+  podSelector:
+    matchLabels:
+      app: embeddings
+  policyTypes:
+    - Egress
+  egress:
+    # Service discovery, and nothing else. No 443 anywhere: the weights come from
+    # the image, so neither huggingface.co nor Cloud Storage is needed. That is
+    # the whole point -- a rule permitting 443 would permit Vertex AI too.
+    #
+    # The usual "allow port 53 to namespace kube-system" rule does NOT work on
+    # this cluster and silently breaks all name resolution. NodeLocal DNSCache is
+    # enabled, so /etc/resolv.conf points at 169.254.20.10 -- a link-local
+    # address on the node, not a Pod -- and a namespaceSelector can never match a
+    # destination that is not a Pod. The cluster also runs Cloud DNS rather than
+    # kube-dns Pods. Hence the ipBlock.
+    - to:
+        - ipBlock:
+            cidr: 169.254.20.10/32
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Kept for environments without NodeLocal DNSCache, where resolution does go
+    # to a Pod in kube-system. Harmless where the ipBlock above is what applies.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
