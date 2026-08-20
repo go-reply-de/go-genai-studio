@@ -84,6 +84,34 @@ steps:
       fi
       echo "Version string set to: $${VERSION_STRING}"
 
+      # The RAG embedding settings are derived as a set, never configured
+      # individually: openai-with-a-local-endpoint is only correct together with
+      # RAG_CHECK_EMBEDDING_CTX_LENGTH=False, and the model id has to be the same
+      # string TEI was started with. Deriving them here means the broken
+      # combinations cannot be expressed in Terraform at all.
+      if [ "${_RAG_SELF_HOSTED_EMBEDDINGS}" = "true" ]; then
+        if [ "${_EMBEDDINGS_ENABLED}" != "true" ]; then
+          echo "ERROR: _RAG_SELF_HOSTED_EMBEDDINGS=true needs _EMBEDDINGS_ENABLED=true," >&2
+          echo "       otherwise the RAG API is pointed at a Service that is never deployed." >&2
+          exit 1
+        fi
+        RAG_EMB_PROVIDER="openai"
+        RAG_EMB_MODEL="${_EMBEDDINGS_MODEL}"
+        RAG_EMB_BASEURL="http://embeddings-${_ENVIRONMENT}-service:8080/v1"
+        RAG_EMB_API_KEY="unused-the-in-cluster-model-has-no-auth"
+        RAG_EMB_CHECK_CTX="False"
+        RAG_EMB_CHUNK_SIZE="32"
+        echo "RAG embeddings: self-hosted at $${RAG_EMB_BASEURL} (model $${RAG_EMB_MODEL})"
+      else
+        RAG_EMB_PROVIDER="vertexai"
+        RAG_EMB_MODEL="text-embedding-004"
+        RAG_EMB_BASEURL=""
+        RAG_EMB_API_KEY=""
+        RAG_EMB_CHECK_CTX="True"
+        RAG_EMB_CHUNK_SIZE="200"
+        echo "RAG embeddings: Vertex AI ($${RAG_EMB_MODEL})"
+      fi
+
       find ./k8s -name "*.yaml" -print0 | while IFS= read -r -d $'\0' file; do
         sed -i -e "s/###_REGISTRY_NAME###/$_REGISTRY_NAME/g" "$file"
         sed -i -e "s/###ENVIRONMENT###/${_ENVIRONMENT}/g" "$file"
@@ -112,6 +140,13 @@ steps:
         sed -i -e "s|###_EMBEDDINGS_OFFLINE###|${_EMBEDDINGS_OFFLINE}|g" "$file"
         sed -i -e "s|###_EMBEDDINGS_CPU###|${_EMBEDDINGS_CPU}|g" "$file"
         sed -i -e "s|###_EMBEDDINGS_MEMORY###|${_EMBEDDINGS_MEMORY}|g" "$file"
+        sed -i -e "s|###_RAG_EMBEDDINGS_PROVIDER###|$${RAG_EMB_PROVIDER}|g" "$file"
+        sed -i -e "s|###_RAG_EMBEDDINGS_MODEL###|$${RAG_EMB_MODEL}|g" "$file"
+        sed -i -e "s|###_RAG_EMBEDDINGS_BASEURL###|$${RAG_EMB_BASEURL}|g" "$file"
+        sed -i -e "s|###_RAG_EMBEDDINGS_API_KEY###|$${RAG_EMB_API_KEY}|g" "$file"
+        sed -i -e "s|###_RAG_EMBEDDINGS_CHECK_CTX###|$${RAG_EMB_CHECK_CTX}|g" "$file"
+        sed -i -e "s|###_RAG_EMBEDDINGS_CHUNK_SIZE###|$${RAG_EMB_CHUNK_SIZE}|g" "$file"
+        sed -i -e "s|###_RAG_COLLECTION_NAME###|${_RAG_COLLECTION_NAME}|g" "$file"
       done
 
 - name: 'gcr.io/cloud-builders/gcloud'
@@ -236,6 +271,17 @@ substitutions:
   # was MAX_BATCH_TOKENS at 8192, not the memory ceiling -- attention is
   # quadratic in sequence length. Raise both together or neither.
   _EMBEDDINGS_MEMORY: 8Gi
+
+  # Repoint the RAG API at the in-cluster model. Separate from
+  # _EMBEDDINGS_ENABLED on purpose: serving the model is reversible, consuming
+  # it is not, because the vector dimension changes and everything already
+  # indexed has to be re-embedded.
+  _RAG_SELF_HOSTED_EMBEDDINGS: "false"
+  # Must change whenever the embedding model changes. Vectors of different
+  # dimensions cannot coexist in one collection -- see k8s/env.yaml. Keeping
+  # the old name is what would corrupt an existing index, so this is explicit
+  # rather than derived.
+  _RAG_COLLECTION_NAME: testcollection
 
 options:
   logging: CLOUD_LOGGING_ONLY

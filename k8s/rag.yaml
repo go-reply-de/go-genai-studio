@@ -47,6 +47,34 @@ spec:
                 configMapKeyRef:
                   key: EMBEDDINGS_PROVIDER
                   name: env
+            # Only the openai provider reads the four below; with vertexai they
+            # are present and unused. See k8s/env.yaml for why they travel as a
+            # set rather than being tunable individually.
+            - name: RAG_CHECK_EMBEDDING_CTX_LENGTH
+              valueFrom:
+                configMapKeyRef:
+                  key: RAG_CHECK_EMBEDDING_CTX_LENGTH
+                  name: env
+            - name: RAG_OPENAI_BASEURL
+              valueFrom:
+                configMapKeyRef:
+                  key: RAG_OPENAI_BASEURL
+                  name: env
+            - name: RAG_OPENAI_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  key: RAG_OPENAI_API_KEY
+                  name: env
+            - name: EMBEDDINGS_CHUNK_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  key: EMBEDDINGS_CHUNK_SIZE
+                  name: env
+            - name: COLLECTION_NAME
+              valueFrom:
+                configMapKeyRef:
+                  key: COLLECTION_NAME
+                  name: env
             - name: JWT_REFRESH_SECRET
               valueFrom:
                 secretKeyRef:
