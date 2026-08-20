@@ -93,19 +93,30 @@ spec:
               port: 8080
             periodSeconds: 10
             failureThreshold: 60
+          # TEI serves /health from the same queue as inference, so its
+          # response time tracks load rather than health. Measured: 7.4-7.8 s
+          # while embedding a 32-chunk batch, and the request logs show queue
+          # times up to 18 s. Probes tuned tightly enough to react to that are
+          # measuring throughput, not liveness -- and with one replica, pulling
+          # the only Pod out of the Service mid-ingestion breaks the caller
+          # instead of protecting it.
           readinessProbe:
             httpGet:
               path: /health
               port: 8080
-            periodSeconds: 10
-            timeoutSeconds: 5
+            periodSeconds: 30
+            timeoutSeconds: 20
+            failureThreshold: 3
+          # Deliberately slow to fire: ~5 minutes unresponsive before a
+          # restart. A restart costs 102 s and loses whatever was in flight, so
+          # a false positive is far more expensive than a late true one.
           livenessProbe:
             httpGet:
               path: /health
               port: 8080
-            periodSeconds: 30
-            timeoutSeconds: 10
-            failureThreshold: 3
+            periodSeconds: 60
+            timeoutSeconds: 30
+            failureThreshold: 5
           # Memory is sized for the ONNX warm-up, not for steady state: the
           # warm-up allocation is the peak this pod ever sees.
           resources:
