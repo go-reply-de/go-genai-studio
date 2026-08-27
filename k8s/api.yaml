@@ -6,14 +6,15 @@ metadata:
   name: api
   namespace: ###_GKE_NAMESPACE###
 spec:
-  replicas: 1
+  replicas: ###_API_MIN_REPLICAS###
   selector:
     matchLabels:
       app: api
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 0 # Don't allow any pods to be unavailable during update
+      maxSurge: 1
+      maxUnavailable: 0
   template:
     metadata:
       annotations:
@@ -26,14 +27,29 @@ spec:
         - name: copy-assets
           image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
           command: ["/bin/sh", "-c"]
+          # /default-assets is the api-branding GCS FUSE mount, so every file
+          # operation here is an HTTP round trip. MEASURED on sov-dev: this step
+          # took 51 s of a 122 s startup - 42% of it - and it ran on every pod
+          # start, including crash and eviction restarts.
+          #
+          # The assets only change when the image changes, so a sentinel holding
+          # the image SHA lets a same-image restart skip the sync entirely. A real
+          # deploy still pays it once. If the copy fails the sentinel is not
+          # written, so the next start retries.
           args:
             - >
-              if [ -d /default-assets ]; then
-                echo "Directory /default-assets found. Cleaning and copying assets...";
-                find /default-assets -type f -not -name "main_logo.png" -not -name "main_favicon.png" -delete &&
-                cp -r -n -v /app/client/dist/assets/* /default-assets/;
-              else
+              SENTINEL=/default-assets/.assets-version;
+              WANT="###API_SHORT_SHA###";
+              if [ ! -d /default-assets ]; then
                 echo "Directory /default-assets not found, skipping.";
+              elif [ "$(cat "$SENTINEL" 2>/dev/null)" = "$WANT" ]; then
+                echo "Assets already at $WANT - skipping sync.";
+              else
+                echo "Syncing assets to $WANT...";
+                find /default-assets -type f -not -name "main_logo.png" -not -name "main_favicon.png" -not -name ".assets-version" -delete &&
+                cp -r -n /app/client/dist/assets/* /default-assets/ &&
+                printf '%s' "$WANT" > "$SENTINEL" &&
+                echo "Assets synced.";
               fi
           volumeMounts:
             - name: api-branding
@@ -489,26 +505,36 @@ spec:
                   name: librechat-credentials-env
           image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
           resources:
+            # Driven by k8s/profiles/*.env - see default.env for the rationale
+            # and the ReadWriteOnce constraint that caps this deployment's replicas.
             requests:
-              cpu: 10m
-              memory: 256Mi
+              cpu: "###_API_CPU###"
+              memory: "###_API_MEMORY###"
           name: ###_GKE_CLUSTER_NAME###
           imagePullPolicy: Always
           ports:
             - containerPort: 80
-          livenessProbe: # Add liveness probe
+          startupProbe:
+            httpGet:
+              path: /login
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 3
+            timeoutSeconds: 3
+            failureThreshold: 40
+          readinessProbe:
+            httpGet:
+              path: /login
+              port: 80
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
             tcpSocket:
               port: 80
-            initialDelaySeconds: 60 # Wait 30 seconds before starting probes
-            periodSeconds: 10 # Check every 10 seconds
-            failureThreshold: 3 # Fail after 3 consecutive failures
-          readinessProbe: # Add readiness probe
-            httpGet:
-              path: /login # Check /login for readiness if the app is ready to receive requests
-              port: 80
-            initialDelaySeconds: 60 # Wait 10 seconds before starting probes
-            periodSeconds: 10 # Check every 5 seconds
-            failureThreshold: 3 # Fail after 3 consecutive failures
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
           volumeMounts:
             - mountPath: /app/librechat.yaml
               name: config
@@ -518,6 +544,8 @@ spec:
               subPath: manifest.json
             - mountPath: /app/client/public/images
               name: api-images
+            - mountPath: /app/uploads
+              name: api-uploads
             - mountPath: /app/client/dist/assets
               name: api-branding
             - mountPath: /app/api/logs
@@ -542,7 +570,10 @@ spec:
           name: plugin-manifest
         - name: api-images
           persistentVolumeClaim:
-            claimName: api-images
+            claimName: api-images###_API_FILES_SUFFIX###
+        - name: api-uploads
+          persistentVolumeClaim:
+            claimName: api-uploads###_API_FILES_SUFFIX###
         - name: api-branding
           persistentVolumeClaim:
             claimName: api-branding-pvc
@@ -589,6 +620,21 @@ spec:
       storage: 10Gi
 ---
 apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    app: api-uploads
+  name: api-uploads
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # Quoted: an unquoted ###...### parses as YAML null before rendering.
+      storage: "###_UPLOADS_DISK###"
+---
+apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: api-branding-pv
@@ -628,3 +674,22 @@ metadata:
   namespace: ###_GKE_NAMESPACE###
   annotations:
     iam.gke.io/gcp-service-account: ###_K8S_SA_EMAIL###
+---
+# Without a PodDisruptionBudget, a node drain (Autopilot upgrade, repair, or a
+# manual cordon) can evict every api pod at once - which at two replicas defeats
+# the point of having two. maxUnavailable 1 lets the drain proceed one pod at a
+# time, so one is always serving.
+#
+# Harmless at one replica: the single pod is still evictable, so node upgrades are
+# not blocked. A minAvailable of 1 would block them instead, which is why this is
+# expressed as maxUnavailable.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: api

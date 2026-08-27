@@ -1,0 +1,272 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: sovereign-inference
+value: 1000000
+globalDefault: false
+description: "GPU inference pods must not be evicted by ordinary workloads."
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gemma-vllm
+  namespace: ###_GKE_NAMESPACE###
+  labels:
+    app: gemma-vllm
+spec:
+  selector:
+    matchLabels:
+      app: gemma-vllm
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # A surge-based rollout needs a whole extra GPU node before it can retire
+      # the old pod. With maxUnavailable 0 and one GPU node, that deadlocks: the
+      # replacement stays Pending waiting for capacity, the old pod is kept alive
+      # because nothing is Ready yet, and the rollout never completes. That is
+      # exactly what happened here during an L4 stockout.
+      #
+      # Replacing in place instead reuses the freed GPU, so a rollout needs no
+      # additional capacity. Cost: brief unavailability per replica. Dev has one
+      # replica so it blips; prod has two, so one keeps serving throughout.
+      maxSurge: 0
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: gemma-vllm
+      annotations:
+        gke-gcsfuse/volumes: "true"
+        gke-gcsfuse/cpu-limit: "2"
+        gke-gcsfuse/memory-limit: "4Gi"
+        gke-gcsfuse/ephemeral-storage-limit: "80Gi"
+        checksum/env-config: "###_ENV_CHECKSUM###"
+    spec:
+      serviceAccountName: k8s-service-account
+      priorityClassName: sovereign-inference
+      # A GPU pod that takes minutes to load must not be killed by a node
+      # scale-down in the middle of loading.
+      terminationGracePeriodSeconds: 120
+      nodeSelector:
+        cloud.google.com/compute-class: "Accelerator"
+        cloud.google.com/gke-accelerator: ###_ACCELERATOR_TYPE###
+        # Required on Autopilot whenever a pod needs more than one GPU, and
+        # harmless at count=1. Without it Autopilot gives one GPU per node and
+        # a tensor-parallel launch deadlocks waiting for peers.
+        cloud.google.com/gke-accelerator-count: "###_GPU_COUNT###"
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: gemma-vllm
+      containers:
+        - name: vllm
+          image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/vllm:###_VLLM_IMAGE_TAG###
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+
+              # vLLM has no "no quantization" value - the flag is simply omitted -
+              # so it is assembled conditionally. Written as an if-block on
+              # purpose: `[ -n "$X" ] && OPTS=...` is the whole statement, so
+              # under `set -e` a false test exits the container, which would make
+              # an empty VLLM_QUANTIZATION crash the pod instead of serving BF16.
+              QUANT_OPT=""
+              if [ -n "${VLLM_QUANTIZATION:-}" ]; then
+                QUANT_OPT="--quantization=${VLLM_QUANTIZATION}"
+              fi
+
+              # --limit-mm-per-prompt: Gemma 4 is natively multimodal, but DiMeAs
+              # is a text chat surface. Every modality must be listed explicitly:
+              # with only image and audio set to 0, vLLM still reserved an encoder
+              # budget for VIDEO and logged
+              #   "Raising max_num_batched_tokens from 2048 to 2496 to accommodate
+              #    'video' input for prefix-LM model"
+              # On a card where the entire KV cache is ~2.4 GiB, that reservation
+              # is not affordable.
+              #
+              # --reasoning-parser / --tool-call-parser / --enable-auto-tool-choice:
+              # Gemma 4 ships its own tool-call protocol with dedicated special
+              # tokens. The prod librechat.yaml drives all three model specs
+              # through endpoint "agents" with tools/actions/chain capabilities,
+              # so without these every agent tool call returns as literal text
+              # and the agents look broken to clinicians.
+              #
+              # exec keeps vLLM as PID 1 so it still receives SIGTERM and drains
+              # in-flight streams on rollout.
+              # The chat template ships two ways and the paths differ by image build.
+              # Prefer vLLM's tool-calling template (needed for the gemma4
+              # tool-call protocol); fall back to the one inside the model
+              # directory, which Model Garden does include; else let vLLM use the
+              # tokenizer's embedded template. Guessing an absolute path that does
+              # not exist just fails the process at startup.
+              TEMPLATE_OPT=""
+              for t in /vllm-workspace/examples/tool_chat_template_gemma4.jinja \
+                       /opt/vllm/examples/tool_chat_template_gemma4.jinja \
+                       "/models/###_GEMMA_MODEL_NAME###/chat_template.jinja"; do
+                if [ -f "$t" ]; then
+                  TEMPLATE_OPT="--chat-template=$t"
+                  echo "using chat template: $t"
+                  break
+                fi
+              done
+              [ -z "${TEMPLATE_OPT}" ] && echo "no chat template file found; using the tokenizer's embedded template"
+
+              exec vllm serve "/models/###_GEMMA_MODEL_NAME###" \
+                --served-model-name="###_GEMMA_SERVED_NAME###" \
+                --tensor-parallel-size=###_GPU_COUNT### \
+                --dtype=bfloat16 \
+                --max-model-len="${VLLM_MAX_MODEL_LEN}" \
+                --max-num-seqs="${VLLM_MAX_NUM_SEQS}" \
+                --gpu-memory-utilization="${VLLM_GPU_MEM_UTIL}" \
+                --enable-prefix-caching \
+                --limit-mm-per-prompt '{"image":0,"audio":0,"video":0}' \
+                --reasoning-parser=gemma4 \
+                --tool-call-parser=gemma4 \
+                --enable-auto-tool-choice \
+                ${TEMPLATE_OPT} \
+                ${QUANT_OPT}
+          env:
+            - name: VLLM_QUANTIZATION
+              valueFrom:
+                configMapKeyRef:
+                  key: VLLM_QUANTIZATION
+                  name: env
+            - name: VLLM_MAX_MODEL_LEN
+              valueFrom:
+                configMapKeyRef:
+                  key: VLLM_MAX_MODEL_LEN
+                  name: env
+            - name: VLLM_MAX_NUM_SEQS
+              valueFrom:
+                configMapKeyRef:
+                  key: VLLM_MAX_NUM_SEQS
+                  name: env
+            - name: VLLM_GPU_MEM_UTIL
+              valueFrom:
+                configMapKeyRef:
+                  key: VLLM_GPU_MEM_UTIL
+                  name: env
+            # Nothing may reach huggingface.co from a sovereign cluster; the
+            # weights are already on the CMEK bucket.
+            - name: HF_HUB_OFFLINE
+              value: "1"
+            - name: TRANSFORMERS_OFFLINE
+              value: "1"
+            - name: VLLM_NO_USAGE_STATS
+              value: "1"
+            - name: DO_NOT_TRACK
+              value: "1"
+            - name: NCCL_DEBUG
+              value: "WARN"
+            - name: VLLM_LOGGING_LEVEL
+              value: "INFO"
+          resources:
+            requests:
+              cpu: "###_GEMMA_CPU###"
+              memory: "###_GEMMA_MEMORY###"
+              ephemeral-storage: "100Gi"
+              nvidia.com/gpu: "###_GPU_COUNT###"
+            limits:
+              cpu: "###_GEMMA_CPU###"
+              memory: "###_GEMMA_MEMORY###"
+              ephemeral-storage: "100Gi"
+              nvidia.com/gpu: "###_GPU_COUNT###"
+          ports:
+            - containerPort: 8000
+              name: http
+              protocol: TCP
+          volumeMounts:
+            - name: model-storage
+              mountPath: /models
+              readOnly: true
+            # vLLM uses shared memory for tensor-parallel collectives. The
+            # default 64Mi /dev/shm makes TP>1 hang or crash.
+            - name: dshm
+              mountPath: /dev/shm
+          # Loading tens of GB of weights over GCS FUSE takes minutes. The
+          # original readinessProbe (delay 60s, period 10s, threshold 3) killed
+          # the pod ~90s in, which is a guaranteed CrashLoopBackOff. A
+          # startupProbe is the only correct construct here: it suspends the
+          # liveness check until the server is actually serving.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            # 15s * 80 = 20 minutes of grace for a cold, uncached load.
+            failureThreshold: 80
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 30
+            failureThreshold: 5
+      volumes:
+        - name: model-storage
+          csi:
+            driver: gcsfuse.csi.storage.gke.io
+            readOnly: true
+            volumeAttributes:
+              bucketName: ###_MODELS_BUCKET_NAME###
+              mountOptions: "implicit-dirs,metadata-cache:ttl-secs:-1,metadata-cache:stat-cache-max-size-mb:-1,metadata-cache:type-cache-max-size-mb:-1,file-cache:max-size-mb:-1,file-cache:cache-file-for-range-read:true"
+        - name: gke-gcsfuse-cache
+          emptyDir: {}
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gemma-vllm-service
+  namespace: ###_GKE_NAMESPACE###
+  labels:
+    app: gemma-vllm-service
+spec:
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
+  selector:
+    app: gemma-vllm
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gemma-vllm-pdb
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: gemma-vllm
+---
+# Without this, Managed Prometheus never scrapes vLLM, the KEDA trigger below
+# reads an empty series, and the autoscaler silently never fires.
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: gemma-vllm
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  selector:
+    matchLabels:
+      app: gemma-vllm
+  endpoints:
+    - port: 8000
+      path: /metrics
+      interval: 15s

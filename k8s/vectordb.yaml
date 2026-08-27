@@ -37,9 +37,10 @@ spec:
           image: ankane/pgvector:latest
           name: vectordb-###ENVIRONMENT###
           resources:
+            # Driven by k8s/profiles/*.env
             requests:
-              cpu: 10m
-              memory: 64Mi
+              cpu: "###_VECTORDB_CPU###"
+              memory: "###_VECTORDB_MEMORY###"
           volumeMounts:
             - mountPath: /var/lib/postgresql/data
               name: pgdata
@@ -77,4 +78,5 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 100Mi
+      # Driven by k8s/profiles/*.env. Expansion is one-way; see default.env.
+      storage: ###_VECTORDB_DISK###

@@ -1,0 +1,78 @@
+# KEDA needs to authenticate to the Managed Prometheus query API as a Google
+# service account. The KEDA operator's own KSA is annotated for Workload
+# Identity by the setup script; this object just tells the scaler to use it.
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: gmp-workload-identity
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  podIdentity:
+    provider: gcp
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: gemma-vllm-autoscaler
+  namespace: ###_GKE_NAMESPACE###
+  labels:
+    app: gemma-vllm-autoscaler
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gemma-vllm
+  minReplicaCount: ###_GEMMA_MIN_REPLICAS###
+  maxReplicaCount: ###_GEMMA_MAX_REPLICAS###
+  # A GPU pod needs several minutes to become useful, so scale-down must be
+  # slow and deliberate; 15 min avoids thrashing an expensive resource against
+  # a hospital's bursty, clinic-hours load pattern.
+  cooldownPeriod: 900
+  pollingInterval: 30
+  advanced:
+    restoreToOriginalReplicaCount: false
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          # No stabilization window: when the queue is backing up, clinicians
+          # are already waiting.
+          stabilizationWindowSeconds: 0
+          policies:
+            - type: Pods
+              value: 2
+              periodSeconds: 60
+          selectPolicy: Max
+        scaleDown:
+          stabilizationWindowSeconds: 900
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 300
+          selectPolicy: Min
+  triggers:
+    # Queue depth is the right signal for LLM serving: GPU utilization sits near
+    # 100% under any load and so tells you nothing about whether requests are
+    # waiting.
+    - type: prometheus
+      # The previous value (http://gmp-operator.gke-gmp-system...:9090) is not a
+      # query endpoint - the GMP operator does not serve PromQL, so the trigger
+      # always read empty and never scaled. Managed Prometheus is queried
+      # through the Cloud Monitoring Prometheus-compatible API.
+      metadata:
+        serverAddress: "https://monitoring.googleapis.com/v1/projects/###PROJECT_ID###/location/global/prometheus"
+        query: |
+          sum(vllm:num_requests_waiting{namespace="###_GKE_NAMESPACE###", model_name="###_GEMMA_SERVED_NAME###"})
+        threshold: "5"
+        activationThreshold: "1"
+      authenticationRef:
+        name: gmp-workload-identity
+    # Second signal: once the KV cache is nearly full, vLLM starts preempting
+    # and latency degrades sharply even if the queue looks shallow.
+    - type: prometheus
+      metadata:
+        serverAddress: "https://monitoring.googleapis.com/v1/projects/###PROJECT_ID###/location/global/prometheus"
+        query: |
+          avg(vllm:gpu_cache_usage_perc{namespace="###_GKE_NAMESPACE###", model_name="###_GEMMA_SERVED_NAME###"})
+        threshold: "0.85"
+      authenticationRef:
+        name: gmp-workload-identity

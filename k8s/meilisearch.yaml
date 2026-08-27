@@ -447,8 +447,8 @@ spec:
           image: getmeili/meilisearch:v1.7.3
           resources:
             requests:
-              cpu: 10m
-              memory: 1Gi
+              cpu: "###_MEILI_CPU###"
+              memory: "###_MEILI_MEMORY###"
           name: chat-meilisearch
           volumeMounts:
             - mountPath: /meili_data
@@ -486,4 +486,4 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 10Gi
+      storage: ###_MEILI_DISK###

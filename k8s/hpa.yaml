@@ -3,8 +3,24 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: api
   namespace: ###_GKE_NAMESPACE###
+  annotations:
+    # Replica bounds come from k8s/profiles/*.env, not from this file.
+    #
+    # They are capped by STORAGE, not by capacity: the api pod mounts the
+    # ReadWriteOnce PVC "api-images" read-write (see k8s/api.yaml). A
+    # ReadWriteOnce disk attaches to one node at a time, so a second api pod
+    # scheduled elsewhere never becomes Ready - it sits Pending on
+    # FailedAttachVolume while Autopilot provisions a node for it. Raising the
+    # ceiling without first moving that volume to ReadWriteMany buys broken pods
+    # and the nodes underneath them, not capacity.
+    #
+    # The target below is a PERCENTAGE OF THE POD'S CPU REQUEST, so it is only
+    # meaningful once that request is realistic - at 10m, 80% of it was 8m and
+    # the autoscaler pinned to max from the first request.
+    io.uksh.replica-bounds-source: "k8s/profiles/*.env"
 spec:
-  maxReplicas: 3
+  minReplicas: ###_API_MIN_REPLICAS###
+  maxReplicas: ###_API_MAX_REPLICAS###
   metrics:
   - resource:
       name: cpu
@@ -12,7 +28,6 @@ spec:
         averageUtilization: 80
         type: Utilization
     type: Resource
-  minReplicas: 1
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment

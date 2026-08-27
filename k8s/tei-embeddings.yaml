@@ -1,0 +1,186 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tei-embeddings
+  namespace: ###_GKE_NAMESPACE###
+  labels:
+    app: tei-embeddings
+spec:
+  selector:
+    matchLabels:
+      app: tei-embeddings
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: tei-embeddings
+      annotations:
+        gke-gcsfuse/volumes: "true"
+        gke-gcsfuse/cpu-limit: "2"
+        gke-gcsfuse/memory-limit: "4Gi"
+        gke-gcsfuse/ephemeral-storage-limit: "3Gi"
+        checksum/env-config: "###_ENV_CHECKSUM###"
+    spec:
+      serviceAccountName: k8s-service-account
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: tei-embeddings
+      containers:
+        - name: tei
+          image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/tei:###_TEI_IMAGE_TAG###
+          imagePullPolicy: IfNotPresent
+          # TEI reads its model id from the ConfigMap, so the embedding model can
+          # be changed without a Terraform apply.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              # --max-batch-tokens=8192, not 16384: TEI sizes its warmup
+              # activations from this budget, and on CPU 16384 OOM-killed the
+              # container at 16Gi (exit 137, during "Warming up model"). bge-m3
+              # still accepts 8192-token inputs - this caps concurrency, not
+              # document length.
+              #
+              # --auto-truncate: rag_api chunks are not guaranteed to fit the
+              # encoder's max sequence length. Without it, one oversized chunk
+              # makes TEI return 413 and the whole document ingestion fails,
+              # which reaches the clinician as a silently unusable upload.
+              #
+              # exec keeps TEI as PID 1 so it still receives SIGTERM.
+              exec text-embeddings-router \
+                --model-id="/models/${TEI_MODEL_NAME}" \
+                --port=8000 \
+                --max-client-batch-size=32 \
+                --max-batch-tokens=8192 \
+                --auto-truncate
+          env:
+            - name: TEI_MODEL_NAME
+              valueFrom:
+                configMapKeyRef:
+                  key: TEI_MODEL_NAME
+                  name: env
+            - name: HF_HUB_OFFLINE
+              value: "1"
+            - name: TRANSFORMERS_OFFLINE
+              value: "1"
+            - name: DO_NOT_TRACK
+              value: "1"
+          resources:
+            requests:
+              cpu: "8"
+              memory: "24Gi"
+              ephemeral-storage: "5Gi"
+            limits:
+              cpu: "8"
+              memory: "24Gi"
+              ephemeral-storage: "5Gi"
+          ports:
+            - containerPort: 8000
+              name: http
+              protocol: TCP
+          volumeMounts:
+            - name: model-storage
+              mountPath: /models
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            # bge-m3 is ~2.3GB; 10 minutes covers a cold GCS FUSE read plus
+            # CPU-side model compilation.
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 30
+            failureThreshold: 5
+      volumes:
+        - name: model-storage
+          csi:
+            driver: gcsfuse.csi.storage.gke.io
+            readOnly: true
+            volumeAttributes:
+              bucketName: ###_MODELS_BUCKET_NAME###
+              mountOptions: "implicit-dirs,metadata-cache:ttl-secs:-1,file-cache:max-size-mb:-1,file-cache:cache-file-for-range-read:true"
+        - name: gke-gcsfuse-cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tei-embeddings-service
+  namespace: ###_GKE_NAMESPACE###
+  labels:
+    app: tei-embeddings-service
+spec:
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
+  selector:
+    app: tei-embeddings
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: tei-embeddings-pdb
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: tei-embeddings
+---
+# TEI is CPU-bound here, so it scales on CPU rather than on a queue-depth
+# metric. Embedding pods are cheap and start in ~1 min, unlike the GPU pods.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: tei-embeddings-hpa
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: tei-embeddings
+  minReplicas: ###_TEI_MIN_REPLICAS###
+  maxReplicas: ###_TEI_MAX_REPLICAS###
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: tei-embeddings
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  selector:
+    matchLabels:
+      app: tei-embeddings
+  endpoints:
+    - port: 8000
+      path: /metrics
+      interval: 30s

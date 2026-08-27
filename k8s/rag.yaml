@@ -47,6 +47,17 @@ spec:
                 configMapKeyRef:
                   key: EMBEDDINGS_PROVIDER
                   name: env
+            # Required when EMBEDDINGS_PROVIDER=openai
+            - name: RAG_OPENAI_BASEURL
+              valueFrom:
+                configMapKeyRef:
+                  key: RAG_OPENAI_BASEURL
+                  name: env
+            - name: RAG_OPENAI_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  key: RAG_OPENAI_API_KEY
+                  name: env
             - name: JWT_REFRESH_SECRET
               valueFrom:
                 secretKeyRef:
@@ -61,9 +72,10 @@ spec:
               value: /var/secrets/google/sa_credentials.json
           image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/rag:###RAG_SHORT_SHA###
           resources:
+            # Driven by k8s/profiles/*.env
             requests:
-              cpu: 10m
-              memory: 512Mi
+              cpu: "###_RAG_CPU###"
+              memory: "###_RAG_MEMORY###"
           name: rag
           imagePullPolicy: Always
           volumeMounts:
