@@ -152,6 +152,16 @@ steps:
         sed -i -e "s/###_BRANDING_BUCKET_NAME###/${_BRANDING_BUCKET_NAME}/g" "$file"
         sed -i -e "s|###_API_FILES_BUCKET_NAME###|${_API_FILES_BUCKET_NAME}|g" "$file"
         sed -i -e "s|###_API_FILES_SUFFIX###|$${API_FILES_SUFFIX}|g" "$file"
+        # GPU-Reservierung: bei leerem Namen werden BEIDE nodeSelector-Zeilen
+        # geloescht statt leer gerendert. Ein leerer reservation-name mit
+        # affinity "specific" laesst den Pod dauerhaft Pending - ohne Rueckfall
+        # auf On-Demand. Loeschen ist hier also die sichere Variante.
+        if [ -z "${_GPU_RESERVATION_NAME}" ]; then
+          sed -i -e "/###_RESERVATION_AFFINITY###/d" -e "/###_GPU_RESERVATION_NAME###/d" "$file"
+        else
+          sed -i -e "s|###_RESERVATION_AFFINITY###|specific|g" \
+                 -e "s|###_GPU_RESERVATION_NAME###|${_GPU_RESERVATION_NAME}|g" "$file"
+        fi
         sed -i -e "s/###_K8S_SA_EMAIL###/${_K8S_SA_EMAIL}/g" "$file"
         sed -i -e "s/###_GOOGLE_MODELS###/${_GOOGLE_MODELS}/g" "$file"
         sed -i -e "s/###_GOOGLE_LOC###/${_GOOGLE_LOC}/g" "$file"
@@ -342,6 +352,7 @@ substitutions:
   # rwx via terraform (api_files_rwx = true) to allow more than one api replica.
   _API_FILES_MODE: "rwo"
   _API_FILES_BUCKET_NAME: ""
+  _GPU_RESERVATION_NAME: ""
   # Appended to the api pod's claimName: empty selects the ReadWriteOnce claims,
   # "-rwx" selects the ReadWriteMany ones.
   _ENABLE_SOVEREIGN_INFERENCE: "false"

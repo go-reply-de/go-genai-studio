@@ -54,6 +54,15 @@ spec:
         # harmless at count=1. Without it Autopilot gives one GPU per node and
         # a tensor-parallel launch deadlocks waiting for peers.
         cloud.google.com/gke-accelerator-count: "###_GPU_COUNT###"
+        cloud.google.com/reservation-affinity: "###_RESERVATION_AFFINITY###"
+        cloud.google.com/reservation-name: "###_GPU_RESERVATION_NAME###"
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: cloud.google.com/gke-spot
+                    operator: DoesNotExist
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone

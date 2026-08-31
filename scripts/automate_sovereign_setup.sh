@@ -246,8 +246,11 @@ esac
 # anything Cloud Build renders, and this table only applies when the script
 # renders manifests directly.
 if [[ "${ENVIRONMENT}" == *prod* ]]; then
-  GEMMA_REPLICAS=2; GEMMA_MAX_REPLICAS=6
-  TEI_REPLICAS=2;   TEI_MAX_REPLICAS=8
+  # GEMMA_REPLICAS is 1 for the 2026-09-01 pilot launch window, matching
+  # sov-prod/terragrunt.hcl - see the note there. TEI stays at 2: it runs on
+  # ordinary nodes, so it is not competing for scarce GPU capacity.
+  GEMMA_REPLICAS=1; GEMMA_MAX_REPLICAS=3
+  TEI_REPLICAS=2;   TEI_MAX_REPLICAS=4
 else
   GEMMA_REPLICAS=1; GEMMA_MAX_REPLICAS=2
   TEI_REPLICAS=1;   TEI_MAX_REPLICAS=3

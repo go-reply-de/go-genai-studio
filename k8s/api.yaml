@@ -19,6 +19,9 @@ spec:
     metadata:
       annotations:
         gke-gcsfuse/volumes: "true"
+        gke-gcsfuse/cpu-limit: "500m"
+        gke-gcsfuse/memory-limit: "1Gi"
+        gke-gcsfuse/ephemeral-storage-limit: "5Gi"
       labels:
         app: api
     spec:
@@ -412,6 +415,11 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   key: NON_BROWSER_VIOLATION_SCORE
+                  name: env
+            - name: TRUST_PROXY
+              valueFrom:
+                configMapKeyRef:
+                  key: TRUST_PROXY
                   name: env
             - name: NO_INDEX
               valueFrom:
