@@ -9,6 +9,8 @@ import { ApiErrorBoundaryProvider } from './hooks/ApiErrorBoundaryContext';
 import 'katex/dist/katex.min.css';
 import 'katex/dist/contrib/copy-tex.js';
 
+import './inactivity';
+
 window.addEventListener('vite:preloadError', (event) => {
   if (window.__lcRecoverStaleAssets?.()) {
     event.preventDefault();
