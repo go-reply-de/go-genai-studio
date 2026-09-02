@@ -128,7 +128,26 @@ steps:
       esac
       echo "api file volumes: mode=${_API_FILES_MODE} -> claim suffix '$${API_FILES_SUFFIX}'"
 
+      # Ingress TLS. Unlike the sizing values this cannot be a plain
+      # substitution: an unset TLS_SECRET_NAME has to remove spec.tls from the
+      # Ingress entirely, because rendering it blank leaves the Ingress pointing
+      # at a Secret with no name, and rendering a name in an environment where
+      # terraform has not published that Secret points it at one that is not
+      # there. Same delete-the-line shape as an unset GPU reservation below.
+      TLS_SECRET_NAME=$(awk -F= '$$1 == "TLS_SECRET_NAME" { print substr($$0, index($$0, "=") + 1) }' "$${RENDER_VARS}")
+      if [ -z "$${TLS_SECRET_NAME}" ]; then
+        echo "ingress TLS: ManagedCertificate only"
+      else
+        echo "ingress TLS: ManagedCertificate + Secret '$${TLS_SECRET_NAME}'"
+      fi
+
       find ./k8s -name "*.yaml" -print0 | while IFS= read -r -d $'\0' file; do
+        # Before the generic loop below, which would otherwise have already
+        # rewritten this placeholder to an empty string.
+        if [ -z "$${TLS_SECRET_NAME}" ]; then
+          sed -i -e "/###_TLS_SECRET_NAME###/d" "$file"
+        fi
+
         # Profile-driven values first. Keys are plain uppercase identifiers, so a
         # literal | in a value is the only thing that would break this delimiter -
         # none of the sizing values contain one.

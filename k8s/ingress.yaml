@@ -19,6 +19,22 @@ metadata:
     kubernetes.io/ingress.class: gce
     networking.gke.io/v1beta1.FrontendConfig: genai-studio-managed-ingress-###ENVIRONMENT###-frontend-config
 spec:
+  # Second certificate, IN ADDITION to the ManagedCertificate above. Rendered
+  # only where the profile sets TLS_SECRET_NAME - today the sovereign
+  # environments - and deleted outright everywhere else, because referencing a
+  # Secret that does not exist in the cluster is not a no-op.
+  #
+  # The Secret is created by terraform (modules/iap/tls.tf in the setup repo)
+  # from a UKSH-issued certificate. The load balancer picks between the two by
+  # SNI against each certificate's own SANs, so both can be attached at once and
+  # neither hostname needs the other's certificate to be ready. That is what
+  # makes moving the real domain onto this load balancer a DNS change with no
+  # TLS gap: a Google-managed certificate cannot be provisioned until DNS
+  # already points here, but this one can be installed in advance.
+  #
+  # Flow style deliberately: the render step removes this by line, so the whole
+  # block has to fit on one.
+  tls: [{ secretName: ###_TLS_SECRET_NAME### }]
   rules:
     # Only resolves when the admin panel is deployed (admin_panel_enabled=true
     # in Terraform for this environment); otherwise this backend is unhealthy
