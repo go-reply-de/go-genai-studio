@@ -1,0 +1,77 @@
+# Admin panel on the regional load balancer. Split from gateway.yaml so it can
+# be skipped where _ADMIN_PANEL_ENABLED is false and no admin pods exist -
+# goreply prod, for one - which would otherwise leave a route stuck on an
+# unresolvable backend.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: admin-service-gw
+  name: admin-service-gw
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  ports:
+    - protocol: TCP
+      port: 3000
+      targetPort: 3000
+  type: ClusterIP
+  selector:
+    app: admin
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: genai-studio-admin-###ENVIRONMENT###
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  parentRefs:
+    - name: genai-studio-regional-###ENVIRONMENT###
+      sectionName: https
+  hostnames:
+    - admin.###DOMAIN###
+    - admin.###_ALT_DOMAIN###
+  rules:
+    - backendRefs:
+        - name: admin-service-gw
+          port: 3000
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: admin-service-gw-###ENVIRONMENT###
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  # Explicit rather than relying on the GET / default, which the admin panel
+  # happens to satisfy today.
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        requestPath: /
+        port: 3000
+  targetRef:
+    group: ""
+    kind: Service
+    name: admin-service-gw
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: admin-service-gw-###ENVIRONMENT###
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  default:
+    timeoutSec: 300
+    sessionAffinity:
+      type: GENERATED_COOKIE
+      cookieTtlSec: 3600
+    iap:
+      enabled: true
+      clientID: ###_IAP_CLIENT_ID###
+      oauth2ClientSecret:
+        name: iap-oauth-credentials
+  targetRef:
+    group: ""
+    kind: Service
+    name: admin-service-gw

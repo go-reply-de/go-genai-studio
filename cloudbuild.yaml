@@ -84,16 +84,11 @@ steps:
       fi
       echo "Version string set to: $${VERSION_STRING}"
 
-      # Workload sizing comes from k8s/profiles/*.env rather than from Cloud Build
-      # substitutions. default.env is the baseline every environment inherits;
-      # ${_PROFILE}.env is layered on top and wins. awk processes the files in
-      # order and keeps the last assignment, so the profile overrides the default.
-      #
-      # This is deliberately generic: adding a new tunable is one line in a
-      # profile file, with no new substitution here and no new Terraform variable.
-      # _PROFILE may name several profiles, space separated, applied left to
-      # right - e.g. "sovereign sov-prod" layers prod-only overrides on top of
-      # the shared sovereign values without duplicating them.
+      # Workload sizing comes from k8s/profiles/*.env, not substitutions:
+      # default.env is the baseline, ${_PROFILE}.env layers on top and wins
+      # (awk keeps the last assignment). Adding a tunable is one line in a
+      # profile, with no new substitution or Terraform variable. _PROFILE may
+      # name several, space separated, applied left to right.
       RENDER_VARS=$(mktemp)
       PROFILE_FILES="./k8s/profiles/default.env"
       for p in ${_PROFILE}; do
@@ -109,17 +104,11 @@ steps:
       echo "Rendering with profile '${_PROFILE}' ($$(wc -l < "$${RENDER_VARS}") values):"
       sort "$${RENDER_VARS}" | sed 's/^/  /'
 
-      # api file volumes: _API_FILES_MODE is the single source of truth and the
-      # claim-name suffix is DERIVED from it, rather than arriving as a second
-      # substitution. Two independently-set values could disagree - mode rwx
-      # applying (and billing) the GCS volumes while an empty suffix mounted the
-      # ReadWriteOnce disks - and at the sovereign profile's 2 replicas that
-      # leaves the second pod Pending on a multi-attach conflict. Deriving makes
-      # the disagreement unrepresentable.
-      #
-      # Note it is NOT simply "-${_API_FILES_MODE}": the default claims are named
-      # api-images / api-uploads with no suffix, because they are already bound in
-      # every environment and renaming them would orphan the data they hold.
+      # The claim-name suffix is DERIVED from _API_FILES_MODE rather than being
+      # a second substitution: two values could disagree, billing the GCS
+      # volumes while mounting the RWO disks, which leaves the second replica
+      # Pending on a multi-attach conflict. Not simply "-${_API_FILES_MODE}" -
+      # the default claims have no suffix and renaming them would orphan data.
       case "${_API_FILES_MODE}" in
         rwo) API_FILES_SUFFIX="" ;;
         rwx) API_FILES_SUFFIX="-rwx" ;;
@@ -128,24 +117,51 @@ steps:
       esac
       echo "api file volumes: mode=${_API_FILES_MODE} -> claim suffix '$${API_FILES_SUFFIX}'"
 
-      # Ingress TLS. Unlike the sizing values this cannot be a plain
-      # substitution: an unset TLS_SECRET_NAME has to remove spec.tls from the
-      # Ingress entirely, because rendering it blank leaves the Ingress pointing
-      # at a Secret with no name, and rendering a name in an environment where
-      # terraform has not published that Secret points it at one that is not
-      # there. Same delete-the-line shape as an unset GPU reservation below.
-      TLS_SECRET_NAME=$(awk -F= '$$1 == "TLS_SECRET_NAME" { print substr($$0, index($$0, "=") + 1) }' "$${RENDER_VARS}")
+      # Ingress TLS. Comes from terraform (self_managed_tls), NOT from a
+      # profile: only terraform knows whether the Secret has actually been
+      # published, and a name rendered in an environment where it has not points
+      # the Ingress at a Secret that is not there. Empty deletes the line
+      # instead, the same shape as an unset GPU reservation below.
+      TLS_SECRET_NAME="${_TLS_SECRET_NAME}"
       if [ -z "$${TLS_SECRET_NAME}" ]; then
         echo "ingress TLS: ManagedCertificate only"
       else
         echo "ingress TLS: ManagedCertificate + Secret '$${TLS_SECRET_NAME}'"
       fi
 
+      # Regional load balancer. Fails loudly rather than deploying a Gateway
+      # that would 403 everyone or serve no certificate.
+      if [ "${_ENABLE_REGIONAL_LB}" = "true" ]; then
+        if [ -z "${_REGIONAL_IP_NAME}" ]; then
+          echo "ERROR: _ENABLE_REGIONAL_LB is true but _REGIONAL_IP_NAME is empty - terraform has not reserved the regional address." >&2
+          exit 1
+        fi
+        if [ -z "$${TLS_SECRET_NAME}" ]; then
+          echo "ERROR: _ENABLE_REGIONAL_LB is true but no TLS Secret is published. A regional load balancer cannot use a ManagedCertificate - set self_managed_tls = \"serving\" in terraform." >&2
+          exit 1
+        fi
+        # Only one of clientID/oauth2ClientSecret means Google-managed OAuth,
+        # silently, which is not what the Ingress does.
+        if [ -z "${_IAP_CLIENT_ID}" ]; then
+          echo "ERROR: _ENABLE_REGIONAL_LB is true but _IAP_CLIENT_ID is empty." >&2
+          exit 1
+        fi
+        echo "regional LB: address=${_REGIONAL_IP_NAME} tls=$${TLS_SECRET_NAME} alt-domain='${_ALT_DOMAIN}'"
+      fi
+
       find ./k8s -name "*.yaml" -print0 | while IFS= read -r -d $'\0' file; do
-        # Before the generic loop below, which would otherwise have already
-        # rewritten this placeholder to an empty string.
+        # Delete the line when nothing is published, rather than render a
+        # dangling reference; substitute explicitly otherwise.
         if [ -z "$${TLS_SECRET_NAME}" ]; then
           sed -i -e "/###_TLS_SECRET_NAME###/d" "$file"
+        else
+          sed -i -e "s|###_TLS_SECRET_NAME###|$${TLS_SECRET_NAME}|g" "$file"
+        fi
+
+        # Same reason: an empty second hostname must drop the list entry, not
+        # render as a blank one.
+        if [ -z "${_ALT_DOMAIN}" ]; then
+          sed -i -e "/###_ALT_DOMAIN###/d" "$file"
         fi
 
         # Profile-driven values first. Keys are plain uppercase identifiers, so a
@@ -166,15 +182,17 @@ steps:
         sed -i -e "s/###GOOGLE_KEY###/${_GOOGLE_KEY}/g" "$file"
         sed -i -e "s/###DOMAIN###/${_DOMAIN}/g" "$file"
         sed -i -e "s/###IP_ADDRESS_ID###/${_IP_ADDRESS_ID}/g" "$file"
+        sed -i -e "s|###_ALT_DOMAIN###|${_ALT_DOMAIN}|g" "$file"
+        sed -i -e "s|###_REGIONAL_IP_NAME###|${_REGIONAL_IP_NAME}|g" "$file"
+        sed -i -e "s|###_IAP_CLIENT_ID###|${_IAP_CLIENT_ID}|g" "$file"
         sed -i -e "s/###_SECURITY_POLICY###/${_SECURITY_POLICY}/g" "$file"
         sed -i -e "s/###APP_TITLE###/${_APP_TITLE}/g" "$file"
         sed -i -e "s/###_BRANDING_BUCKET_NAME###/${_BRANDING_BUCKET_NAME}/g" "$file"
         sed -i -e "s|###_API_FILES_BUCKET_NAME###|${_API_FILES_BUCKET_NAME}|g" "$file"
         sed -i -e "s|###_API_FILES_SUFFIX###|$${API_FILES_SUFFIX}|g" "$file"
-        # GPU-Reservierung: bei leerem Namen werden BEIDE nodeSelector-Zeilen
-        # geloescht statt leer gerendert. Ein leerer reservation-name mit
-        # affinity "specific" laesst den Pod dauerhaft Pending - ohne Rueckfall
-        # auf On-Demand. Loeschen ist hier also die sichere Variante.
+        # An empty name DELETES both nodeSelector lines rather than rendering
+        # them blank: affinity "specific" with no reservation leaves the pod
+        # Pending forever, with no fallback to on-demand.
         if [ -z "${_GPU_RESERVATION_NAME}" ]; then
           sed -i -e "/###_RESERVATION_AFFINITY###/d" -e "/###_GPU_RESERVATION_NAME###/d" "$file"
         else
@@ -356,7 +374,47 @@ steps:
 
 - name: "gcr.io/cloud-builders/kubectl"
   id: 'Deploy ingress'
-  args: ["apply", "-f", "./k8s/ingress.yaml", "--namespace=${_GKE_NAMESPACE}"]
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      # Mutually exclusive with the regional Gateway (terraform
+      # var.load_balancer), except during a DNS cutover.
+      if [ "${_ENABLE_GLOBAL_LB}" != "true" ]; then
+        echo "Global load balancer disabled for this environment, skipping the Ingress."
+        # Skipping is not removing: kubectl apply never deletes, so the existing
+        # Ingress keeps running and keeps blocking terraform from releasing the
+        # global address. Delete it, its ManagedCertificate and its
+        # FrontendConfig by hand - deliberately not automated here.
+        exit 0
+      fi
+      if [ -z "${_IP_ADDRESS_ID}" ]; then
+        echo "ERROR: _ENABLE_GLOBAL_LB is true but _IP_ADDRESS_ID is empty. The Ingress would provision an ephemeral IP that DNS does not point at." >&2
+        exit 1
+      fi
+      kubectl apply -f ./k8s/ingress.yaml --namespace=${_GKE_NAMESPACE}
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+- name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy regional gateway'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      # The Ingress above keeps serving either way: the two never share a
+      # Service, so this is additive and the cutover is a DNS change.
+      if [ "${_ENABLE_REGIONAL_LB}" != "true" ]; then
+        echo "Regional load balancer disabled for this environment, skipping."
+        exit 0
+      fi
+      kubectl apply -f ./k8s/gateway.yaml --namespace=${_GKE_NAMESPACE}
+      if [ "${_ADMIN_PANEL_ENABLED}" = "true" ]; then
+        kubectl apply -f ./k8s/gateway-admin.yaml --namespace=${_GKE_NAMESPACE}
+      else
+        echo "Admin panel disabled for this environment, skipping the admin route."
+      fi
   env:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
@@ -372,6 +430,25 @@ substitutions:
   _API_FILES_MODE: "rwo"
   _API_FILES_BUCKET_NAME: ""
   _GPU_RESERVATION_NAME: ""
+  # Global Ingress. MUST default to "true": absence has to keep meaning "on" for
+  # any environment whose trigger has not been re-applied yet. Terraform sends
+  # "false" only where load_balancer = "regional".
+  _ENABLE_GLOBAL_LB: "true"
+  # Owned by terraform (self_managed_tls). Empty deletes spec.tls, which is the
+  # correct behaviour for every environment on a ManagedCertificate.
+  _TLS_SECRET_NAME: ""
+  # Empty when load_balancer = "regional", where terraform omits it and the
+  # Ingress is never applied. The step above fails loudly if it is empty while
+  # the global LB is on, rather than provisioning an ephemeral IP.
+  _IP_ADDRESS_ID: ""
+  # Regional load balancer. Defaults keep every environment whose trigger has
+  # not been re-applied building exactly as before - without them an undefined
+  # substitution fails the build at submit time.
+  _ENABLE_REGIONAL_LB: "false"
+  _REGIONAL_IP_NAME: ""
+  _IAP_CLIENT_ID: ""
+  # Second hostname on the Gateway routes, set only during a domain migration.
+  _ALT_DOMAIN: ""
   # Appended to the api pod's claimName: empty selects the ReadWriteOnce claims,
   # "-rwx" selects the ReadWriteMany ones.
   _ENABLE_SOVEREIGN_INFERENCE: "false"

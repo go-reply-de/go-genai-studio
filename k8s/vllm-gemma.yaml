@@ -20,15 +20,10 @@ spec:
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      # A surge-based rollout needs a whole extra GPU node before it can retire
-      # the old pod. With maxUnavailable 0 and one GPU node, that deadlocks: the
-      # replacement stays Pending waiting for capacity, the old pod is kept alive
-      # because nothing is Ready yet, and the rollout never completes. That is
-      # exactly what happened here during an L4 stockout.
-      #
-      # Replacing in place instead reuses the freed GPU, so a rollout needs no
-      # additional capacity. Cost: brief unavailability per replica. Dev has one
-      # replica so it blips; prod has two, so one keeps serving throughout.
+      # Surge needs a whole extra GPU node, which deadlocks on one node: the
+      # replacement stays Pending and the old pod is never retired. Happened
+      # during an L4 stockout. Replacing in place reuses the freed GPU, at the
+      # cost of brief unavailability per replica.
       maxSurge: 0
       maxUnavailable: 1
   template:
@@ -89,30 +84,19 @@ spec:
                 QUANT_OPT="--quantization=${VLLM_QUANTIZATION}"
               fi
 
-              # --limit-mm-per-prompt: Gemma 4 is natively multimodal, but DiMeAs
-              # is a text chat surface. Every modality must be listed explicitly:
-              # with only image and audio set to 0, vLLM still reserved an encoder
-              # budget for VIDEO and logged
-              #   "Raising max_num_batched_tokens from 2048 to 2496 to accommodate
-              #    'video' input for prefix-LM model"
-              # On a card where the entire KV cache is ~2.4 GiB, that reservation
-              # is not affordable.
+              # --limit-mm-per-prompt: list EVERY modality explicitly. With only
+              # image and audio at 0, vLLM still reserved an encoder budget for
+              # video ("Raising max_num_batched_tokens ... to accommodate
+              # 'video' input"), unaffordable when the KV cache is ~2.4 GiB.
               #
               # --reasoning-parser / --tool-call-parser / --enable-auto-tool-choice:
-              # Gemma 4 ships its own tool-call protocol with dedicated special
-              # tokens. The prod librechat.yaml drives all three model specs
-              # through endpoint "agents" with tools/actions/chain capabilities,
-              # so without these every agent tool call returns as literal text
-              # and the agents look broken to clinicians.
+              # Gemma 4 has its own tool-call protocol, and the model specs run
+              # through endpoint "agents" - without these, every agent tool call
+              # renders as literal text.
               #
-              # exec keeps vLLM as PID 1 so it still receives SIGTERM and drains
-              # in-flight streams on rollout.
-              # The chat template ships two ways and the paths differ by image build.
-              # Prefer vLLM's tool-calling template (needed for the gemma4
-              # tool-call protocol); fall back to the one inside the model
-              # directory, which Model Garden does include; else let vLLM use the
-              # tokenizer's embedded template. Guessing an absolute path that does
-              # not exist just fails the process at startup.
+              # exec keeps vLLM as PID 1, so it drains in-flight streams on
+              # SIGTERM. Template path differs by image build, so probe rather
+              # than guess - a missing absolute path fails at startup.
               TEMPLATE_OPT=""
               for t in /vllm-workspace/examples/tool_chat_template_gemma4.jinja \
                        /opt/vllm/examples/tool_chat_template_gemma4.jinja \

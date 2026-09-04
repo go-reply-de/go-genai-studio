@@ -1,0 +1,133 @@
+# Regional external Application Load Balancer, alongside the Ingress in
+# ingress.yaml on a separate frontend IP. Applied only where
+# _ENABLE_REGIONAL_LB is "true"; every other environment renders this file and
+# never applies it.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: api-service-gw
+  name: api-service-gw
+  namespace: ###_GKE_NAMESPACE###
+  # Deliberately no backend-config annotation (that configures the Ingress) and
+  # no neg annotation (the Gateway controller creates and names its own).
+spec:
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+  type: ClusterIP
+  selector:
+    app: api
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: genai-studio-regional-###ENVIRONMENT###
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  gatewayClassName: gke-l7-regional-external-managed
+  addresses:
+    # Reserved by terraform so the address is known, and can be handed over for
+    # the DNS change, before this Gateway exists.
+    - type: NamedAddress
+      value: ###_REGIONAL_IP_NAME###
+  listeners:
+    # Port 80 exists only for the redirect route below. The Ingress got this
+    # from its FrontendConfig, which has no Gateway equivalent.
+    - name: http
+      protocol: HTTP
+      port: 80
+    - name: https
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        # A regional LB cannot use a ManagedCertificate, and Certificate
+        # Manager is blocked by org policy on the sovereign projects.
+        certificateRefs:
+          - name: ###_TLS_SECRET_NAME###
+    # No listener hostname: SNI matches the certificate's own SANs, so one
+    # listener serves every name it covers. Hostnames live on the routes.
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: genai-studio-redirect-###ENVIRONMENT###
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  parentRefs:
+    - name: genai-studio-regional-###ENVIRONMENT###
+      sectionName: http
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: genai-studio-api-###ENVIRONMENT###
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  parentRefs:
+    - name: genai-studio-regional-###ENVIRONMENT###
+      sectionName: https
+  hostnames:
+    # Second name is empty except during a domain migration, when the old and
+    # new hostnames must both resolve. The render step deletes it by line.
+    - ###DOMAIN###
+    - ###_ALT_DOMAIN###
+  rules:
+    - backendRefs:
+        - name: api-service-gw
+          port: 80
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: api-service-gw-###ENVIRONMENT###
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  # Required, not optional: Gateway does not infer health checks from the
+  # readinessProbe as Ingress does, and LibreChat's / never returns 200.
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        requestPath: /login
+        port: 80
+  targetRef:
+    group: ""
+    kind: Service
+    name: api-service-gw
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: api-service-gw-###ENVIRONMENT###
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  default:
+    # 300s because responses stream over SSE and the 30s default truncates them
+    # mid-answer.
+    timeoutSec: 300
+    # Rate-limit counters live in per-process memory with no Redis, so a user
+    # must keep landing on the same replica or their limit multiplies.
+    sessionAffinity:
+      type: GENERATED_COOKIE
+      cookieTtlSec: 3600
+    iap:
+      enabled: true
+      # Both fields together, or IAP silently falls back to Google-managed
+      # OAuth instead of the client the Ingress uses.
+      clientID: ###_IAP_CLIENT_ID###
+      oauth2ClientSecret:
+        name: iap-oauth-credentials
+  targetRef:
+    group: ""
+    kind: Service
+    name: api-service-gw

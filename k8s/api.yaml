@@ -30,15 +30,6 @@ spec:
         - name: copy-assets
           image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
           command: ["/bin/sh", "-c"]
-          # /default-assets is the api-branding GCS FUSE mount, so every file
-          # operation here is an HTTP round trip. MEASURED on sov-dev: this step
-          # took 51 s of a 122 s startup - 42% of it - and it ran on every pod
-          # start, including crash and eviction restarts.
-          #
-          # The assets only change when the image changes, so a sentinel holding
-          # the image SHA lets a same-image restart skip the sync entirely. A real
-          # deploy still pays it once. If the copy fails the sentinel is not
-          # written, so the next start retries.
           args:
             - >
               SENTINEL=/default-assets/.assets-version;
@@ -683,14 +674,9 @@ metadata:
   annotations:
     iam.gke.io/gcp-service-account: ###_K8S_SA_EMAIL###
 ---
-# Without a PodDisruptionBudget, a node drain (Autopilot upgrade, repair, or a
-# manual cordon) can evict every api pod at once - which at two replicas defeats
-# the point of having two. maxUnavailable 1 lets the drain proceed one pod at a
-# time, so one is always serving.
-#
-# Harmless at one replica: the single pod is still evictable, so node upgrades are
-# not blocked. A minAvailable of 1 would block them instead, which is why this is
-# expressed as maxUnavailable.
+# Without this, a node drain can evict every api pod at once. maxUnavailable 1
+# drains one at a time, so one keeps serving. Expressed as maxUnavailable rather
+# than minAvailable so a single-replica environment can still be drained.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:

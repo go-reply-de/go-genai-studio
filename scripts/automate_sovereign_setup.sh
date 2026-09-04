@@ -114,7 +114,7 @@ while [[ $# -gt 0 ]]; do
     --hf-token) HF_TOKEN="$2"; shift 2 ;;
     --skip-images) SKIP_IMAGES=1; shift ;;
     --skip-weights) SKIP_WEIGHTS=1; shift ;;
-    --stage-only) STAGE_ONLY=1; shift ;;
+    --stage-only) shift ;;   # now the default - accepted for compatibility
     -h|--help)
       cat <<'USAGE'
 Usage: automate_sovereign_setup.sh [options]
@@ -189,71 +189,53 @@ fi
 GEMMA_LOCAL_NAME="$(basename "${GEMMA_MODEL}")"
 EMBEDDING_LOCAL_NAME="$(basename "${EMBEDDING_MODEL}")"
 
-# --- Sizing profiles -----------------------------------------------------------
-# MUST match terraform/locals.tf:autopilot_gpu_pod_sizing - that map is the
-# source of truth, this table only exists so the script can render manifests
-# without a Cloud Build round-trip. Autopilot caps CPU/memory per accelerator
-# AND GPU count, and the ceiling is not monotonic: 1x L4 allows 31 vCPU /
-# 115 GiB but 2x L4 allows only 23 vCPU / 83 GiB. Over-requesting is rejected
-# at admission, so do not "scale up" these numbers with the GPU count.
-# Derived from the published parameter counts and the accelerator's real memory:
-# weight footprint ~= params * bytes_per_param, and the remainder of VRAM holds
-# the KV cache.
+# --- GPU count per model -------------------------------------------------------
+# Only the GPU count, and only to estimate quota in the preflight below and to
+# print it in the summary. CPU/memory/replicas used to live here too, to render
+# manifests; that is cloudbuild.yaml's job now, from terraform's
+# autopilot_gpu_pod_sizing map - the single source of truth.
 #
-# Only what Kubernetes needs as OBJECT FIELDS lives here - the GPU count (which
-# is simultaneously a nodeSelector, the nvidia.com/gpu request and vLLM's
-# --tensor-parallel-size, so all three must agree) plus CPU/memory/disk. The
-# serving knobs (quantization, max-model-len, max-num-seqs) are literals in
-# k8s/env.yaml, because a container can read those from a ConfigMap.
+# The count is still worth encoding: it is not a free choice. Autopilot's
+# CPU/memory ceiling per accelerator is not monotonic, and the model decides how
+# many cards it needs.
 case "${GEMMA_MODEL}:${ACCELERATOR_TYPE}" in
   # 11.95B params. BF16 ~24GB does NOT fit a 24GB L4 alongside a KV cache,
   # so FP8 (~12GB) is mandatory here, leaving ~9GB for KV.
   *gemma-4-12B*:nvidia-l4)
-    GPU_COUNT=1
-    CPU="8"; MEMORY="32Gi" ;;
+    GPU_COUNT=1 ;;
   # 30.7B params, 33.4 GB at fp8 (measured). 2x L4 fits the WEIGHTS but leaves
   # only 2.38 GiB of KV cache - not enough for even 8K context, because Gemma 4's
   # head_dim 512 full-attention layers make KV ~4x more expensive than a
   # Llama-class model. 4x L4 leaves ~54 GB of KV, which is what 32K context needs.
   *gemma-4-31B*:nvidia-l4)
-    GPU_COUNT=4
-    CPU="44"; MEMORY="160Gi" ;;
+    GPU_COUNT=4 ;;
   # 25.2B total / 3.8B active. FP8 ~25GB just overflows one L4 -> TP2.
   # Only 3.8B params activate per token, so decode is much cheaper than 31B.
   *gemma-4-26B-A4B*:nvidia-l4)
-    GPU_COUNT=2
-    CPU="20"; MEMORY="72Gi" ;;
+    GPU_COUNT=2 ;;
   # 8B total / 4.5B effective. Comfortable in BF16 on one L4.
   *gemma-4-E4B*:nvidia-l4|*gemma-4-E2B*:nvidia-l4)
-    GPU_COUNT=1
-    CPU="8"; MEMORY="32Gi" ;;
+    GPU_COUNT=1 ;;
   # 80GB and 3.35TB/s of bandwidth: everything fits in BF16 on a single card.
   *gemma-4-31B*:nvidia-h100-80gb|*gemma-4-26B-A4B*:nvidia-h100-80gb)
-    GPU_COUNT=1
-    CPU="24"; MEMORY="200Gi" ;;
+    GPU_COUNT=1 ;;
   *:nvidia-h100-80gb)
-    GPU_COUNT=1
-    CPU="24"; MEMORY="200Gi" ;;
+    GPU_COUNT=1 ;;
   *)
-    echo "WARN: no sizing profile for ${GEMMA_MODEL} on ${ACCELERATOR_TYPE}; using conservative defaults." >&2
-    GPU_COUNT=1
-    CPU="8"; MEMORY="32Gi" ;;
+    echo "WARN: no GPU-count profile for ${GEMMA_MODEL} on ${ACCELERATOR_TYPE}; assuming 1." >&2
+    GPU_COUNT=1 ;;
 esac
 
-# sov-prod runs HA; dev runs a single replica to keep GPU spend down.
-# These MUST match sovereign_inference.{min,max}_replicas in the matching
-# environments/uksh/<env>/terragrunt.hcl - that file is the source of truth for
-# anything Cloud Build renders, and this table only applies when the script
-# renders manifests directly.
+# Upper bound only, and only to size the quota estimate above. The replica
+# counts that actually get deployed come from sovereign_inference.{min,max}_replicas
+# in the environment's terragrunt.hcl, via Cloud Build.
 if [[ "${ENVIRONMENT}" == *prod* ]]; then
   # GEMMA_REPLICAS is 1 for the 2026-09-01 pilot launch window, matching
   # sov-prod/terragrunt.hcl - see the note there. TEI stays at 2: it runs on
   # ordinary nodes, so it is not competing for scarce GPU capacity.
-  GEMMA_REPLICAS=1; GEMMA_MAX_REPLICAS=3
-  TEI_REPLICAS=2;   TEI_MAX_REPLICAS=4
+  GEMMA_MAX_REPLICAS=3
 else
-  GEMMA_REPLICAS=1; GEMMA_MAX_REPLICAS=2
-  TEI_REPLICAS=1;   TEI_MAX_REPLICAS=3
+  GEMMA_MAX_REPLICAS=2
 fi
 
 echo "============================================================"
@@ -326,7 +308,7 @@ fi
 # resource two owners, and a bucket made by an ad-hoc gcloud call would silently
 # miss the encryption and access settings a sovereign environment requires.
 echo ""
-echo "[Step 1/7] Verifying Terraform-managed storage and registry..."
+echo "[Step 1/6] Verifying Terraform-managed storage and registry..."
 K8S_SA="genai-portal-${ENVIRONMENT}-k8s-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 # The identity every Cloud Build in this script runs as. Terraform grants THIS
 # account objectAdmin on the weights bucket (modules/model_weights.writer_members).
@@ -382,7 +364,7 @@ echo "[ok] Artifact Registry: ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REGISTRY_
 # query Managed Prometheus - without it the ScaledObject reports a scaler error
 # and the GPU fleet never autoscales.
 echo ""
-echo "[Step 2/7] Granting the two bindings Terraform cannot own..."
+echo "[Step 2/6] Granting the two bindings Terraform cannot own..."
 
 # KEDA queries Managed Prometheus through the Cloud Monitoring API.
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
@@ -418,14 +400,14 @@ if [[ -z "${SKIP_IMAGES:-}" ]]; then
   && gcloud artifacts docker tags list "${AR_PATH}/tei" --project="${PROJECT_ID}" \
        --format="value(tag)" 2>/dev/null | grep -qx "${TEI_IMAGE_TAG}"; then
     echo ""
-    echo "[Step 3/7] vllm:${VLLM_IMAGE_TAG} and tei:${TEI_IMAGE_TAG} already present - skipping mirror."
+    echo "[Step 3/6] vllm:${VLLM_IMAGE_TAG} and tei:${TEI_IMAGE_TAG} already present - skipping mirror."
     SKIP_IMAGES=1
   fi
 fi
 
 if [[ -z "${SKIP_IMAGES:-}" ]]; then
   echo ""
-  echo "[Step 3/7] Mirroring inference images to Sovereign Artifact Registry..."
+  echo "[Step 3/6] Mirroring inference images to Sovereign Artifact Registry..."
   AR_HOST="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REGISTRY_NAME}"
   cat > /tmp/sync_images.yaml <<EOF
 steps:
@@ -465,7 +447,7 @@ EOF
   echo "[ok] Images mirrored."
 else
   echo ""
-  echo "[Step 3/7] Skipped (--skip-images)."
+  echo "[Step 3/6] Skipped (--skip-images)."
 fi
 
 
@@ -623,7 +605,7 @@ if [[ -z "${SKIP_WEIGHTS:-}" ]]; then
   if [[ "${WEIGHT_SOURCE}" == "gcs" && -n "${WEIGHTS_SOURCE_PROJECT}" ]]; then
     SRC_BUCKET="${SOURCE_PREFIX#gs://}"; SRC_BUCKET="${SRC_BUCKET%%/*}"
     echo ""
-    echo "[Step 4/7] Granting ${BUILD_SA} read on gs://${SRC_BUCKET} (project ${WEIGHTS_SOURCE_PROJECT})..."
+    echo "[Step 4/6] Granting ${BUILD_SA} read on gs://${SRC_BUCKET} (project ${WEIGHTS_SOURCE_PROJECT})..."
     gcloud storage buckets add-iam-policy-binding "gs://${SRC_BUCKET}" \
       --project="${WEIGHTS_SOURCE_PROJECT}" \
       --member="serviceAccount:${BUILD_SA}" \
@@ -633,37 +615,23 @@ if [[ -z "${SKIP_WEIGHTS:-}" ]]; then
   fi
 
   echo ""
-  echo "[Step 4/7] Staging generation model (${GEMMA_MODEL})..."
+  echo "[Step 4/6] Staging generation model (${GEMMA_MODEL})..."
   stage_model "${GEMMA_MODEL}" "${GEMMA_LOCAL_NAME}" generation
   echo "[ok] Generation weights at gs://${MODELS_BUCKET}/${GEMMA_LOCAL_NAME}."
 
   echo ""
-  echo "[Step 5/7] Staging embedding model (${EMBEDDING_MODEL})..."
+  echo "[Step 5/6] Staging embedding model (${EMBEDDING_MODEL})..."
   stage_model "${EMBEDDING_MODEL}" "${EMBEDDING_LOCAL_NAME}" embedding
   echo "[ok] Embedding weights at gs://${MODELS_BUCKET}/${EMBEDDING_LOCAL_NAME}."
 else
   echo ""
-  echo "[Steps 4-5/7] Skipped (--skip-weights)."
+  echo "[Steps 4-5/6] Skipped (--skip-weights)."
 fi
 
 echo ""
-if [[ -n "${STAGE_ONLY:-}" ]]; then
-  echo ""
-  echo "============================================================"
-  echo "Staging complete (--stage-only). Nothing was deployed."
-  echo "============================================================"
-  echo "Images   : ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REGISTRY_NAME}"
-  echo "Weights  : gs://${MODELS_BUCKET}"
-  echo ""
-  echo "No KEDA install, no manifests applied, no GPU pods, no accelerator spend."
-  echo "To deploy later, re-run without --stage-only (it will skip everything"
-  echo "already staged), or set deploy_sovereign_inference = true and let Cloud"
-  echo "Build do it."
-  echo "============================================================"
-  exit 0
-fi
 
-echo "[Step 6/7] Checking KEDA Autoscaler on GKE Cluster..."
+
+echo "[Step 6/6] Checking KEDA Autoscaler on GKE Cluster..."
 gcloud container clusters get-credentials "${GKE_CLUSTER}" --region="${REGION}" --project="${PROJECT_ID}"
 if kubectl get crd scaledobjects.keda.sh >/dev/null 2>&1; then
   echo "[ok] KEDA already installed."
@@ -686,102 +654,35 @@ gcloud iam service-accounts add-iam-policy-binding "${K8S_SA}" \
   --member="serviceAccount:${PROJECT_ID}.svc.id.goog[keda/keda-operator]" --quiet >/dev/null || true
 kubectl rollout restart deployment/keda-operator -n keda >/dev/null 2>&1 || true
 
-# Step 7: Render and apply manifests
-echo ""
-echo "[Step 7/7] Deploying Sovereign AI manifests to ${GKE_NAMESPACE}..."
-WORKDIR="$(mktemp -d)"
-trap 'rm -rf "${WORKDIR}"' EXIT
-cp k8s/vllm-gemma.yaml k8s/tei-embeddings.yaml k8s/keda-vllm-autoscaler.yaml "${WORKDIR}/"
-
-# Same purpose as the checksum step in cloudbuild.yaml: the inference pods use
-# pinned image tags, so their pod template is otherwise identical between runs
-# and a retuned value in k8s/env.yaml would never trigger a restart. Hashing only
-# the inference keys keeps unrelated env.yaml edits from forcing a GPU reload.
-if command -v sha256sum >/dev/null 2>&1; then
-  HASHER=sha256sum
-else
-  HASHER="shasum -a 256"   # macOS
-fi
-ENV_CHECKSUM=$(grep -E '^  (VLLM_|TEI_|EMBEDDINGS_|RAG_OPENAI_)' k8s/env.yaml | ${HASHER} | cut -c1-16)
-echo "[info] inference config checksum: ${ENV_CHECKSUM}"
-
-for f in "${WORKDIR}"/*.yaml; do
-  sed -i.bak \
-    -e "s|###_ENV_CHECKSUM###|${ENV_CHECKSUM}|g" \
-    -e "s|###_GKE_NAMESPACE###|${GKE_NAMESPACE}|g" \
-    -e "s|###LOCATION###|${REGION}|g" \
-    -e "s|###PROJECT_ID###|${PROJECT_ID}|g" \
-    -e "s|###_REGISTRY_NAME###|${REGISTRY_NAME}|g" \
-    -e "s|###_MODELS_BUCKET_NAME###|${MODELS_BUCKET}|g" \
-    -e "s|###_ACCELERATOR_TYPE###|${ACCELERATOR_TYPE}|g" \
-    -e "s|###_GEMMA_MODEL_NAME###|${GEMMA_LOCAL_NAME}|g" \
-    -e "s|###_GEMMA_SERVED_NAME###|${GEMMA_LOCAL_NAME}|g" \
-    -e "s|###_GPU_COUNT###|${GPU_COUNT}|g" \
-    -e "s|###_GEMMA_CPU###|${CPU}|g" \
-    -e "s|###_GEMMA_MEMORY###|${MEMORY}|g" \
-    -e "s|###_GEMMA_MIN_REPLICAS###|${GEMMA_REPLICAS}|g" \
-    -e "s|###_GEMMA_MAX_REPLICAS###|${GEMMA_MAX_REPLICAS}|g" \
-    -e "s|###_VLLM_IMAGE_TAG###|${VLLM_IMAGE_TAG}|g" \
-    -e "s|###_TEI_IMAGE_TAG###|${TEI_IMAGE_TAG}|g" \
-    -e "s|###_TEI_MIN_REPLICAS###|${TEI_REPLICAS}|g" \
-    -e "s|###_TEI_MAX_REPLICAS###|${TEI_MAX_REPLICAS}|g" \
-    "$f"
-  rm -f "$f.bak"
-done
-
-
-# Catch any placeholder the loop above forgot, instead of shipping a literal
-# "###_FOO###" into a live cluster.
-if grep -Rn '###_\?[A-Z_]*###' "${WORKDIR}" ; then
-  echo "FATAL: unresolved placeholders remain (listed above)." >&2
-  exit 1
-fi
-
-# The inference pods read their serving knobs from the "env" ConfigMap, but that
-# ConfigMap is generated by the Cloud Build pipeline from k8s/env.yaml. Running
-# this script alone therefore deploys pods whose configMapKeyRefs do not exist
-# yet, and they fail with "couldn't find key TEI_MODEL_NAME in ConfigMap env".
+# ==============================================================================
+# Deployment is NOT this script's job.
 #
-# Patch just the four inference keys in, straight from k8s/env.yaml so there is a
-# single source of truth. Deliberately NOT patching EMBEDDINGS_* or RAG_OPENAI_*:
-# those are still ###placeholders### in env.yaml and belong to Cloud Build, which
-# resolves them per environment from terragrunt.
-echo "[info] patching inference keys into ConfigMap env..."
-PATCH=$(python3 - "k8s/env.yaml" <<'PYEOF'
-import json, re, sys
-keys = ("VLLM_QUANTIZATION", "VLLM_MAX_MODEL_LEN", "VLLM_MAX_NUM_SEQS", "VLLM_GPU_MEM_UTIL", "TEI_MODEL_NAME")
-data = {}
-for line in open(sys.argv[1]):
-    m = re.match(r'\s{2}([A-Z_]+):\s*"?([^"\n]*)"?\s*$', line)
-    if m and m.group(1) in keys:
-        data[m.group(1)] = m.group(2).strip()
-missing = [k for k in keys if k not in data]
-if missing:
-    sys.exit(f"could not read {missing} from env.yaml")
-print(json.dumps({"data": data}))
-PYEOF
-)
-echo "       ${PATCH}"
-kubectl patch configmap env --namespace="${GKE_NAMESPACE}" --type=merge -p "${PATCH}"
-
-kubectl apply -f "${WORKDIR}/vllm-gemma.yaml"    --namespace="${GKE_NAMESPACE}"
-kubectl apply -f "${WORKDIR}/tei-embeddings.yaml" --namespace="${GKE_NAMESPACE}"
-kubectl apply -f "${WORKDIR}/keda-vllm-autoscaler.yaml" --namespace="${GKE_NAMESPACE}"
-
+# cloudbuild.yaml renders and applies vllm-gemma.yaml, tei-embeddings.yaml and
+# keda-vllm-autoscaler.yaml from the Cloud Build substitutions, which terraform
+# owns. This script used to do the same from its own sizing table, which meant
+# two writers to the same objects and to the "env" ConfigMap - whichever ran
+# last won. Staging (images, weights, KEDA) is the part only this script can do.
+# ==============================================================================
 echo "============================================================"
-echo "Sovereign AI Deployment Applied"
+echo "Staging complete. Nothing was deployed."
 echo "============================================================"
-echo "First GPU pod start is SLOW: node provisioning + a cold GCS FUSE read of"
-echo "the weights. Allow up to 20 minutes before treating it as failed."
+echo "Images   : ${REGION}-docker.pkg.dev/${PROJECT_ID}/${REGISTRY_NAME}"
+echo "Weights  : gs://${MODELS_BUCKET}"
+echo "KEDA     : installed in namespace 'keda'"
+echo ""
+echo "To deploy, set the environment's terragrunt input to"
+echo ""
+echo "    self_hosted_inference = \"serving\""
+echo ""
+echo "apply, and push to the trigger branch. Terraform arms the build only once"
+echo "it can see the weights in the bucket, so this ordering is safe."
+echo ""
+echo "First GPU pod start is SLOW: node provisioning plus a cold GCS FUSE read"
+echo "of the weights. Allow up to 20 minutes before treating it as failed."
 echo ""
 echo "  kubectl get pods -n ${GKE_NAMESPACE} -w"
 echo "  kubectl logs -n ${GKE_NAMESPACE} deploy/gemma-vllm -c vllm -f"
 echo ""
-echo "Verify end to end:"
+echo "Verify end to end once the pods are up:"
 echo "  ./scripts/test_sovereign_inference.sh ${GKE_NAMESPACE} ${GEMMA_LOCAL_NAME} ${EMBEDDING_LOCAL_NAME}"
-echo ""
-echo "NOT DONE BY THIS SCRIPT - the application still calls Vertex AI."
-echo "See the wiring section in the migration plan: k8s/env.yaml still has"
-echo "EMBEDDINGS_PROVIDER=vertexai, and librechat.yaml still has"
-echo "agents.allowedProviders=[google]."
 echo "============================================================"

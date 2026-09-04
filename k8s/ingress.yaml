@@ -19,21 +19,13 @@ metadata:
     kubernetes.io/ingress.class: gce
     networking.gke.io/v1beta1.FrontendConfig: genai-studio-managed-ingress-###ENVIRONMENT###-frontend-config
 spec:
-  # Second certificate, IN ADDITION to the ManagedCertificate above. Rendered
-  # only where the profile sets TLS_SECRET_NAME - today the sovereign
-  # environments - and deleted outright everywhere else, because referencing a
-  # Secret that does not exist in the cluster is not a no-op.
+  # Second certificate ALONGSIDE the ManagedCertificate, rendered only where
+  # terraform has published one (self_managed_tls = "serving") and deleted
+  # outright otherwise - referencing a missing Secret is not a no-op. The LB picks by SNI against each cert's SANs,
+  # so installing this one in advance makes a domain move a DNS change with no
+  # TLS gap, which a Google-managed cert cannot do.
   #
-  # The Secret is created by terraform (modules/iap/tls.tf in the setup repo)
-  # from a UKSH-issued certificate. The load balancer picks between the two by
-  # SNI against each certificate's own SANs, so both can be attached at once and
-  # neither hostname needs the other's certificate to be ready. That is what
-  # makes moving the real domain onto this load balancer a DNS change with no
-  # TLS gap: a Google-managed certificate cannot be provisioned until DNS
-  # already points here, but this one can be installed in advance.
-  #
-  # Flow style deliberately: the render step removes this by line, so the whole
-  # block has to fit on one.
+  # Flow style on purpose: the render step deletes this by line.
   tls: [{ secretName: ###_TLS_SECRET_NAME### }]
   rules:
     # Only resolves when the admin panel is deployed (admin_panel_enabled=true
@@ -63,9 +55,6 @@ spec:
   redirectToHttps:
     enabled: true
     responseCodeName: "MOVED_PERMANENTLY_DEFAULT"
-# The BackendConfig referenced by api-service and admin-service
-# (genai-studio-managed-ingress-###ENVIRONMENT###-backend-config) is deliberately
-# NOT defined here. Terraform owns it (terraform/modules/iap/iap.tf in the
-# go-genai-studio-setup repo) because it carries the IAP configuration. Defining
-# it here too would re-apply it without the iap block on every build and silently
-# turn IAP off until the next terraform apply.
+# The BackendConfig is deliberately NOT here: Terraform owns it
+# (modules/iap/iap_global.tf) because it carries the IAP config. Defining it
+# here too would re-apply it without the iap block and silently disable IAP.

@@ -43,18 +43,15 @@ spec:
           args:
             - |
               set -eu
-              # --max-batch-tokens=8192, not 16384: TEI sizes its warmup
-              # activations from this budget, and on CPU 16384 OOM-killed the
-              # container at 16Gi (exit 137, during "Warming up model"). bge-m3
-              # still accepts 8192-token inputs - this caps concurrency, not
-              # document length.
+              # --max-batch-tokens=8192, not 16384: TEI sizes warmup activations
+              # from this, and 16384 OOM-killed the container at 16Gi on CPU.
+              # Caps concurrency, not document length.
               #
-              # --auto-truncate: rag_api chunks are not guaranteed to fit the
-              # encoder's max sequence length. Without it, one oversized chunk
-              # makes TEI return 413 and the whole document ingestion fails,
-              # which reaches the clinician as a silently unusable upload.
+              # --auto-truncate: without it one oversized rag_api chunk returns
+              # 413 and fails the whole ingestion, which the clinician sees as a
+              # silently unusable upload.
               #
-              # exec keeps TEI as PID 1 so it still receives SIGTERM.
+              # exec keeps TEI as PID 1 for SIGTERM.
               exec text-embeddings-router \
                 --model-id="/models/${TEI_MODEL_NAME}" \
                 --port=8000 \

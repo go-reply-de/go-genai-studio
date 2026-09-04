@@ -1,32 +1,16 @@
-# OPTIONAL: ReadWriteMany replacements for the api pod's two file volumes.
+# OPTIONAL ReadWriteMany replacements for the api pod's file volumes, applied
+# only when _API_FILES_MODE=rwx. Additive: these have DIFFERENT names from the
+# RWO claims in api.yaml and _API_FILES_SUFFIX picks the pair, so switching
+# either way is reversible and never deletes a bound claim.
 #
-# Applied by Cloud Build only when _API_FILES_MODE=rwx, which terraform sets from
-# api_files_rwx = true. Nothing here replaces or mutates the default ReadWriteOnce
-# claims in k8s/api.yaml - these use DIFFERENT names, and _API_FILES_SUFFIX
-# decides which pair the pod mounts. So enabling or disabling this is reversible
-# and never requires deleting a bound claim.
+# Why: RWO attaches to one node, capping the api Deployment at one replica.
 #
-# WHY: ReadWriteOnce attaches to a single node, which caps the api Deployment at
-# one replica - a second pod scheduled elsewhere cannot attach the disk. These
-# volumes are shared, so the Deployment can run several.
+# One bucket, two volumes separated by only-dir, because LibreChat uses two
+# directories (paths.imageOutput, paths.uploads). NOT the branding bucket - the
+# copy-assets initContainer runs `find ... -delete` over its root.
 #
-# ONE BUCKET, TWO VOLUMES, separated by only-dir. LibreChat's local file strategy
-# uses two directories - paths.imageOutput (served statically) and paths.uploads
-# (served through the API) - so subdirectories of one bucket keep them apart
-# without a second bucket to provision and grant.
-#
-# Deliberately NOT the branding bucket: the copy-assets initContainer runs
-# `find <mount> -type f ... -delete` over that bucket's root, which would put user
-# uploads inside the blast radius of an asset refresh.
-#
-# The api pod already carries gke-gcsfuse/volumes: "true", and the workload
-# identity SA is granted roles/storage.objectUser on this bucket by
-# terraform/modules/storage_bucket. No fsGroup is needed - the container runs as
-# root, since Dockerfile.multi sets no USER.
-#
-# Leftover: after switching, the old api-images / api-uploads persistent disks sit
-# unused (~EUR 1.20/month each). Safe to delete once you are satisfied, and safe
-# to leave if you want the option of switching back.
+# After switching, the old api-images / api-uploads disks sit unused (~EUR 1.20
+# /month each): safe to delete, safe to keep if you may switch back.
 ---
 apiVersion: v1
 kind: PersistentVolume
