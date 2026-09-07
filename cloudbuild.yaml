@@ -232,10 +232,13 @@ steps:
         sed -i -e "s|###_TEI_MAX_REPLICAS###|${_TEI_MAX_REPLICAS}|g" "$file"
       done
 
-      ENV_CHECKSUM=$(grep -E '^  (VLLM_|TEI_|EMBEDDINGS_|RAG_OPENAI_)' ./k8s/env.yaml \
+      # rag.yaml is in here because its image tag is fixed: without the
+      # annotation an embeddings model or region change would reach the
+      # ConfigMap but never reach the running pod.
+      ENV_CHECKSUM=$(grep -E '^  (VLLM_|TEI_|EMBEDDINGS_|RAG_OPENAI_|GOOGLE_CLOUD_)' ./k8s/env.yaml \
         | sha256sum | cut -c1-16)
       echo "Inference config checksum: $${ENV_CHECKSUM}"
-      for file in ./k8s/vllm-gemma.yaml ./k8s/tei-embeddings.yaml; do
+      for file in ./k8s/vllm-gemma.yaml ./k8s/tei-embeddings.yaml ./k8s/rag.yaml; do
         sed -i -e "s|###_ENV_CHECKSUM###|$${ENV_CHECKSUM}|g" "$file"
       done
 
@@ -451,11 +454,10 @@ substitutions:
   # Appended to the api pod's claimName: empty selects the ReadWriteOnce claims,
   # "-rwx" selects the ReadWriteMany ones.
   _ENABLE_SOVEREIGN_INFERENCE: "false"
-  # Vertex AI remains the default so pub-* environments are untouched.
-  # Sovereign environments override to:
-  #   _EMBEDDINGS_PROVIDER: openai
-  #   _EMBEDDINGS_MODEL:    bge-m3
-  #   _RAG_OPENAI_BASEURL:  http://tei-embeddings-service:8000/v1
+  # Vertex AI is the default; the region comes from $LOCATION, not a
+  # substitution. Set _EMBEDDINGS_PROVIDER=openai with _RAG_OPENAI_BASEURL
+  # pointing at tei-embeddings-service to embed in-cluster instead - only
+  # valid while _ENABLE_SOVEREIGN_INFERENCE is true, which is what deploys it.
   _EMBEDDINGS_MODEL: "text-embedding-004"
   _EMBEDDINGS_PROVIDER: "vertexai"
   _RAG_OPENAI_BASEURL: ""

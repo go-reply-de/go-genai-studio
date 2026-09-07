@@ -16,6 +16,8 @@ spec:
       maxUnavailable: 0
   template:
     metadata:
+      annotations:
+        checksum/env-config: "###_ENV_CHECKSUM###"
       labels:
         app: rag
     spec:
@@ -60,6 +62,15 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   key: RAG_OPENAI_API_KEY
+                  name: env
+            # Required when EMBEDDINGS_PROVIDER=vertexai - rag_api would
+            # otherwise embed in us-central1. GOOGLE_CLOUD_PROJECT is left
+            # unset on purpose: it falls back to the mounted key's project,
+            # which is the public consumer project Vertex has to be billed to.
+            - name: GOOGLE_CLOUD_LOCATION
+              valueFrom:
+                configMapKeyRef:
+                  key: GOOGLE_CLOUD_LOCATION
                   name: env
             - name: JWT_REFRESH_SECRET
               valueFrom:
