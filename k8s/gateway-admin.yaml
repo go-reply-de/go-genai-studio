@@ -69,8 +69,12 @@ spec:
     iap:
       enabled: true
       clientID: ###_IAP_CLIENT_ID###
+      # NOT iap-oauth-credentials: that Secret carries client_id too, and a
+      # GCPBackendPolicy rejects any Secret with more than one key. The policy
+      # then never attaches and the Gateway serves UNAUTHENTICATED - it does not
+      # fail closed. Terraform creates this single-key twin in modules/iap.
       oauth2ClientSecret:
-        name: iap-oauth-credentials
+        name: iap-oauth-client-secret
   targetRef:
     group: ""
     kind: Service
