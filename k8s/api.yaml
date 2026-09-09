@@ -6,18 +6,22 @@ metadata:
   name: api
   namespace: ###_GKE_NAMESPACE###
 spec:
-  replicas: 1
+  replicas: ###_API_MIN_REPLICAS###
   selector:
     matchLabels:
       app: api
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 0 # Don't allow any pods to be unavailable during update
+      maxSurge: 1
+      maxUnavailable: 0
   template:
     metadata:
       annotations:
         gke-gcsfuse/volumes: "true"
+        gke-gcsfuse/cpu-limit: "500m"
+        gke-gcsfuse/memory-limit: "1Gi"
+        gke-gcsfuse/ephemeral-storage-limit: "5Gi"
       labels:
         app: api
     spec:
@@ -28,12 +32,18 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - >
-              if [ -d /default-assets ]; then
-                echo "Directory /default-assets found. Cleaning and copying assets...";
-                find /default-assets -type f -not -name "main_logo.png" -not -name "main_favicon.png" -delete &&
-                cp -r -n -v /app/client/dist/assets/* /default-assets/;
-              else
+              SENTINEL=/default-assets/.assets-version;
+              WANT="###API_SHORT_SHA###";
+              if [ ! -d /default-assets ]; then
                 echo "Directory /default-assets not found, skipping.";
+              elif [ "$(cat "$SENTINEL" 2>/dev/null)" = "$WANT" ]; then
+                echo "Assets already at $WANT - skipping sync.";
+              else
+                echo "Syncing assets to $WANT...";
+                find /default-assets -type f -not -name "main_logo.png" -not -name "main_favicon.png" -not -name ".assets-version" -delete &&
+                cp -r -n /app/client/dist/assets/* /default-assets/ &&
+                printf '%s' "$WANT" > "$SENTINEL" &&
+                echo "Assets synced.";
               fi
           volumeMounts:
             - name: api-branding
@@ -397,6 +407,11 @@ spec:
                 configMapKeyRef:
                   key: NON_BROWSER_VIOLATION_SCORE
                   name: env
+            - name: TRUST_PROXY
+              valueFrom:
+                configMapKeyRef:
+                  key: TRUST_PROXY
+                  name: env
             - name: NO_INDEX
               valueFrom:
                 configMapKeyRef:
@@ -489,26 +504,36 @@ spec:
                   name: librechat-credentials-env
           image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
           resources:
+            # Driven by k8s/profiles/*.env - see default.env for the rationale
+            # and the ReadWriteOnce constraint that caps this deployment's replicas.
             requests:
-              cpu: 10m
-              memory: 256Mi
+              cpu: "###_API_CPU###"
+              memory: "###_API_MEMORY###"
           name: ###_GKE_CLUSTER_NAME###
           imagePullPolicy: Always
           ports:
             - containerPort: 80
-          livenessProbe: # Add liveness probe
+          startupProbe:
+            httpGet:
+              path: /login
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 3
+            timeoutSeconds: 3
+            failureThreshold: 40
+          readinessProbe:
+            httpGet:
+              path: /login
+              port: 80
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
             tcpSocket:
               port: 80
-            initialDelaySeconds: 60 # Wait 30 seconds before starting probes
-            periodSeconds: 10 # Check every 10 seconds
-            failureThreshold: 3 # Fail after 3 consecutive failures
-          readinessProbe: # Add readiness probe
-            httpGet:
-              path: /login # Check /login for readiness if the app is ready to receive requests
-              port: 80
-            initialDelaySeconds: 60 # Wait 10 seconds before starting probes
-            periodSeconds: 10 # Check every 5 seconds
-            failureThreshold: 3 # Fail after 3 consecutive failures
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
           volumeMounts:
             - mountPath: /app/librechat.yaml
               name: config
@@ -518,6 +543,8 @@ spec:
               subPath: manifest.json
             - mountPath: /app/client/public/images
               name: api-images
+            - mountPath: /app/uploads
+              name: api-uploads
             - mountPath: /app/client/dist/assets
               name: api-branding
             - mountPath: /app/api/logs
@@ -540,9 +567,27 @@ spec:
                 path: manifest.json
             name: plugin-manifest
           name: plugin-manifest
-        - name: api-images
-          persistentVolumeClaim:
-            claimName: api-images
+        # Exactly one pair survives "Modify K8S manifests". rwx mounts ONE bucket
+        # twice via only-dir, which needs inline volumes: the CSI driver keys a PV
+        # by its bucket, so two PVs sharing one collapse into a single mount.
+        - name: api-images ###_RWO_ONLY###
+          persistentVolumeClaim: ###_RWO_ONLY###
+            claimName: api-images ###_RWO_ONLY###
+        - name: api-uploads ###_RWO_ONLY###
+          persistentVolumeClaim: ###_RWO_ONLY###
+            claimName: api-uploads ###_RWO_ONLY###
+        - name: api-images ###_RWX_ONLY###
+          csi: ###_RWX_ONLY###
+            driver: gcsfuse.csi.storage.gke.io ###_RWX_ONLY###
+            volumeAttributes: ###_RWX_ONLY###
+              bucketName: "###_API_FILES_BUCKET_NAME###" ###_RWX_ONLY###
+              mountOptions: "implicit-dirs,only-dir=images" ###_RWX_ONLY###
+        - name: api-uploads ###_RWX_ONLY###
+          csi: ###_RWX_ONLY###
+            driver: gcsfuse.csi.storage.gke.io ###_RWX_ONLY###
+            volumeAttributes: ###_RWX_ONLY###
+              bucketName: "###_API_FILES_BUCKET_NAME###" ###_RWX_ONLY###
+              mountOptions: "implicit-dirs,only-dir=uploads" ###_RWX_ONLY###
         - name: api-branding
           persistentVolumeClaim:
             claimName: api-branding-pvc
@@ -589,6 +634,21 @@ spec:
       storage: 10Gi
 ---
 apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    app: api-uploads
+  name: api-uploads
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # Quoted: an unquoted ###...### parses as YAML null before rendering.
+      storage: "###_UPLOADS_DISK###"
+---
+apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: api-branding-pv
@@ -628,3 +688,17 @@ metadata:
   namespace: ###_GKE_NAMESPACE###
   annotations:
     iam.gke.io/gcp-service-account: ###_K8S_SA_EMAIL###
+---
+# Without this, a node drain can evict every api pod at once. maxUnavailable 1
+# drains one at a time, so one keeps serving. Expressed as maxUnavailable rather
+# than minAvailable so a single-replica environment can still be drained.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: api

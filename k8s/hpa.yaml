@@ -3,8 +3,18 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: api
   namespace: ###_GKE_NAMESPACE###
+  annotations:
+    # Bounds come from k8s/profiles/*.env, and are capped by STORAGE not
+    # capacity: while api-images is ReadWriteOnce it attaches to one node, so a
+    # second pod sits Pending on FailedAttachVolume. Raising the ceiling before
+    # moving that volume to RWX buys broken pods, not capacity.
+    #
+    # The target is a PERCENTAGE OF THE CPU REQUEST - at a 10m request, 80% was
+    # 8m and the autoscaler pinned to max immediately.
+    io.uksh.replica-bounds-source: "k8s/profiles/*.env"
 spec:
-  maxReplicas: 3
+  minReplicas: ###_API_MIN_REPLICAS###
+  maxReplicas: ###_API_MAX_REPLICAS###
   metrics:
   - resource:
       name: cpu
@@ -12,7 +22,6 @@ spec:
         averageUtilization: 80
         type: Utilization
     type: Resource
-  minReplicas: 1
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment

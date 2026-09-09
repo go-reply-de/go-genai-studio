@@ -5,14 +5,19 @@ metadata:
     app: rag
   name: rag
 spec:
-  replicas: 1
+  replicas: ###_RAG_REPLICAS###
   selector:
     matchLabels:
       app: rag
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   template:
     metadata:
+      annotations:
+        checksum/env-config: "###_ENV_CHECKSUM###"
       labels:
         app: rag
     spec:
@@ -47,6 +52,26 @@ spec:
                 configMapKeyRef:
                   key: EMBEDDINGS_PROVIDER
                   name: env
+            # Required when EMBEDDINGS_PROVIDER=openai
+            - name: RAG_OPENAI_BASEURL
+              valueFrom:
+                configMapKeyRef:
+                  key: RAG_OPENAI_BASEURL
+                  name: env
+            - name: RAG_OPENAI_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  key: RAG_OPENAI_API_KEY
+                  name: env
+            # Required when EMBEDDINGS_PROVIDER=vertexai - rag_api would
+            # otherwise embed in us-central1. GOOGLE_CLOUD_PROJECT is left
+            # unset on purpose: it falls back to the mounted key's project,
+            # which is the public consumer project Vertex has to be billed to.
+            - name: GOOGLE_CLOUD_LOCATION
+              valueFrom:
+                configMapKeyRef:
+                  key: GOOGLE_CLOUD_LOCATION
+                  name: env
             - name: JWT_REFRESH_SECRET
               valueFrom:
                 secretKeyRef:
@@ -59,11 +84,12 @@ spec:
                   name: librechat-credentials-env
             - name: GOOGLE_APPLICATION_CREDENTIALS
               value: /var/secrets/google/sa_credentials.json
-          image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/rag:###RAG_SHORT_SHA###
+          image: ghcr.io/danny-avila/librechat-rag-api-dev-lite:v0.9.0
           resources:
+            # Driven by k8s/profiles/*.env
             requests:
-              cpu: 10m
-              memory: 512Mi
+              cpu: "###_RAG_CPU###"
+              memory: "###_RAG_MEMORY###"
           name: rag
           imagePullPolicy: Always
           volumeMounts:

@@ -19,6 +19,14 @@ metadata:
     kubernetes.io/ingress.class: gce
     networking.gke.io/v1beta1.FrontendConfig: genai-studio-managed-ingress-###ENVIRONMENT###-frontend-config
 spec:
+  # Second certificate ALONGSIDE the ManagedCertificate, rendered only where
+  # terraform has published one (self_managed_tls = "serving") and deleted
+  # outright otherwise - referencing a missing Secret is not a no-op. The LB picks by SNI against each cert's SANs,
+  # so installing this one in advance makes a domain move a DNS change with no
+  # TLS gap, which a Google-managed cert cannot do.
+  #
+  # Flow style on purpose: the render step deletes this by line.
+  tls: [{ secretName: ###_TLS_SECRET_NAME### }]
   rules:
     # Only resolves when the admin panel is deployed (admin_panel_enabled=true
     # in Terraform for this environment); otherwise this backend is unhealthy
@@ -47,9 +55,6 @@ spec:
   redirectToHttps:
     enabled: true
     responseCodeName: "MOVED_PERMANENTLY_DEFAULT"
-# The BackendConfig referenced by api-service and admin-service
-# (genai-studio-managed-ingress-###ENVIRONMENT###-backend-config) is deliberately
-# NOT defined here. Terraform owns it (terraform/modules/iap/iap.tf in the
-# go-genai-studio-setup repo) because it carries the IAP configuration. Defining
-# it here too would re-apply it without the iap block on every build and silently
-# turn IAP off until the next terraform apply.
+# The BackendConfig is deliberately NOT here: Terraform owns it
+# (modules/iap/iap_global.tf) because it carries the IAP config. Defining it
+# here too would re-apply it without the iap block and silently disable IAP.
