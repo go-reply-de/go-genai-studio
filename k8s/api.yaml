@@ -567,12 +567,27 @@ spec:
                 path: manifest.json
             name: plugin-manifest
           name: plugin-manifest
-        - name: api-images
-          persistentVolumeClaim:
-            claimName: api-images###_API_FILES_SUFFIX###
-        - name: api-uploads
-          persistentVolumeClaim:
-            claimName: api-uploads###_API_FILES_SUFFIX###
+        # Exactly one pair survives "Modify K8S manifests". rwx mounts ONE bucket
+        # twice via only-dir, which needs inline volumes: the CSI driver keys a PV
+        # by its bucket, so two PVs sharing one collapse into a single mount.
+        - name: api-images ###_RWO_ONLY###
+          persistentVolumeClaim: ###_RWO_ONLY###
+            claimName: api-images ###_RWO_ONLY###
+        - name: api-uploads ###_RWO_ONLY###
+          persistentVolumeClaim: ###_RWO_ONLY###
+            claimName: api-uploads ###_RWO_ONLY###
+        - name: api-images ###_RWX_ONLY###
+          csi: ###_RWX_ONLY###
+            driver: gcsfuse.csi.storage.gke.io ###_RWX_ONLY###
+            volumeAttributes: ###_RWX_ONLY###
+              bucketName: "###_API_FILES_BUCKET_NAME###" ###_RWX_ONLY###
+              mountOptions: "implicit-dirs,only-dir=images" ###_RWX_ONLY###
+        - name: api-uploads ###_RWX_ONLY###
+          csi: ###_RWX_ONLY###
+            driver: gcsfuse.csi.storage.gke.io ###_RWX_ONLY###
+            volumeAttributes: ###_RWX_ONLY###
+              bucketName: "###_API_FILES_BUCKET_NAME###" ###_RWX_ONLY###
+              mountOptions: "implicit-dirs,only-dir=uploads" ###_RWX_ONLY###
         - name: api-branding
           persistentVolumeClaim:
             claimName: api-branding-pvc

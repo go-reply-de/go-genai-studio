@@ -104,18 +104,17 @@ steps:
       echo "Rendering with profile '${_PROFILE}' ($$(wc -l < "$${RENDER_VARS}") values):"
       sort "$${RENDER_VARS}" | sed 's/^/  /'
 
-      # The claim-name suffix is DERIVED from _API_FILES_MODE rather than being
-      # a second substitution: two values could disagree, billing the GCS
-      # volumes while mounting the RWO disks, which leaves the second replica
-      # Pending on a multi-attach conflict. Not simply "-${_API_FILES_MODE}" -
-      # the default claims have no suffix and renaming them would orphan data.
+      # Which of api.yaml's two volume pairs survives. rwx needs the bucket name
+      # in the same step, so validate it here rather than at apply time.
       case "${_API_FILES_MODE}" in
-        rwo) API_FILES_SUFFIX="" ;;
-        rwx) API_FILES_SUFFIX="-rwx" ;;
+        rwo) ;;
+        rwx) [ -n "${_API_FILES_BUCKET_NAME}" ] || {
+               echo "ERROR: _API_FILES_MODE=rwx requires _API_FILES_BUCKET_NAME." >&2
+               exit 1; } ;;
         *)   echo "ERROR: _API_FILES_MODE must be 'rwo' or 'rwx', got '${_API_FILES_MODE}'." >&2
              exit 1 ;;
       esac
-      echo "api file volumes: mode=${_API_FILES_MODE} -> claim suffix '$${API_FILES_SUFFIX}'"
+      echo "api file volumes: mode=${_API_FILES_MODE}"
 
       # Ingress TLS. Comes from terraform (self_managed_tls), NOT from a
       # profile: only terraform knows whether the Secret has actually been
@@ -188,7 +187,13 @@ steps:
         sed -i -e "s/###APP_TITLE###/${_APP_TITLE}/g" "$file"
         sed -i -e "s/###_BRANDING_BUCKET_NAME###/${_BRANDING_BUCKET_NAME}/g" "$file"
         sed -i -e "s|###_API_FILES_BUCKET_NAME###|${_API_FILES_BUCKET_NAME}|g" "$file"
-        sed -i -e "s|###_API_FILES_SUFFIX###|$${API_FILES_SUFFIX}|g" "$file"
+        # Drop the pair this mode does not use, then strip the marker from the
+        # survivors - a leftover marker would land inside a YAML value.
+        if [ "${_API_FILES_MODE}" = "rwx" ]; then
+          sed -i -e "/###_RWO_ONLY###/d" -e "s|[[:space:]]*###_RWX_ONLY###||g" "$file"
+        else
+          sed -i -e "/###_RWX_ONLY###/d" -e "s|[[:space:]]*###_RWO_ONLY###||g" "$file"
+        fi
         # An empty name DELETES both nodeSelector lines rather than rendering
         # them blank: affinity "specific" with no reservation leaves the pod
         # Pending forever, with no fallback to on-demand.
@@ -330,29 +335,6 @@ steps:
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
 - name: "gcr.io/cloud-builders/kubectl"
-  id: "Apply api file volumes"
-  entrypoint: "bash"
-  env: ['CLOUDSDK_COMPUTE_REGION=${LOCATION}', 'CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}']
-  args:
-    - "-c"
-    - |
-      set -e
-      # The ReadWriteOnce claims live in k8s/api.yaml and always exist. This step
-      # only ADDS the ReadWriteMany alternatives, under different names, for
-      # environments that opted in. The claim-name suffix derived from
-      # _API_FILES_MODE in 'Modify K8S manifests' decides which pair the pod
-      # actually mounts, so this step and that one cannot disagree.
-      if [ "${_API_FILES_MODE}" != "rwx" ]; then
-        echo "_API_FILES_MODE=${_API_FILES_MODE} - using the ReadWriteOnce claims in api.yaml."
-        exit 0
-      fi
-      if [ -z "${_API_FILES_BUCKET_NAME}" ]; then
-        echo "ERROR: _API_FILES_MODE=rwx requires _API_FILES_BUCKET_NAME." >&2
-        exit 1
-      fi
-      kubectl apply -f ./k8s/api-files-rwx.yaml --namespace=${_GKE_NAMESPACE}
-
-- name: "gcr.io/cloud-builders/kubectl"
   id: 'Deploy API'
   args: ["apply", "-f", "./k8s/api.yaml", "--namespace=${_GKE_NAMESPACE}"]
   env:
@@ -380,8 +362,8 @@ steps:
   args:
     - -c
     - |
-      # Mutually exclusive with the regional Gateway (terraform
-      # var.load_balancer), except during a DNS cutover.
+      # Mutually exclusive with the regional Gateway: terraform derives both
+      # from var.sovereign, so exactly one is ever true.
       if [ "${_ENABLE_GLOBAL_LB}" != "true" ]; then
         echo "Global load balancer disabled for this environment, skipping the Ingress."
         # Skipping is not removing: kubectl apply never deletes, so the existing
@@ -434,12 +416,12 @@ substitutions:
   _GPU_RESERVATION_NAME: ""
   # Global Ingress. MUST default to "true": absence has to keep meaning "on" for
   # any environment whose trigger has not been re-applied yet. Terraform sends
-  # "false" only where load_balancer = "regional".
+  # "false" only in a sovereign environment, which serves on the Gateway.
   _ENABLE_GLOBAL_LB: "true"
   # Owned by terraform (self_managed_tls). Empty deletes spec.tls, which is the
   # correct behaviour for every environment on a ManagedCertificate.
   _TLS_SECRET_NAME: ""
-  # Empty when load_balancer = "regional", where terraform omits it and the
+  # Empty in a sovereign environment, where terraform omits it and the
   # Ingress is never applied. The step above fails loudly if it is empty while
   # the global LB is on, rather than provisioning an ephemeral IP.
   _IP_ADDRESS_ID: ""
