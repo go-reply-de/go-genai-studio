@@ -609,7 +609,10 @@ metadata:
   namespace: ###_GKE_NAMESPACE###
   annotations:
     cloud.google.com/backend-config: '{"default": "genai-studio-managed-ingress-###ENVIRONMENT###-backend-config"}'
-    cloud.google.com/neg: '{"exposed_ports": {"80":{"name": "neg-main-###ENVIRONMENT###"}}}'
+    # The Ingress controller only manages this Service's NEG when ingress is
+    # true; a custom exposed_ports NEG here is never consumed, and leaves the
+    # Ingress backend empty. The regional Gateway uses its own api-service-gw.
+    cloud.google.com/neg: '{"ingress": true}'
 spec:
   ports:
     - protocol: TCP
