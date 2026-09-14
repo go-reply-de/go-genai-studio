@@ -58,16 +58,18 @@ describe('backfill-retention-expiry', () => {
     });
 
     it('survives agents with missing or malformed tool_resources', async () => {
-      await db.collection('agents').insertMany([
-        { id: 'no-resources' },
-        { id: 'null-resources', tool_resources: null },
-        { id: 'string-resources', tool_resources: 'nonsense' },
-        { id: 'empty', tool_resources: {} },
-        { id: 'no-file-ids', tool_resources: { file_search: {} } },
-        { id: 'bad-versions', tool_resources: {}, versions: 'not-an-array' },
-        { id: 'null-version', tool_resources: {}, versions: [null] },
-        { id: 'good', tool_resources: { file_search: { file_ids: ['keep-me'] } } },
-      ]);
+      await db
+        .collection('agents')
+        .insertMany([
+          { id: 'no-resources' },
+          { id: 'null-resources', tool_resources: null },
+          { id: 'string-resources', tool_resources: 'nonsense' },
+          { id: 'empty', tool_resources: {} },
+          { id: 'no-file-ids', tool_resources: { file_search: {} } },
+          { id: 'bad-versions', tool_resources: {}, versions: 'not-an-array' },
+          { id: 'null-version', tool_resources: {}, versions: [null] },
+          { id: 'good', tool_resources: { file_search: { file_ids: ['keep-me'] } } },
+        ]);
 
       expect([...(await collectAgentFileIds(db))]).toEqual(['keep-me']);
     });
@@ -78,8 +80,9 @@ describe('backfill-retention-expiry', () => {
   });
 
   describe('file selection', () => {
+    const BOUNDARY = new Date('2026-09-20T21:00:00.000Z');
     const fileFilter = (agentFileIds) =>
-      buildTargets(agentFileIds).find((t) => t.name === 'files').filter;
+      buildTargets(agentFileIds, BOUNDARY).find((t) => t.name === 'files').filter;
 
     const selectFiles = async (agentFileIds) => {
       const found = await db.collection('files').find(fileFilter(agentFileIds)).toArray();
@@ -97,12 +100,24 @@ describe('backfill-retention-expiry', () => {
         { file_id: 'regelwerk', context: 'agents', expiredAt: null },
         { file_id: 'user-avatar', context: 'avatar', expiredAt: null },
         { file_id: 'a-skill-file', context: 'skill_file', expiredAt: null },
-        { file_id: 'already-stamped', context: 'message_attachment', expiredAt: new Date() },
+        // Before the boundary — already scheduled, leave it alone.
+        {
+          file_id: 'already-stamped',
+          context: 'message_attachment',
+          expiredAt: new Date('2026-09-15T00:00:00.000Z'),
+        },
+        // Past the boundary — written under the old rolling window, must be pulled in.
+        {
+          file_id: 'rolling-window-leftover',
+          context: 'message_attachment',
+          expiredAt: new Date('2026-09-27T00:00:00.000Z'),
+        },
       ]);
 
       expect(await selectFiles(await collectAgentFileIds(db))).toEqual([
         'generated-image',
         'patient-upload',
+        'rolling-window-leftover',
       ]);
     });
 
@@ -143,8 +158,9 @@ describe('backfill-retention-expiry', () => {
   });
 
   describe('non-file targets', () => {
-    it('selects only rows without an expiry', async () => {
-      const targets = buildTargets(new Set());
+    it('selects rows with no expiry or one past the boundary', async () => {
+      const boundary = new Date('2026-09-20T21:00:00.000Z');
+      const targets = buildTargets(new Set(), boundary);
       for (const name of ['conversations', 'messages', 'sharedlinks']) {
         await db.collection(name).deleteMany({});
         await db
@@ -152,12 +168,17 @@ describe('backfill-retention-expiry', () => {
           .insertMany([
             { marker: 'null-expiry', expiredAt: null },
             { marker: 'absent-expiry' },
-            { marker: 'already-stamped', expiredAt: new Date() },
+            { marker: 'before-boundary', expiredAt: new Date('2026-09-15T00:00:00.000Z') },
+            { marker: 'past-boundary', expiredAt: new Date('2026-09-27T00:00:00.000Z') },
           ]);
 
         const filter = targets.find((t) => t.name === name).filter;
         const found = await db.collection(name).find(filter).toArray();
-        expect(found.map((d) => d.marker).sort()).toEqual(['absent-expiry', 'null-expiry']);
+        expect(found.map((d) => d.marker).sort()).toEqual([
+          'absent-expiry',
+          'null-expiry',
+          'past-boundary',
+        ]);
       }
     });
   });

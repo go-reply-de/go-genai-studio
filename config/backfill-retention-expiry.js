@@ -54,16 +54,24 @@ async function collectAgentFileIds(db) {
   return ids;
 }
 
-function buildTargets(agentFileIds) {
+/**
+ * Rows needing the boundary stamped on them: those with no expiry at all, and
+ * those whose expiry sits past it. The second case is not hypothetical — every
+ * row written while the rolling window was in force carries `now + 168h`, which
+ * can fall after the next boundary and would survive the weekly deletion.
+ */
+function buildTargets(agentFileIds, boundary) {
+  const needsStamp = { $or: [{ expiredAt: null }, { expiredAt: { $gt: boundary } }] };
+
   return [
-    { label: 'conversations', name: 'conversations', filter: { expiredAt: null } },
-    { label: 'messages', name: 'messages', filter: { expiredAt: null } },
-    { label: 'shared links', name: 'sharedlinks', filter: { expiredAt: null } },
+    { label: 'conversations', name: 'conversations', filter: { ...needsStamp } },
+    { label: 'messages', name: 'messages', filter: { ...needsStamp } },
+    { label: 'shared links', name: 'sharedlinks', filter: { ...needsStamp } },
     {
       label: 'files',
       name: 'files',
       filter: {
-        expiredAt: null,
+        ...needsStamp,
         context: { $nin: KEEP_FILE_CONTEXTS },
         file_id: { $nin: [...agentFileIds] },
       },
@@ -107,7 +115,7 @@ async function main() {
   const agentFileIds = await collectAgentFileIds(db);
   console.green(`Protected agent files: ${agentFileIds.size}`);
 
-  const targets = buildTargets(agentFileIds);
+  const targets = buildTargets(agentFileIds, boundary);
   let total = 0;
 
   for (const target of targets) {
