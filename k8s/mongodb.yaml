@@ -23,9 +23,10 @@ spec:
             - --noauth
           image: mongo:8.0
           resources:
+            # Driven by k8s/profiles/*.env
             requests:
-              cpu: 10m
-              memory: 512Mi
+              cpu: "###_MONGO_CPU###"
+              memory: "###_MONGO_MEMORY###"
           name: chat-mongodb
           volumeMounts:
             - mountPath: /data/db
@@ -65,4 +66,5 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 10Gi
+      # Driven by k8s/profiles/*.env. Expansion is one-way.
+      storage: ###_MONGO_DISK###

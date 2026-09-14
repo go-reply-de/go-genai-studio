@@ -84,28 +84,167 @@ steps:
       fi
       echo "Version string set to: $${VERSION_STRING}"
 
+      # Workload sizing comes from k8s/profiles/*.env, not substitutions:
+      # default.env is the baseline, ${_PROFILE}.env layers on top and wins
+      # (awk keeps the last assignment). Adding a tunable is one line in a
+      # profile, with no new substitution or Terraform variable. _PROFILE may
+      # name several, space separated, applied left to right.
+      RENDER_VARS=$(mktemp)
+      PROFILE_FILES="./k8s/profiles/default.env"
+      for p in ${_PROFILE}; do
+        if [ "$$p" = "default" ]; then continue; fi
+        if [ ! -f "./k8s/profiles/$$p.env" ]; then
+          echo "ERROR: _PROFILE names '$$p' but ./k8s/profiles/$$p.env does not exist." >&2
+          exit 1
+        fi
+        PROFILE_FILES="$${PROFILE_FILES} ./k8s/profiles/$$p.env"
+      done
+      awk -F= '/^[A-Z_][A-Z0-9_]*=/ { v[$$1] = substr($$0, index($$0, "=") + 1) } \
+               END { for (k in v) print k "=" v[k] }' $${PROFILE_FILES} > "$${RENDER_VARS}"
+      echo "Rendering with profile '${_PROFILE}' ($$(wc -l < "$${RENDER_VARS}") values):"
+      sort "$${RENDER_VARS}" | sed 's/^/  /'
+
+      # Which of api.yaml's two volume pairs survives. rwx needs the bucket name
+      # in the same step, so validate it here rather than at apply time.
+      case "${_API_FILES_MODE}" in
+        rwo) ;;
+        rwx) [ -n "${_API_FILES_BUCKET_NAME}" ] || {
+               echo "ERROR: _API_FILES_MODE=rwx requires _API_FILES_BUCKET_NAME." >&2
+               exit 1; } ;;
+        *)   echo "ERROR: _API_FILES_MODE must be 'rwo' or 'rwx', got '${_API_FILES_MODE}'." >&2
+             exit 1 ;;
+      esac
+      echo "api file volumes: mode=${_API_FILES_MODE}"
+
+      # Ingress TLS. Comes from terraform (self_managed_tls), NOT from a
+      # profile: only terraform knows whether the Secret has actually been
+      # published, and a name rendered in an environment where it has not points
+      # the Ingress at a Secret that is not there. Empty deletes the line
+      # instead, the same shape as an unset GPU reservation below.
+      TLS_SECRET_NAME="${_TLS_SECRET_NAME}"
+      if [ -z "$${TLS_SECRET_NAME}" ]; then
+        echo "ingress TLS: ManagedCertificate only"
+      else
+        echo "ingress TLS: ManagedCertificate + Secret '$${TLS_SECRET_NAME}'"
+      fi
+
+      # Regional load balancer. Fails loudly rather than deploying a Gateway
+      # that would 403 everyone or serve no certificate.
+      if [ "${_ENABLE_REGIONAL_LB}" = "true" ]; then
+        if [ -z "${_REGIONAL_IP_NAME}" ]; then
+          echo "ERROR: _ENABLE_REGIONAL_LB is true but _REGIONAL_IP_NAME is empty - terraform has not reserved the regional address." >&2
+          exit 1
+        fi
+        if [ -z "$${TLS_SECRET_NAME}" ]; then
+          echo "ERROR: _ENABLE_REGIONAL_LB is true but no TLS Secret is published. A regional load balancer cannot use a ManagedCertificate - set self_managed_tls = \"serving\" in terraform." >&2
+          exit 1
+        fi
+        # Only one of clientID/oauth2ClientSecret means Google-managed OAuth,
+        # silently, which is not what the Ingress does.
+        if [ -z "${_IAP_CLIENT_ID}" ]; then
+          echo "ERROR: _ENABLE_REGIONAL_LB is true but _IAP_CLIENT_ID is empty." >&2
+          exit 1
+        fi
+        echo "regional LB: address=${_REGIONAL_IP_NAME} tls=$${TLS_SECRET_NAME} alt-domain='${_ALT_DOMAIN}'"
+      fi
+
       find ./k8s -name "*.yaml" -print0 | while IFS= read -r -d $'\0' file; do
+        # Delete the line when nothing is published, rather than render a
+        # dangling reference; substitute explicitly otherwise.
+        if [ -z "$${TLS_SECRET_NAME}" ]; then
+          sed -i -e "/###_TLS_SECRET_NAME###/d" "$file"
+        else
+          sed -i -e "s|###_TLS_SECRET_NAME###|$${TLS_SECRET_NAME}|g" "$file"
+        fi
+
+        # Same reason: an empty second hostname must drop the list entry, not
+        # render as a blank one.
+        if [ -z "${_ALT_DOMAIN}" ]; then
+          sed -i -e "/###_ALT_DOMAIN###/d" "$file"
+        fi
+
+        # Profile-driven values first. Keys are plain uppercase identifiers, so a
+        # literal | in a value is the only thing that would break this delimiter -
+        # none of the sizing values contain one.
+        while IFS='=' read -r k v; do
+          sed -i -e "s|###_$${k}###|$${v}|g" "$file"
+        done < "$${RENDER_VARS}"
         sed -i -e "s/###_REGISTRY_NAME###/$_REGISTRY_NAME/g" "$file"
         sed -i -e "s/###ENVIRONMENT###/${_ENVIRONMENT}/g" "$file"
         sed -i -e "s/###NODE_ENV###/${_NODE_ENV}/g" "$file"
         sed -i -e "s/###LOCATION###/$LOCATION/g" "$file"
         sed -i -e "s/###PROJECT_ID###/$PROJECT_ID/g" "$file"
         sed -i -e "s/###API_SHORT_SHA###/$SHORT_SHA/g" "$file"
-        sed -i -e "s/###RAG_SHORT_SHA###/${_RAG_SHORT_SHA}/g" "$file"
         sed -i -e "s/###_GKE_CLUSTER_NAME###/${_GKE_CLUSTER_NAME}/g" "$file"
         sed -i -e "s/###_GKE_NAMESPACE###/${_GKE_NAMESPACE}/g" "$file"
         sed -i -e "s/###GOOGLE_KEY###/${_GOOGLE_KEY}/g" "$file"
         sed -i -e "s/###DOMAIN###/${_DOMAIN}/g" "$file"
         sed -i -e "s/###IP_ADDRESS_ID###/${_IP_ADDRESS_ID}/g" "$file"
+        sed -i -e "s|###_ALT_DOMAIN###|${_ALT_DOMAIN}|g" "$file"
+        sed -i -e "s|###_REGIONAL_IP_NAME###|${_REGIONAL_IP_NAME}|g" "$file"
+        sed -i -e "s|###_IAP_CLIENT_ID###|${_IAP_CLIENT_ID}|g" "$file"
         sed -i -e "s/###_SECURITY_POLICY###/${_SECURITY_POLICY}/g" "$file"
         sed -i -e "s/###APP_TITLE###/${_APP_TITLE}/g" "$file"
         sed -i -e "s/###_BRANDING_BUCKET_NAME###/${_BRANDING_BUCKET_NAME}/g" "$file"
+        sed -i -e "s|###_API_FILES_BUCKET_NAME###|${_API_FILES_BUCKET_NAME}|g" "$file"
+        # Drop the pair this mode does not use, then strip the marker from the
+        # survivors - a leftover marker would land inside a YAML value.
+        if [ "${_API_FILES_MODE}" = "rwx" ]; then
+          sed -i -e "/###_RWO_ONLY###/d" -e "s|[[:space:]]*###_RWX_ONLY###||g" "$file"
+        else
+          sed -i -e "/###_RWX_ONLY###/d" -e "s|[[:space:]]*###_RWO_ONLY###||g" "$file"
+        fi
+        # An empty name DELETES both nodeSelector lines rather than rendering
+        # them blank: affinity "specific" with no reservation leaves the pod
+        # Pending forever, with no fallback to on-demand.
+        if [ -z "${_GPU_RESERVATION_NAME}" ]; then
+          sed -i -e "/###_RESERVATION_AFFINITY###/d" -e "/###_GPU_RESERVATION_NAME###/d" "$file"
+        else
+          sed -i -e "s|###_RESERVATION_AFFINITY###|specific|g" \
+                 -e "s|###_GPU_RESERVATION_NAME###|${_GPU_RESERVATION_NAME}|g" "$file"
+        fi
         sed -i -e "s/###_K8S_SA_EMAIL###/${_K8S_SA_EMAIL}/g" "$file"
         sed -i -e "s/###_GOOGLE_MODELS###/${_GOOGLE_MODELS}/g" "$file"
         sed -i -e "s/###_GOOGLE_LOC###/${_GOOGLE_LOC}/g" "$file"
         sed -i -e "s/###_OPENAI_MODELS###/${_OPENAI_MODELS}/g" "$file"
+        sed -i -e "s|###_EMBEDDINGS_MODEL###|${_EMBEDDINGS_MODEL}|g" "$file"
+        sed -i -e "s|###_EMBEDDINGS_PROVIDER###|${_EMBEDDINGS_PROVIDER}|g" "$file"
+        sed -i -e "s|###_RAG_OPENAI_BASEURL###|${_RAG_OPENAI_BASEURL}|g" "$file"
+        sed -i -e "s|###_RAG_OPENAI_API_KEY###|${_RAG_OPENAI_API_KEY}|g" "$file"
         sed -i -e "s~###_CUSTOM_FOOTER###~${_APP_TITLE} - $${VERSION_STRING}${_CUSTOM_FOOTER}~g" "$file"
         sed -i -e "s|###_VERTEX_AI_DATASTORE_ID###|${_VERTEX_AI_DATASTORE_ID}|g" "$file"
+        # Sovereign inference placeholders. Cloud Build resolves ${_FOO} itself
+        # before bash ever runs, so bash default syntax (${_FOO:-x}) is NOT
+        # valid here - it is rejected as an invalid substitution at submit time.
+        # Defaults live in the substitutions: block at the bottom of this file.
+        sed -i -e "s|###_MODELS_BUCKET_NAME###|${_MODELS_BUCKET_NAME}|g" "$file"
+        sed -i -e "s|###_ACCELERATOR_TYPE###|${_ACCELERATOR_TYPE}|g" "$file"
+        sed -i -e "s|###_GEMMA_MODEL_NAME###|${_GEMMA_MODEL_NAME}|g" "$file"
+        sed -i -e "s|###_GEMMA_SERVED_NAME###|${_GEMMA_MODEL_NAME}|g" "$file"
+        sed -i -e "s|###_GPU_COUNT###|${_GPU_COUNT}|g" "$file"
+        # NOTE: quantization, max-model-len, max-num-seqs and the TEI model name
+        # are deliberately NOT substitutions. They are literal values in
+        # k8s/env.yaml, read by the inference pods as env vars, so they can be
+        # retuned without a Terraform apply. See the checksum step below, which
+        # is what makes such an edit actually roll the pods.
+        sed -i -e "s|###_GEMMA_CPU###|${_GEMMA_CPU}|g" "$file"
+        sed -i -e "s|###_GEMMA_MEMORY###|${_GEMMA_MEMORY}|g" "$file"
+        sed -i -e "s|###_GEMMA_MIN_REPLICAS###|${_GEMMA_MIN_REPLICAS}|g" "$file"
+        sed -i -e "s|###_GEMMA_MAX_REPLICAS###|${_GEMMA_MAX_REPLICAS}|g" "$file"
+        sed -i -e "s|###_VLLM_IMAGE_TAG###|${_VLLM_IMAGE_TAG}|g" "$file"
+        sed -i -e "s|###_TEI_IMAGE_TAG###|${_TEI_IMAGE_TAG}|g" "$file"
+        sed -i -e "s|###_TEI_MIN_REPLICAS###|${_TEI_MIN_REPLICAS}|g" "$file"
+        sed -i -e "s|###_TEI_MAX_REPLICAS###|${_TEI_MAX_REPLICAS}|g" "$file"
+      done
+
+      # rag.yaml is in here because its image tag is fixed: without the
+      # annotation an embeddings model or region change would reach the
+      # ConfigMap but never reach the running pod.
+      ENV_CHECKSUM=$(grep -E '^  (VLLM_|TEI_|EMBEDDINGS_|RAG_OPENAI_|GOOGLE_CLOUD_)' ./k8s/env.yaml \
+        | sha256sum | cut -c1-16)
+      echo "Inference config checksum: $${ENV_CHECKSUM}"
+      for file in ./k8s/vllm-gemma.yaml ./k8s/tei-embeddings.yaml ./k8s/rag.yaml; do
+        sed -i -e "s|###_ENV_CHECKSUM###|$${ENV_CHECKSUM}|g" "$file"
       done
 
 - name: 'gcr.io/cloud-builders/gcloud'
@@ -151,6 +290,44 @@ steps:
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
 - name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy Sovereign AI Inference'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      if [ "${_ENABLE_SOVEREIGN_INFERENCE}" != "true" ]; then
+        echo "Sovereign inference disabled for this environment; skipping."
+        exit 0
+      fi
+
+      # The same terragrunt flag both creates the weights bucket and arms this
+      # step, so there is a window where the bucket exists but is still empty.
+      # Deploying into that window starts GPU pods that cannot find
+      # /models/<model> and sit in CrashLoopBackOff while billing for L4s.
+      # Skip instead, so the sequence is: flip the flag -> apply (bucket
+      # created, this step skips) -> stage weights -> next build deploys.
+      if ! gcloud storage ls "gs://${_MODELS_BUCKET_NAME}/${_GEMMA_MODEL_NAME}/" >/dev/null 2>&1; then
+        echo "WARNING: no weights at gs://${_MODELS_BUCKET_NAME}/${_GEMMA_MODEL_NAME}/"
+        echo "Skipping inference deployment - GPU pods would CrashLoopBackOff."
+        echo "Stage the weights first:"
+        echo "  scripts/automate_sovereign_setup.sh --project-id \$PROJECT_ID --environment ${_ENVIRONMENT}"
+        exit 0
+      fi
+      echo "Weights present. Applying sovereign AI inference and embedding services..."
+      kubectl apply -f ./k8s/vllm-gemma.yaml --namespace=${_GKE_NAMESPACE}
+      kubectl apply -f ./k8s/tei-embeddings.yaml --namespace=${_GKE_NAMESPACE}
+      if kubectl get crd scaledobjects.keda.sh >/dev/null 2>&1; then
+        echo "KEDA CRD detected, applying autoscaler..."
+        kubectl apply -f ./k8s/keda-vllm-autoscaler.yaml --namespace=${_GKE_NAMESPACE}
+      else
+        echo "WARNING: KEDA is not installed, so the GPU fleet will not autoscale."
+        echo "Run scripts/automate_sovereign_setup.sh to install it."
+      fi
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+- name: "gcr.io/cloud-builders/kubectl"
   id: 'Deploy RAG API'
   args: ["apply", "-f", "./k8s/vectordb.yaml", "-f", "./k8s/rag.yaml", "--namespace=${_GKE_NAMESPACE}"]
   env:
@@ -181,10 +358,104 @@ steps:
 
 - name: "gcr.io/cloud-builders/kubectl"
   id: 'Deploy ingress'
-  args: ["apply", "-f", "./k8s/ingress.yaml", "--namespace=${_GKE_NAMESPACE}"]
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      # Mutually exclusive with the regional Gateway: terraform derives both
+      # from var.sovereign, so exactly one is ever true.
+      if [ "${_ENABLE_GLOBAL_LB}" != "true" ]; then
+        echo "Global load balancer disabled for this environment, skipping the Ingress."
+        # Skipping is not removing: kubectl apply never deletes, so the existing
+        # Ingress keeps running and keeps blocking terraform from releasing the
+        # global address. Delete it, its ManagedCertificate and its
+        # FrontendConfig by hand - deliberately not automated here.
+        exit 0
+      fi
+      if [ -z "${_IP_ADDRESS_ID}" ]; then
+        echo "ERROR: _ENABLE_GLOBAL_LB is true but _IP_ADDRESS_ID is empty. The Ingress would provision an ephemeral IP that DNS does not point at." >&2
+        exit 1
+      fi
+      kubectl apply -f ./k8s/ingress.yaml --namespace=${_GKE_NAMESPACE}
   env:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+- name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy regional gateway'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      # The Ingress above keeps serving either way: the two never share a
+      # Service, so this is additive and the cutover is a DNS change.
+      if [ "${_ENABLE_REGIONAL_LB}" != "true" ]; then
+        echo "Regional load balancer disabled for this environment, skipping."
+        exit 0
+      fi
+      kubectl apply -f ./k8s/gateway.yaml --namespace=${_GKE_NAMESPACE}
+      if [ "${_ADMIN_PANEL_ENABLED}" = "true" ]; then
+        kubectl apply -f ./k8s/gateway-admin.yaml --namespace=${_GKE_NAMESPACE}
+      else
+        echo "Admin panel disabled for this environment, skipping the admin route."
+      fi
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+# Defaults for the sovereign-inference substitutions.
+substitutions:
+  # Selects k8s/profiles/<name>.env for workload sizing. "default" keeps every
+  # environment on the values it ran before per-environment sizing existed;
+  # the uksh sov-* environments set this to "sovereign".
+  _PROFILE: "default"
+  # rwo keeps every environment on ReadWriteOnce disks; the uksh sov-* set this to
+  # rwx via terraform (api_files_rwx = true) to allow more than one api replica.
+  _API_FILES_MODE: "rwo"
+  _API_FILES_BUCKET_NAME: ""
+  _GPU_RESERVATION_NAME: ""
+  # Global Ingress. MUST default to "true": absence has to keep meaning "on" for
+  # any environment whose trigger has not been re-applied yet. Terraform sends
+  # "false" only in a sovereign environment, which serves on the Gateway.
+  _ENABLE_GLOBAL_LB: "true"
+  # Owned by terraform (self_managed_tls). Empty deletes spec.tls, which is the
+  # correct behaviour for every environment on a ManagedCertificate.
+  _TLS_SECRET_NAME: ""
+  # Empty in a sovereign environment, where terraform omits it and the
+  # Ingress is never applied. The step above fails loudly if it is empty while
+  # the global LB is on, rather than provisioning an ephemeral IP.
+  _IP_ADDRESS_ID: ""
+  # Regional load balancer. Defaults keep every environment whose trigger has
+  # not been re-applied building exactly as before - without them an undefined
+  # substitution fails the build at submit time.
+  _ENABLE_REGIONAL_LB: "false"
+  _REGIONAL_IP_NAME: ""
+  _IAP_CLIENT_ID: ""
+  # Second hostname on the Gateway routes, set only during a domain migration.
+  _ALT_DOMAIN: ""
+  # Appended to the api pod's claimName: empty selects the ReadWriteOnce claims,
+  # "-rwx" selects the ReadWriteMany ones.
+  _ENABLE_SOVEREIGN_INFERENCE: "false"
+  # Vertex AI is the default; the region comes from $LOCATION, not a
+  # substitution. Set _EMBEDDINGS_PROVIDER=openai with _RAG_OPENAI_BASEURL
+  # pointing at tei-embeddings-service to embed in-cluster instead - only
+  # valid while _ENABLE_SOVEREIGN_INFERENCE is true, which is what deploys it.
+  _EMBEDDINGS_MODEL: "text-embedding-004"
+  _EMBEDDINGS_PROVIDER: "vertexai"
+  _RAG_OPENAI_BASEURL: ""
+  _RAG_OPENAI_API_KEY: "not-used-by-tei"
+  _MODELS_BUCKET_NAME: ""
+  _ACCELERATOR_TYPE: "nvidia-l4"
+  _GEMMA_MODEL_NAME: "gemma-4-31B-it"
+  _GPU_COUNT: "1"
+  _GEMMA_CPU: "8"
+  _GEMMA_MEMORY: "32Gi"
+  _GEMMA_MIN_REPLICAS: "1"
+  _GEMMA_MAX_REPLICAS: "2"
+  _VLLM_IMAGE_TAG: "gemma4"
+  _TEI_IMAGE_TAG: "cpu-1.8"
+  _TEI_MIN_REPLICAS: "1"
+  _TEI_MAX_REPLICAS: "3"
 
 options:
   logging: CLOUD_LOGGING_ONLY
