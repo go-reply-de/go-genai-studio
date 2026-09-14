@@ -80,6 +80,11 @@ spec:
                 configMapKeyRef:
                   key: ALLOW_UNVERIFIED_EMAIL_LOGIN
                   name: env
+            - name: AUDIT_LOG_FAIL_CLOSED
+              valueFrom:
+                configMapKeyRef:
+                  key: AUDIT_LOG_FAIL_CLOSED
+                  name: env
             - name: APP_TITLE
               valueFrom:
                 configMapKeyRef:
@@ -466,6 +471,16 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   key: REGISTRATION_VIOLATION_SCORE
+                  name: env
+            - name: RETENTION_WEEKLY_RESET
+              valueFrom:
+                configMapKeyRef:
+                  key: RETENTION_WEEKLY_RESET
+                  name: env
+            - name: RETENTION_WEEKLY_RESET_TZ
+              valueFrom:
+                configMapKeyRef:
+                  key: RETENTION_WEEKLY_RESET_TZ
                   name: env
             - name: SD_WEBUI_URL
               valueFrom:
