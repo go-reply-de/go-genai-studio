@@ -177,6 +177,7 @@ steps:
         sed -i -e "s/###API_SHORT_SHA###/$SHORT_SHA/g" "$file"
         sed -i -e "s/###_GKE_CLUSTER_NAME###/${_GKE_CLUSTER_NAME}/g" "$file"
         sed -i -e "s/###_GKE_NAMESPACE###/${_GKE_NAMESPACE}/g" "$file"
+        sed -i -e "s/###_APPLICATION###/${_APPLICATION}/g" "$file"
         sed -i -e "s/###GOOGLE_KEY###/${_GOOGLE_KEY}/g" "$file"
         sed -i -e "s/###DOMAIN###/${_DOMAIN}/g" "$file"
         sed -i -e "s/###IP_ADDRESS_ID###/${_IP_ADDRESS_ID}/g" "$file"
@@ -285,6 +286,27 @@ steps:
 - name: "gcr.io/cloud-builders/kubectl"
   id: 'Apply K8S components'
   args: ["apply", "-f", "./k8s/env.yaml", "-f", "./k8s/mongodb.yaml", "-f", "./k8s/meilisearch.yaml", "-f", "./k8s/maintenance-page.yaml", "-f", "./k8s/metrics-exporter.yaml", "--namespace=${_GKE_NAMESPACE}"]
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+- name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy backup scope'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      if [ "${_ENABLE_BACKUP_FILTERING}" != "true" ]; then
+        echo "Backup filtering disabled for this environment, skipping the ProtectedApplication."
+        exit 0
+      fi
+      # A gkebackup.gke.io custom resource: applying it without the Backup for
+      # GKE agent installed fails, so check rather than let the step break.
+      if ! kubectl get crd protectedapplications.gkebackup.gke.io >/dev/null 2>&1; then
+        echo "ERROR: _ENABLE_BACKUP_FILTERING is true but the Backup for GKE agent is not installed on this cluster." >&2
+        exit 1
+      fi
+      kubectl apply -f ./k8s/protected-application.yaml --namespace=${_GKE_NAMESPACE}
   env:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
@@ -413,6 +435,15 @@ substitutions:
   # rwx via terraform (api_files_rwx = true) to allow more than one api replica.
   _API_FILES_MODE: "rwo"
   _API_FILES_BUCKET_NAME: ""
+  # Applies k8s/protected-application.yaml. False is the safe default: a trigger
+  # not yet re-applied must not try to apply a custom resource whose CRD may be
+  # absent. Terraform sends "true" for sovereign environments.
+  _ENABLE_BACKUP_FILTERING: "false"
+  # Names the ProtectedApplication and the label that scopes it. Terraform sends
+  # var.application; this default matches every environment deployed so far, so
+  # a trigger not yet re-applied renders the same value it would anyway. Must be
+  # a valid label value: alphanumerics, '-', '_' or '.', 63 characters or fewer.
+  _APPLICATION: "genai-portal"
   _GPU_RESERVATION_NAME: ""
   # Global Ingress. MUST default to "true": absence has to keep meaning "on" for
   # any environment whose trigger has not been re-applied yet. Terraform sends

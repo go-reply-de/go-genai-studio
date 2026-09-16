@@ -4,6 +4,8 @@ metadata:
   name: mongodb
   labels:
     app: mongodb
+    # Scopes this workload into k8s/protected-application.yaml.
+    gkebackup.gke.io/application: ###_APPLICATION###
   namespace: ###_GKE_NAMESPACE###
 spec:
   replicas: 1
@@ -16,6 +18,9 @@ spec:
     metadata:
       labels:
         app: mongodb
+        # Must be here too, not only on the Deployment: the ReplicaSet inherits
+        # the template's labels, and Backup for GKE resolves pods through it.
+        gkebackup.gke.io/application: ###_APPLICATION###
     spec:
       containers:
         - args:
@@ -31,6 +36,10 @@ spec:
           volumeMounts:
             - mountPath: /data/db
               name: mongodb-claim0
+            - mountPath: /dump
+              name: mongodb-dump
+            - mountPath: /scripts
+              name: mongodb-dump-script
           ports:
             - containerPort: 27017
       restartPolicy: Always
@@ -38,6 +47,13 @@ spec:
         - name: mongodb-claim0
           persistentVolumeClaim:
             claimName: mongodb-claim0
+        - name: mongodb-dump
+          persistentVolumeClaim:
+            claimName: mongodb-dump
+        - name: mongodb-dump-script
+          configMap:
+            name: mongodb-dump-script
+            defaultMode: 0755
 ---
 apiVersion: v1
 kind: Service
@@ -59,6 +75,10 @@ kind: PersistentVolumeClaim
 metadata:
   labels:
     io.kompose.service: mongodb-claim0
+    # A member of the application, so the backup component can resolve it.
+    # Deliberately NOT carrying gkebackup.gke.io/backup - this volume holds
+    # patient data and its contents are never captured.
+    gkebackup.gke.io/application: ###_APPLICATION###
   name: mongodb-claim0
   namespace: ###_GKE_NAMESPACE###
 spec:
@@ -68,3 +88,104 @@ spec:
     requests:
       # Driven by k8s/profiles/*.env. Expansion is one-way.
       storage: ###_MONGO_DISK###
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-dump
+  namespace: ###_GKE_NAMESPACE###
+  labels:
+    gkebackup.gke.io/application: ###_APPLICATION###
+    # The only volume in the namespace whose CONTENTS reach a Backup.
+    gkebackup.gke.io/backup: include
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # Driven by k8s/profiles/*.env. Sized for the non-patient slice only.
+      storage: ###_MONGO_DUMP_DISK###
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongodb-dump-script
+  namespace: ###_GKE_NAMESPACE###
+  labels:
+    gkebackup.gke.io/application: ###_APPLICATION###
+data:
+  dump-collections.sh: |
+    #!/bin/sh
+    # Allow-list, not a deny-list: a collection absent from the lists below is
+    # never captured, so a future upstream release cannot add a patient-bearing
+    # one to the backup by omission. Adding a name here is a review decision.
+    #
+    # `files` is deliberately absent - it holds patient uploads too. Agent
+    # documents are not backed up at all; they are re-attached through the UI
+    # after a restore, which rebuilds the row, the blob and the embedding
+    # together.
+    set -eu
+
+    DUMP=/dump/mongo
+    DB=LibreChat
+
+    # A name matching no real collection dumps nothing and still exits 0, so a
+    # typo would ship an empty backup unnoticed. These four are asserted below.
+    REQUIRED="agents auditlogs roles users"
+
+    # Created only once the corresponding feature is used; absence is normal in
+    # a fresh environment and is not an error.
+    OPTIONAL="accessroles aclentries actions agentapikeys agentcategories
+              balances banners chatprojects configs groups mcpservers
+              promptgroups prompts skillfiles skills systemgrants"
+
+    # Asserted after the fact as defence in depth. The allow-list is the
+    # control; this catches an accidental addition to it.
+    FORBIDDEN="conversations messages files sharedlinks conversationtags
+               memoryentries toolcalls presets sessions tokens transactions"
+
+    rm -rf "$DUMP"
+    mkdir -p "$DUMP"
+
+    for c in $REQUIRED $OPTIONAL; do
+      mongodump --db="$DB" --collection="$c" --gzip --out="$DUMP"
+    done
+
+    # The snapshot is taken as soon as this hook returns. Without an explicit
+    # flush it captures directory entries whose data is still in page cache, and
+    # the backup succeeds holding zero-length files that no restore can read.
+    sync
+
+    # -s, not -f: a zero-length file passes an existence test, which is exactly
+    # the failure the flush above prevents. Metadata is non-empty for any
+    # collection, including an empty one.
+    for c in $REQUIRED; do
+      if [ ! -s "$DUMP/$DB/$c.metadata.json.gz" ]; then
+        echo "FAILED: required collection '$c' produced no output - check the name" >&2
+        rm -rf "$DUMP"
+        exit 1
+      fi
+    done
+
+    for c in $FORBIDDEN; do
+      if [ -e "$DUMP/$DB/$c.bson.gz" ]; then
+        echo "REFUSING: '$c' reached the dump - it must never be backed up" >&2
+        rm -rf "$DUMP"
+        exit 1
+      fi
+    done
+
+    echo "dumped $(ls "$DUMP/$DB"/*.bson.gz | wc -l) collections"
+  load-collections.sh: |
+    #!/bin/sh
+    set -eu
+
+    # A namespace-scoped restore also restores the ProtectedApplication, which
+    # fires this hook against an export volume provisioned empty. No export is
+    # not an error - the database is restored by its own plan, separately.
+    if [ ! -d /dump/mongo ]; then
+      echo "no export present, nothing to load"
+      exit 0
+    fi
+
+    mongorestore --gzip --drop --dir=/dump/mongo

@@ -1,0 +1,56 @@
+# Scopes the second backup plan to MongoDB alone, and replaces its volume
+# snapshot with an allow-listed export. Applied in sovereign environments only —
+# see the "Deploy backup scope" step in cloudbuild.yaml.
+#
+# The first plan is namespace-scoped and captures every object with no volume
+# data at all, so nothing here needs to cover anything but the database.
+apiVersion: gkebackup.gke.io/v1
+kind: ProtectedApplication
+metadata:
+  name: ###_APPLICATION###
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  # Selection is purely by label: an object without it is not part of the
+  # application and is not captured. Only MongoDB's own objects carry it.
+  resourceSelection:
+    type: Selector
+    selector:
+      matchLabels:
+        gkebackup.gke.io/application: ###_APPLICATION###
+
+  components:
+    - name: mongodb
+      resourceKind: Deployment
+      resourceNames:
+        - mongodb
+      strategy:
+        type: DumpAndLoad
+        dumpAndLoad:
+          # Deployment names, not component names — they happen to match here.
+          dumpTarget: mongodb
+          loadTarget: mongodb
+          dumpHooks:
+            - name: mongo-dump
+              container: chat-mongodb
+              command:
+                - /bin/sh
+                - -c
+                - /scripts/dump-collections.sh
+              timeoutSeconds: 1800
+              onError: Fail
+          loadHooks:
+            - name: mongo-load
+              container: chat-mongodb
+              command:
+                - /bin/sh
+                - -c
+                - /scripts/load-collections.sh
+              timeoutSeconds: 1800
+              onError: Fail
+          # Decides which of the application's volumes have their CONTENTS
+          # captured. Separate from resourceSelection, which decides membership:
+          # mongodb-claim0 is a member so the component can resolve it, but
+          # carries no backup label, so /data/db is never captured.
+          volumeSelector:
+            matchLabels:
+              gkebackup.gke.io/backup: include
