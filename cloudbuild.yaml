@@ -89,7 +89,9 @@ steps:
       # (awk keeps the last assignment). Adding a tunable is one line in a
       # profile, with no new substitution or Terraform variable. _PROFILE may
       # name several, space separated, applied left to right.
-      RENDER_VARS=$(mktemp)
+      # In /workspace rather than a mktemp, so later steps can read back the
+      # same rendered values the manifests got - see "Deploy Redis".
+      RENDER_VARS=/workspace/render-vars.env
       PROFILE_FILES="./k8s/profiles/default.env"
       for p in ${_PROFILE}; do
         if [ "$$p" = "default" ]; then continue; fi
@@ -353,6 +355,32 @@ steps:
 - name: "gcr.io/cloud-builders/kubectl"
   id: 'Deploy RAG API'
   args: ["apply", "-f", "./k8s/vectordb.yaml", "-f", "./k8s/rag.yaml", "--namespace=${_GKE_NAMESPACE}"]
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+- name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy Redis'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      # Gated on the same USE_REDIS the api pods get, read back from the
+      # rendered profile values, so the client can never be switched on without
+      # its server. Before 'Deploy API' so a first rollout finds Redis already
+      # accepting connections instead of retrying through its startup probe.
+      USE_REDIS=$(sed -n 's/^USE_REDIS=//p' /workspace/render-vars.env)
+      REDIS_URI=$(sed -n 's/^REDIS_URI=//p' /workspace/render-vars.env)
+      if [ "$$USE_REDIS" != "true" ]; then
+        echo "USE_REDIS is '$$USE_REDIS' for profile '${_PROFILE}', skipping Redis."
+        exit 0
+      fi
+      if [ -z "$$REDIS_URI" ]; then
+        echo "ERROR: USE_REDIS is true but REDIS_URI is empty - the api container throws at boot on that combination." >&2
+        exit 1
+      fi
+      kubectl apply -f ./k8s/redis.yaml --namespace=${_GKE_NAMESPACE}
+      kubectl rollout status deploy/redis --namespace=${_GKE_NAMESPACE} --timeout=180s
   env:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"

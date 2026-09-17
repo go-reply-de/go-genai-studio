@@ -402,6 +402,11 @@ spec:
                 configMapKeyRef:
                   key: MONGO_URI
                   name: env
+            - name: MONGO_MAX_POOL_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  key: MONGO_MAX_POOL_SIZE
+                  name: env
             - name: NODE_ENV
               valueFrom:
                 configMapKeyRef:
@@ -471,6 +476,26 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   key: REGISTRATION_VIOLATION_SCORE
+                  name: env
+            - name: USE_REDIS
+              valueFrom:
+                configMapKeyRef:
+                  key: USE_REDIS
+                  name: env
+            - name: USE_REDIS_STREAMS
+              valueFrom:
+                configMapKeyRef:
+                  key: USE_REDIS_STREAMS
+                  name: env
+            - name: REDIS_URI
+              valueFrom:
+                configMapKeyRef:
+                  key: REDIS_URI
+                  name: env
+            - name: REDIS_RETRY_MAX_ATTEMPTS
+              valueFrom:
+                configMapKeyRef:
+                  key: REDIS_RETRY_MAX_ATTEMPTS
                   name: env
             - name: RETENTION_WEEKLY_RESET
               valueFrom:
@@ -543,12 +568,16 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
+          # 120s, not 30s: a saturated event loop stops accepting the socket
+          # long before the process is actually dead, and killing it there costs
+          # every conversation on the pod plus a ~2min startupProbe. Readiness
+          # above still pulls a stalled pod out of the load balancer in 30s.
           livenessProbe:
             tcpSocket:
               port: 80
-            periodSeconds: 10
+            periodSeconds: 15
             timeoutSeconds: 3
-            failureThreshold: 3
+            failureThreshold: 8
           volumeMounts:
             - mountPath: /app/librechat.yaml
               name: config
