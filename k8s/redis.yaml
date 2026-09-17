@@ -1,0 +1,87 @@
+# Shared cache, rate-limit counters and resumable stream jobs for the api pods.
+# Applied only where the rendered USE_REDIS is "true" - the "Deploy Redis" step
+# in cloudbuild.yaml reads the same profile value the api pods get, so the
+# client can never be switched on without its server.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: redis
+  name: redis
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  # Two pods behind one Service would split the rate-limit counters and strand
+  # in-flight stream jobs on whichever one is about to go away.
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          args:
+            - redis-server
+            # No persistence: stream jobs hold generated answer text, which is
+            # patient data. Nothing here may reach a disk or a Backup. It also
+            # keeps the pod PVC-free, so it can reschedule onto any node.
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+            # Reached only through its ClusterIP Service. Without this, Redis
+            # with no bind directive and no password answers loopback only and
+            # every api pod fails to connect. Same in-cluster posture as
+            # mongodb's --noauth - add --requirepass here if that changes.
+            - --protected-mode
+            - "no"
+            # The headroom below the memory request is what keeps eviction from
+            # ever running: allkeys-lru is the safety valve, and if it does run
+            # it drops a live stream. Alert on evicted_keys, not on memory.
+            - --maxmemory
+            - "###_REDIS_MAXMEMORY###"
+            - --maxmemory-policy
+            - allkeys-lru
+          resources:
+            # Driven by k8s/profiles/*.env
+            requests:
+              cpu: "###_REDIS_CPU###"
+              memory: "###_REDIS_MEMORY###"
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: redis-service
+  name: redis-service
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  ports:
+    - name: "tcp"
+      port: 6379
+      targetPort: 6379
+  selector:
+    app: redis
