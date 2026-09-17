@@ -30,7 +30,6 @@ spec:
       sectionName: https
   hostnames:
     - admin.###DOMAIN###
-    - admin.###_ALT_DOMAIN###
   rules:
     - backendRefs:
         - name: admin-service-gw

@@ -145,7 +145,7 @@ steps:
           echo "ERROR: _ENABLE_REGIONAL_LB is true but _IAP_CLIENT_ID is empty." >&2
           exit 1
         fi
-        echo "regional LB: address=${_REGIONAL_IP_NAME} tls=$${TLS_SECRET_NAME} alt-domain='${_ALT_DOMAIN}'"
+        echo "regional LB: address=${_REGIONAL_IP_NAME} tls=$${TLS_SECRET_NAME}"
       fi
 
       find ./k8s -name "*.yaml" -print0 | while IFS= read -r -d $'\0' file; do
@@ -155,12 +155,6 @@ steps:
           sed -i -e "/###_TLS_SECRET_NAME###/d" "$file"
         else
           sed -i -e "s|###_TLS_SECRET_NAME###|$${TLS_SECRET_NAME}|g" "$file"
-        fi
-
-        # Same reason: an empty second hostname must drop the list entry, not
-        # render as a blank one.
-        if [ -z "${_ALT_DOMAIN}" ]; then
-          sed -i -e "/###_ALT_DOMAIN###/d" "$file"
         fi
 
         # Profile-driven values first. Keys are plain uppercase identifiers, so a
@@ -181,7 +175,6 @@ steps:
         sed -i -e "s/###GOOGLE_KEY###/${_GOOGLE_KEY}/g" "$file"
         sed -i -e "s/###DOMAIN###/${_DOMAIN}/g" "$file"
         sed -i -e "s/###IP_ADDRESS_ID###/${_IP_ADDRESS_ID}/g" "$file"
-        sed -i -e "s|###_ALT_DOMAIN###|${_ALT_DOMAIN}|g" "$file"
         sed -i -e "s|###_REGIONAL_IP_NAME###|${_REGIONAL_IP_NAME}|g" "$file"
         sed -i -e "s|###_IAP_CLIENT_ID###|${_IAP_CLIENT_ID}|g" "$file"
         sed -i -e "s/###_SECURITY_POLICY###/${_SECURITY_POLICY}/g" "$file"
@@ -306,7 +299,15 @@ steps:
         echo "ERROR: _ENABLE_BACKUP_FILTERING is true but the Backup for GKE agent is not installed on this cluster." >&2
         exit 1
       fi
+      # The controller evaluates the application once, when the resource is
+      # written, and does not re-check pod readiness afterwards. Applying while
+      # mongodb is still starting leaves it stuck at readyToBackup=false with
+      # "no ready Pod for dump Deployment", and every backup then fails until
+      # someone touches the resource by hand. Wait for the rollout first.
+      kubectl rollout status deploy/mongodb --namespace=${_GKE_NAMESPACE} --timeout=300s
       kubectl apply -f ./k8s/protected-application.yaml --namespace=${_GKE_NAMESPACE}
+      kubectl wait --for=jsonpath='{.status.readyToBackup}'=true \
+        protectedapplication/${_APPLICATION} --namespace=${_GKE_NAMESPACE} --timeout=120s
   env:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
@@ -462,8 +463,6 @@ substitutions:
   _ENABLE_REGIONAL_LB: "false"
   _REGIONAL_IP_NAME: ""
   _IAP_CLIENT_ID: ""
-  # Second hostname on the Gateway routes, set only during a domain migration.
-  _ALT_DOMAIN: ""
   # Appended to the api pod's claimName: empty selects the ReadWriteOnce claims,
   # "-rwx" selects the ReadWriteMany ones.
   _ENABLE_SOVEREIGN_INFERENCE: "false"

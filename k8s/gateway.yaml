@@ -77,10 +77,7 @@ spec:
     - name: genai-studio-regional-###ENVIRONMENT###
       sectionName: https
   hostnames:
-    # Second name is empty except during a domain migration, when the old and
-    # new hostnames must both resolve. The render step deletes it by line.
     - ###DOMAIN###
-    - ###_ALT_DOMAIN###
   rules:
     - backendRefs:
         - name: api-service-gw
