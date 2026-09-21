@@ -598,6 +598,14 @@ spec:
               subPath: auth.json
               readOnly: true
       restartPolicy: Always
+      # Above the app's own 60s drain budget (SHUTDOWN_TIMEOUT_MS in
+      # packages/api/src/app/shutdown.ts). At the 30s default Kubernetes
+      # SIGKILLs halfway through a drain that would have finished, and every
+      # answer still streaming on the pod is lost with nothing written to Mongo.
+      # Covers deploys and Autopilot evictions; a generation longer than the
+      # budget, or a node hard-failure, is still lost - Redis holds the stream's
+      # output, not the upstream call, so no other pod can take it over.
+      terminationGracePeriodSeconds: 75
       volumes:
         - configMap:
             items:

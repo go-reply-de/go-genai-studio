@@ -393,6 +393,50 @@ steps:
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
 - name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy API autoscaler'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      # Gated on the storage mode rather than a flag of its own: while
+      # api-images is ReadWriteOnce the second replica sits Pending on
+      # FailedAttachVolume, so an HPA there would scale into broken pods. After
+      # 'Deploy API' so it never targets a Deployment that does not exist yet.
+      #
+      # NOTE api.yaml still carries spec.replicas, so each deploy resets the
+      # count to API_MIN_REPLICAS and the HPA scales back up within a sync
+      # period. Harmless, because a rolling deploy replaces every pod anyway.
+      if [ "${_API_FILES_MODE}" != "rwx" ]; then
+        echo "_API_FILES_MODE is '${_API_FILES_MODE}', skipping the api HPA - ReadWriteOnce storage cannot host a second replica."
+        exit 0
+      fi
+      kubectl apply -f ./k8s/hpa.yaml --namespace=${_GKE_NAMESPACE}
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+- name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy availability probe'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      # Same PROBE_ENABLED the manifest renders from, so the switch lives in one
+      # place. After 'Deploy API' because the probe targets api-service; it
+      # would retry anyway, but a first rollout should not log failures it was
+      # always going to log.
+      PROBE_ENABLED=$(sed -n 's/^PROBE_ENABLED=//p' /workspace/render-vars.env)
+      if [ "$$PROBE_ENABLED" != "true" ]; then
+        echo "PROBE_ENABLED is '$$PROBE_ENABLED' for profile '${_PROFILE}', skipping the availability probe."
+        exit 0
+      fi
+      kubectl apply -f ./k8s/probe.yaml --namespace=${_GKE_NAMESPACE}
+      kubectl rollout status deploy/api-probe --namespace=${_GKE_NAMESPACE} --timeout=120s
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+- name: "gcr.io/cloud-builders/kubectl"
   id: 'Deploy Admin Panel'
   entrypoint: bash
   args:

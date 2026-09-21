@@ -10,7 +10,10 @@ metadata:
     # moving that volume to RWX buys broken pods, not capacity.
     #
     # The target is a PERCENTAGE OF THE CPU REQUEST - at a 10m request, 80% was
-    # 8m and the autoscaler pinned to max immediately.
+    # 8m and the autoscaler pinned to max immediately. It has to move with
+    # API_CPU in the other direction too: the api is a single Node process, so
+    # it cannot reach 80% of a multi-core request and would never scale out.
+    # Hence the profile-driven target below rather than a fixed 80.
     io.uksh.replica-bounds-source: "k8s/profiles/*.env"
 spec:
   minReplicas: ###_API_MIN_REPLICAS###
@@ -19,7 +22,7 @@ spec:
   - resource:
       name: cpu
       target:
-        averageUtilization: 80
+        averageUtilization: ###_API_HPA_TARGET_CPU###
         type: Utilization
     type: Resource
   scaleTargetRef:
