@@ -171,7 +171,13 @@
     "pluginKey": "web_grounding_enterprise",
     "description": "Search and interact with the GDPR-compliant grounded Google tool Web Grounding for Enterprise.",
     "icon": "https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg",
-    "authConfig": []
+    "authConfig": [
+      {
+        "authField": "WEB_GROUNDING_ALLOWED_DOMAINS",
+        "label": "Restrict to these source domains (optional)",
+        "description": "Comma-separated domains used to narrow the approved source list, e.g. awmf.org, rki.de. Leave empty to search all approved sources. Domains outside the approved list are ignored."
+      }
+    ]
   },
   {
     "name": "Gemini Image Tools",

@@ -3,7 +3,16 @@ const { z } = require('zod');
 const { Tool } = require('@librechat/agents/langchain/tools');
 const { VertexAI } = require('@google-cloud/vertexai');
 const { logger } = require('@librechat/data-schemas');
-const { formatGroundingResponse } = require('../util/vertexGrounding');
+const { formatGroundingResponse, extractGroundingResponse } = require('../util/vertexGrounding');
+const {
+    parseTierConfig,
+    buildTierQuery,
+    runCascade,
+    formatAnswer,
+    narrowTiers,
+    buildRankedQuery,
+    rankResponse,
+} = require('../util/groundingPolicy');
 
 /**
  * Vertex AI multi-region location values (e.g. `eu`, `us`) are not valid
@@ -16,6 +25,25 @@ const VERTEX_MULTI_REGION_ENDPOINTS = {
     us: 'aiplatform.us.rep.googleapis.com',
     global: 'aiplatform.googleapis.com',
 };
+
+/**
+ * Mounted next to manifest.json from a ConfigMap. Absent means the tool keeps
+ * its unrestricted behaviour; malformed throws, because a config that silently
+ * approves nothing would reject every question.
+ */
+function loadSourceTiers() {
+    const configPath =
+        process.env.WEB_GROUNDING_SOURCES_FILE ||
+        path.join(__dirname, '..', 'grounding-sources.json');
+    let raw;
+    try {
+        raw = require(configPath);
+    } catch (e) {
+        logger.debug('No grounding source tiers configured; web grounding stays unrestricted.');
+        return null;
+    }
+    return parseTierConfig(raw);
+}
 
 class WebGroundingEnterprise extends Tool {
 
@@ -32,6 +60,12 @@ class WebGroundingEnterprise extends Tool {
 
         /* Used to initialize the Tool without necessary variables. */
         this.override = fields.override ?? false;
+        this.tiers = loadSourceTiers();
+        this.maxTiers = Number(process.env.WEB_GROUNDING_MAX_TIERS) || undefined;
+        this.userDomains = fields.WEB_GROUNDING_ALLOWED_DOMAINS ?? '';
+        // "ranked" asks once across every approved domain and orders the result;
+        // "cascade" searches one tier at a time. See docs in groundingPolicy.
+        this.strategy = process.env.WEB_GROUNDING_STRATEGY || 'cascade';
         this.geminiModel = fields.geminiModel || 'gemini-2.5-flash';
 
         let serviceKey = {};
@@ -118,15 +152,39 @@ class WebGroundingEnterprise extends Tool {
         }
     }
 
+    async _ask(text) {
+        const streamingResult = await this.generativeModel.generateContentStream({
+            contents: [{ role: 'user', parts: [{ text }] }]
+        });
+        return await streamingResult.response;
+    }
+
     async _call(data) {
         const { query } = data;
 
         try {
-            const streamingResult = await this.generativeModel.generateContentStream({
-                contents: [{ role: 'user', parts: [{ text: query }] }]
-            })
-            const aggregatedResponse = await streamingResult.response;
-            return formatGroundingResponse(aggregatedResponse);
+            if (!this.tiers?.length) {
+                return formatGroundingResponse(await this._ask(query));
+            }
+
+            const tiers = narrowTiers(this.tiers, this.userDomains);
+            const result =
+                this.strategy === 'ranked'
+                    ? rankResponse(
+                        extractGroundingResponse(await this._ask(buildRankedQuery(query, tiers))),
+                        tiers,
+                    )
+                    : await runCascade({
+                        tiers,
+                        maxTiers: this.maxTiers,
+                        ask: async (tier) =>
+                            extractGroundingResponse(await this._ask(buildTierQuery(query, tier))),
+                    });
+
+            if (!result.hit) {
+                logger.debug(`Web grounding found no approved source for: ${query}`);
+            }
+            return formatAnswer(result);
         } catch (error) {
             logger.error('Web Grounding for Enterprise request failed', error);
             return 'There was an error with the Web Grounding for Enterprise Search.';

@@ -537,6 +537,11 @@ spec:
                 configMapKeyRef:
                   key: CUSTOM_FOOTER
                   name: env
+            - name: WEB_GROUNDING_ALLOWED_DOMAINS
+              valueFrom:
+                configMapKeyRef:
+                  key: WEB_GROUNDING_ALLOWED_DOMAINS
+                  name: env
             - name: GOOGLE_SERVICE_KEY_FILE
               valueFrom:
                 secretKeyRef:
@@ -585,6 +590,11 @@ spec:
             - mountPath: /app/api/app/clients/tools/manifest.json
               name: plugin-manifest
               subPath: manifest.json
+            # Absent in environments without the ConfigMap, which leaves web
+            # grounding unrestricted.
+            - mountPath: /app/api/app/clients/tools/grounding-sources.json
+              name: grounding-sources
+              subPath: grounding-sources.json
             - mountPath: /app/client/public/images
               name: api-images
             - mountPath: /app/uploads
@@ -619,6 +629,13 @@ spec:
                 path: manifest.json
             name: plugin-manifest
           name: plugin-manifest
+        - configMap:
+            items:
+              - key: grounding-sources.json
+                path: grounding-sources.json
+            name: grounding-sources
+            optional: true
+          name: grounding-sources
         # Exactly one pair survives "Modify K8S manifests". rwx mounts ONE bucket
         # twice via only-dir, which needs inline volumes: the CSI driver keys a PV
         # by its bucket, so two PVs sharing one collapse into a single mount.
