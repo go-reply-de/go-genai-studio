@@ -537,11 +537,6 @@ spec:
                 configMapKeyRef:
                   key: CUSTOM_FOOTER
                   name: env
-            - name: WEB_GROUNDING_ALLOWED_DOMAINS
-              valueFrom:
-                configMapKeyRef:
-                  key: WEB_GROUNDING_ALLOWED_DOMAINS
-                  name: env
             - name: GOOGLE_SERVICE_KEY_FILE
               valueFrom:
                 secretKeyRef:

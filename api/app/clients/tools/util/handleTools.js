@@ -201,11 +201,7 @@ const loadTools = async ({
       return new GoogleVertexAI(fields);
     },
     web_grounding_enterprise: async (_toolContextMap) => {
-      // Optional: narrows the approved source tiers, so a missing value is normal.
-      const authFields = getAuthFields('web_grounding_enterprise');
-      const authValues = await loadAuthValues({ userId: user, authFields, throwError: false });
       const fields = {
-        ...authValues,
         geminiModel: agent?.model || 'gemini-2.5-pro'
       };
       return new WebGroundingEnterprise(fields);

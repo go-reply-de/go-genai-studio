@@ -9,7 +9,6 @@ const {
     buildTierQuery,
     runCascade,
     formatAnswer,
-    narrowTiers,
     buildRankedQuery,
     rankResponse,
 } = require('../util/groundingPolicy');
@@ -62,7 +61,6 @@ class WebGroundingEnterprise extends Tool {
         this.override = fields.override ?? false;
         this.tiers = loadSourceTiers();
         this.maxTiers = Number(process.env.WEB_GROUNDING_MAX_TIERS) || undefined;
-        this.userDomains = fields.WEB_GROUNDING_ALLOWED_DOMAINS ?? '';
         // "ranked" asks once across every approved domain and orders the result;
         // "cascade" searches one tier at a time. See docs in groundingPolicy.
         this.strategy = process.env.WEB_GROUNDING_STRATEGY || 'cascade';
@@ -167,7 +165,7 @@ class WebGroundingEnterprise extends Tool {
                 return formatGroundingResponse(await this._ask(query));
             }
 
-            const tiers = narrowTiers(this.tiers, this.userDomains);
+            const tiers = this.tiers;
             const result =
                 this.strategy === 'ranked'
                     ? rankResponse(

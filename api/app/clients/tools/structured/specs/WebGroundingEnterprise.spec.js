@@ -59,24 +59,6 @@ describe('WebGroundingEnterprise source cascade', () => {
   });
 });
 
-describe('WebGroundingEnterprise user narrowing', () => {
-  test('never asks a tier the user narrowed away', async () => {
-    const tool = new WebGroundingEnterprise({
-      override: true,
-      WEB_GROUNDING_ALLOWED_DOMAINS: 'rki.de',
-    });
-    tool.tiers = tiers;
-    const model = stubModel([envelope('Meldepflicht nach IfSG.', 'rki.de')]);
-    tool.generativeModel = model;
-
-    await tool._call({ query: 'Meldepflicht Pneumonie' });
-
-    expect(model.asked).toHaveLength(1);
-    expect(model.asked[0]).toContain('rki.de');
-    expect(model.asked[0]).not.toContain('awmf.org');
-  });
-});
-
 describe('WebGroundingEnterprise ranked strategy', () => {
   test('makes exactly one call and still prefers the higher tier', async () => {
     const tool = new WebGroundingEnterprise({ override: true });

@@ -84,8 +84,6 @@ function buildTierQuery(query, tier) {
   return [
     `Answer using only sources from these domains: ${domains}.`,
     `If they hold nothing relevant, reply with exactly ${NO_SOURCE_SENTINEL} and nothing else.`,
-    'For every source, quote its own identifier verbatim from the document',
-    '(AWMF-Register-Nr., PMID, DOI or the publication title). Do not invent one.',
     '',
     query,
   ].join('\n');
@@ -201,7 +199,7 @@ function sourceNumbers(sources) {
     }
     numbers.set(source.index, uris.indexOf(source.uri) + 1);
   }
-  return { numbers, count: uris.length, uris };
+  return { numbers, count: uris.length };
 }
 
 /**
@@ -223,7 +221,9 @@ function annotateInline(text, claims, sources) {
       continue;
     }
     const charEnd = byteToCharIndex(text, claim.endIndex);
-    const point = points.find((p) => p >= charEnd);
+    // A span ending at the very end of the text sits past the last boundary,
+    // which is before the closing punctuation - cite the final sentence.
+    const point = points.find((p) => p >= charEnd) ?? points[points.length - 1];
     if (point === undefined) {
       continue;
     }
@@ -237,33 +237,11 @@ function annotateInline(text, claims, sources) {
   for (const point of [...byPoint.keys()].sort((a, b) => b - a)) {
     const marker = [...byPoint.get(point)]
       .sort((a, b) => a - b)
-      // Escaped brackets inside a reference-style link, so the marker renders
-      // as a clickable "[1]" while each URL is written once at the end.
-      .map((n) => `[\\[${n}\\]][s${n}]`)
+      .map((n) => `[${n}]`)
       .join('');
     annotated = `${annotated.slice(0, point)} ${marker}${annotated.slice(point)}`;
   }
   return annotated;
-}
-
-/**
- * Applies a user's per-tool domain list on top of the admin tiers. It can only
- * intersect, never add, so no user can approve a source the admin did not.
- */
-function narrowTiers(tiers, userDomains) {
-  const wanted = (userDomains ?? '')
-    .split(',')
-    .map((d) => d.trim().toLowerCase())
-    .filter(Boolean);
-  if (!wanted.length) {
-    return tiers;
-  }
-  return tiers
-    .map((tier) => ({
-      ...tier,
-      domains: tier.domains.filter((d) => wanted.includes(d.toLowerCase())),
-    }))
-    .filter((tier) => tier.domains.length);
 }
 
 /**
@@ -280,8 +258,6 @@ function buildRankedQuery(query, tiers) {
     'higher in the list. Use a lower group only where the ones above hold nothing.',
     ...preference,
     `If none of them hold anything relevant, reply with exactly ${NO_SOURCE_SENTINEL} and nothing else.`,
-    'For every source, quote its own identifier verbatim from the document',
-    '(AWMF-Register-Nr., PMID, DOI or the publication title). Do not invent one.',
     '',
     query,
   ].join('\n');
@@ -329,10 +305,10 @@ const NO_APPROVED_SOURCE =
 function formatSources(sources, tier) {
   const seen = new Map(sources.map((source) => [source.uri, source]));
   const unique = [...seen.values()];
-  const lines = unique.map((source, i) => `${i + 1}. [${source.domain}][s${i + 1}]`);
-  // Link definitions render as nothing and let every marker above reuse the URL.
-  const definitions = unique.map((source, i) => `[s${i + 1}]: ${source.uri}`);
-  return [`Sources (${tier?.name ?? 'approved'}):`, ...lines, '', ...definitions].join('\n');
+  // Written as a complete markdown link so the calling model can copy the
+  // string verbatim rather than joining a label to a separate definition.
+  const lines = unique.map((source, i) => `${i + 1}. [${source.domain}](${source.uri})`);
+  return [`Sources (${tier?.name ?? 'approved'}):`, ...lines].join('\n');
 }
 
 function formatAnswer(result) {
@@ -358,7 +334,6 @@ module.exports = {
   buildTierQuery,
   formatAnswer,
   parseTierConfig,
-  narrowTiers,
   byteToCharIndex,
   citationPoints,
   annotateInline,

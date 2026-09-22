@@ -7,7 +7,6 @@ const {
   buildTierQuery,
   formatAnswer,
   parseTierConfig,
-  narrowTiers,
   byteToCharIndex,
   citationPoints,
   annotateInline,
@@ -214,10 +213,10 @@ describe('buildTierQuery', () => {
     expect(prompt).toContain('Erstlinientherapie der Pneumonie');
   });
 
-  test('asks for each source own identifier, since titles carry only the domain', () => {
+  test('does not ask the model to quote document identifiers', () => {
     const prompt = buildTierQuery('Erstlinientherapie der Pneumonie', awmf);
 
-    expect(prompt).toMatch(/AWMF-Register|PMID|DOI/);
+    expect(prompt).not.toMatch(/AWMF-Register|PMID|DOI|identifier/i);
   });
 });
 
@@ -271,10 +270,10 @@ describe('formatAnswer', () => {
       offTierDomains: [],
     });
 
-    expect(out).toContain('Mittel der ersten Wahl [\\[1\\]][s1].');
-    expect(out).toContain('erwogen werden [\\[2\\]][s2].');
-    expect(out).toContain('[s1]: https://stub/a');
-    expect(out).toContain('[s2]: https://stub/b');
+    expect(out).toContain('Mittel der ersten Wahl [1].');
+    expect(out).toContain('erwogen werden [2].');
+    expect(out).toContain('1. [awmf.org](https://stub/a)');
+    expect(out).toContain('2. [register.awmf.org](https://stub/b)');
   });
 
   test('lists two documents from the same domain separately', () => {
@@ -327,35 +326,6 @@ describe('parseTierConfig', () => {
   });
 });
 
-describe('narrowTiers', () => {
-  const tiers = [
-    { name: 'AWMF-Leitlinienregister', domains: ['awmf.org', 'register.awmf.org'] },
-    { name: 'Deutsche Fachbehörden', domains: ['rki.de', 'g-ba.de'] },
-  ];
-
-  test('returns the admin tiers untouched when the user configured nothing', () => {
-    expect(narrowTiers(tiers, '')).toEqual(tiers);
-  });
-
-  test('keeps only the domains the user listed', () => {
-    const narrowed = narrowTiers(tiers, 'awmf.org, rki.de');
-
-    expect(narrowed.map((t) => t.domains)).toEqual([['awmf.org'], ['rki.de']]);
-  });
-
-  test('drops a tier the user narrowed away entirely', () => {
-    const narrowed = narrowTiers(tiers, 'awmf.org');
-
-    expect(narrowed.map((t) => t.name)).toEqual(['AWMF-Leitlinienregister']);
-  });
-
-  test('cannot widen the admin list with a domain that is not on it', () => {
-    const narrowed = narrowTiers(tiers, 'awmf.org, ratgeber.medium.com');
-
-    expect(narrowed.flatMap((t) => t.domains)).toEqual(['awmf.org']);
-  });
-});
-
 describe('byteToCharIndex', () => {
   test('maps a UTF-8 byte offset onto the JS string index', () => {
     // "Für " is 5 bytes (ü is two) but 4 characters.
@@ -403,15 +373,21 @@ describe('annotateInline', () => {
 
   test('places each marker before the closing period of its sentence', () => {
     expect(annotateInline(text, twoClaims, twoSources)).toBe(
-      'Lamotrigin ist Mittel der ersten Wahl [\\[1\\]][s1]. Lacosamid kann erwogen werden [\\[2\\]][s2].',
+      'Lamotrigin ist Mittel der ersten Wahl [1]. Lacosamid kann erwogen werden [2].',
     );
   });
 
-  test('renders each marker as a reference-style link', () => {
+  test('renders each marker as a plain numeric marker', () => {
     const out = annotateInline(text, twoClaims, twoSources);
 
-    expect(out).toContain('[\\[1\\]][s1]');
-    expect(out).toContain('[\\[2\\]][s2]');
+    expect(out).toContain('[1]');
+    expect(out).toContain('[2]');
+  });
+
+  test('still cites a claim whose span runs to the very end of the text', () => {
+    const claims = [{ text: 'a', endIndex: Buffer.byteLength(text, 'utf8'), chunkIndices: [1] }];
+
+    expect(annotateInline(text, claims, twoSources)).toContain('[2]');
   });
 
   test('leaves the text alone when a single source backs everything', () => {
@@ -429,7 +405,7 @@ describe('annotateInline', () => {
     ];
 
     expect(annotateInline(text, nested, twoSources)).toBe(
-      'Lamotrigin ist Mittel der ersten Wahl [\\[1\\]][s1]. Lacosamid kann erwogen werden [\\[2\\]][s2].',
+      'Lamotrigin ist Mittel der ersten Wahl [1]. Lacosamid kann erwogen werden [2].',
     );
   });
 });
