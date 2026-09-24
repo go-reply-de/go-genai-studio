@@ -1,77 +1,238 @@
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const mockClients = [];
+jest.mock('@google-cloud/vertexai', () => ({
+  VertexAI: jest.fn().mockImplementation((options) => {
+    const client = {
+      options,
+      models: [],
+      preview: {
+        getGenerativeModel: (params) => {
+          client.models.push(params);
+          return {};
+        },
+      },
+    };
+    mockClients.push(client);
+    return client;
+  }),
+}));
+
 const WebGroundingEnterprise = require('../WebGroundingEnterprise');
 
-/** Stands in for the Vertex generative model, returning one canned envelope per call. */
-const stubModel = (envelopes) => {
-  const queue = [...envelopes];
+/** Stands in for the Vertex generative model, answering each call with the next canned response. */
+const stubModel = (responses) => {
+  const queue = [...responses];
   const asked = [];
   return {
     asked,
-    generateContentStream: async ({ contents }) => {
+    generateContent: async ({ contents }) => {
       asked.push(contents[0].parts[0].text);
-      return { response: queue.shift() };
+      const next = queue.shift();
+      if (next instanceof Error) {
+        throw next;
+      }
+      return { response: next };
     },
   };
 };
 
-const envelope = (text, domain) => ({
+const usageMetadata = { promptTokenCount: 10, candidatesTokenCount: 10, totalTokenCount: 20 };
+
+const groundedResponse = (text, domains, attributed = domains.map((_, i) => [i])) => ({
   candidates: [
     {
-      content: { parts: [{ text }] },
+      content: { role: 'model', parts: [{ text }] },
+      finishReason: 'STOP',
       groundingMetadata: {
-        groundingChunks: [{ web: { uri: `https://stub/${domain}`, domain } }],
-        groundingSupports: [{ groundingChunkIndices: [0], segment: { text } }],
+        webSearchQueries: ['Thrombolyse Zeitfenster Leitlinie'],
+        searchEntryPoint: { renderedContent: '<div></div>' },
+        groundingChunks: domains.map((d) => ({
+          web: {
+            uri: `https://vertexaisearch.cloud.google.com/grounding-api-redirect/${d}`,
+            title: d,
+            domain: d,
+          },
+        })),
+        groundingSupports: attributed.map((indices, k) => ({
+          segment: { endIndex: 10 * (k + 1), text: 'Aussage' },
+          groundingChunkIndices: indices,
+        })),
       },
     },
   ],
+  usageMetadata,
 });
 
-const tiers = [
-  { name: 'AWMF-Leitlinienregister', domains: ['awmf.org'] },
-  { name: 'Deutsche Fachbehörden', domains: ['rki.de'] },
-];
+/** What Vertex returns when the model searched but nothing could be attributed: queries, no chunks. */
+const emptyResponse = (text) => ({
+  candidates: [
+    {
+      content: { role: 'model', parts: [{ text }] },
+      finishReason: 'STOP',
+      groundingMetadata: {
+        webSearchQueries: ['Thrombolyse Zeitfenster Leitlinie AWMF DGN'],
+        searchEntryPoint: { renderedContent: '<div></div>' },
+      },
+    },
+  ],
+  usageMetadata,
+});
 
-describe('WebGroundingEnterprise source cascade', () => {
-  test('refuses to answer when no tier yields an approved source', async () => {
-    const tool = new WebGroundingEnterprise({ override: true });
-    tool.tiers = tiers;
-    tool.generativeModel = stubModel([
-      envelope('Ruhe und Tee helfen.', 'ratgeber.medium.com'),
-      envelope('Ruhe und Tee helfen.', 'ratgeber.medium.com'),
+const QUERY = 'Welches Zeitfenster gilt für die Thrombolyse bei Frau M., 67 Jahre?';
+
+const toolWith = (search) => {
+  const tool = new WebGroundingEnterprise({ override: true });
+  tool.policy = { verifiedDomains: ['awmf.org'], excludeDomains: [] };
+  tool.generativeModel = search;
+  return tool;
+};
+
+describe('WebGroundingEnterprise', () => {
+  test('searches once when the search returns results', async () => {
+    const search = stubModel([
+      groundedResponse('Bis 4,5 h [1].\n[[QUELLEN]]\n1|awmf.org|2023|S2e', ['awmf.org']),
     ]);
 
-    const out = await tool._call({ query: 'Erstlinientherapie der Pneumonie' });
+    await toolWith(search)._call({ query: QUERY });
 
-    expect(out).toMatch(/no approved source/i);
+    expect(search.asked).toHaveLength(1);
   });
 
-  test('falls through to the next tier and cites the tier that answered', async () => {
-    const tool = new WebGroundingEnterprise({ override: true });
-    tool.tiers = tiers;
-    tool.generativeModel = stubModel([
-      envelope('NO_SOURCE_IN_SCOPE', 'awmf.org'),
-      envelope('Meldepflicht nach IfSG.', 'rki.de'),
+  test('retries once with the same question when the first search comes back empty', async () => {
+    const search = stubModel([
+      emptyResponse('Aus dem Gedächtnis [1].\n[[QUELLEN]]\n1|dgn.org|2022|Leitlinie'),
+      groundedResponse('Bis 4,5 h [1].\n[[QUELLEN]]\n1|awmf.org|2023|S2e', ['awmf.org']),
     ]);
 
-    const out = await tool._call({ query: 'Meldepflicht Pneumonie' });
+    const out = await toolWith(search)._call({ query: QUERY });
 
-    expect(out).toContain('Meldepflicht nach IfSG.');
-    expect(out).toContain('Deutsche Fachbehörden');
+    expect(search.asked).toHaveLength(2);
+    expect(search.asked[1]).toBe(search.asked[0]);
+    expect(out).toContain('Bis 4,5 h [1].');
+    expect(out).not.toMatch(/WARNUNG/);
+  });
+
+  test('gives up after one retry and says the answer is unbacked', async () => {
+    const search = stubModel([
+      emptyResponse('Erster Versuch.'),
+      emptyResponse('Zweiter Versuch [1].\n[[QUELLEN]]\n1|dgn.org|2022|Leitlinie'),
+      groundedResponse('Dritter Versuch.', ['awmf.org']),
+    ]);
+
+    const out = await toolWith(search)._call({ query: QUERY });
+
+    expect(search.asked).toHaveLength(2);
+    expect(out).toMatch(/nicht durch eine Websuche belegt/);
+    expect(out).toContain('Zweiter Versuch.');
+    expect(out).not.toContain('dgn.org');
+  });
+
+  test('drops a cited source the search never returned and renumbers the rest', async () => {
+    const search = stubModel([
+      groundedResponse(
+        'A gilt [1]. B gilt [2]. C gilt [3].\n[[QUELLEN]]\n1|awmf.org|2023|S3\n2|erfunden.de|2024|x\n3|dgn.org|2023|DGN',
+        ['awmf.org', 'dgn.org'],
+      ),
+    ]);
+
+    const out = await toolWith(search)._call({ query: QUERY });
+
+    expect(out).toContain('A gilt [1]. B gilt. C gilt [2].');
+    expect(out).not.toContain('erfunden.de');
+    expect(out).toMatch(/1 zitierte Quelle wurde entfernt/);
+  });
+
+  test('lists weak sources rather than refusing', async () => {
+    const search = stubModel([
+      groundedResponse('Belastbare Evidenz fehlt [1].\n[[QUELLEN]]\n1|netdoktor.de|2022|Portal', [
+        'netdoktor.de',
+      ]),
+    ]);
+
+    const out = await toolWith(search)._call({ query: QUERY });
+
+    expect(out).toContain('Belastbare Evidenz fehlt [1].');
+    expect(out).toContain('[netdoktor.de](');
+    expect(out).toMatch(/verifizierten Register/);
+  });
+
+  test('keeps only the unnamed search results the answer is attributed to', async () => {
+    const search = stubModel([
+      groundedResponse(
+        'Bis 4,5 h.\n[[QUELLEN]]\n1|awmf.org|2023|S2e',
+        ['awmf.org', 'dgn.org', 'aok.de'],
+        [[0], [1]],
+      ),
+    ]);
+
+    const out = await toolWith(search)._call({ query: QUERY });
+
+    expect(out).toContain('[dgn.org](');
+    expect(out).not.toContain('aok.de');
+  });
+
+  test('reports a failed search as a message instead of throwing', async () => {
+    const search = stubModel([new Error('503 Service Unavailable')]);
+
+    const out = await toolWith(search)._call({ query: QUERY });
+
+    expect(out).toMatch(/error with the Web Grounding for Enterprise Search/);
   });
 });
 
-describe('WebGroundingEnterprise ranked strategy', () => {
-  test('makes exactly one call and still prefers the higher tier', async () => {
-    const tool = new WebGroundingEnterprise({ override: true });
-    tool.tiers = tiers;
-    tool.strategy = 'ranked';
-    const model = stubModel([envelope('Meldepflicht nach IfSG.', 'rki.de')]);
-    tool.generativeModel = model;
+describe('WebGroundingEnterprise client wiring', () => {
+  const saved = { ...process.env };
+  let dir;
 
-    const out = await tool._call({ query: 'Meldepflicht Pneumonie' });
+  beforeEach(() => {
+    mockClients.length = 0;
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wge-'));
+    const key = path.join(dir, 'key.json');
+    const policy = path.join(dir, 'policy.json');
+    fs.writeFileSync(
+      key,
+      JSON.stringify({
+        project_id: 'uksh-pub-dev-genai-portal',
+        client_email: 'sa@x',
+        private_key: 'k',
+      }),
+    );
+    fs.writeFileSync(
+      policy,
+      JSON.stringify({ verifiedDomains: ['awmf.org'], excludeDomains: ['junk.example'] }),
+    );
+    process.env.GOOGLE_LOC = 'eu';
+    process.env.GOOGLE_SERVICE_KEY_FILE = key;
+    process.env.WEB_GROUNDING_SOURCES_FILE = policy;
+    delete process.env.WEB_GROUNDING_MODEL;
+  });
 
-    expect(model.asked).toHaveLength(1);
-    expect(model.asked[0]).toContain('awmf.org');
-    expect(model.asked[0]).toContain('rki.de');
-    expect(out).toContain('Deutsche Fachbehörden');
+  afterEach(() => {
+    process.env = { ...saved };
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('runs the search on the agent model through one client on the PSC endpoint', () => {
+    new WebGroundingEnterprise({ geminiModel: 'gemini-3.8-flash' });
+
+    expect(mockClients).toHaveLength(1);
+    expect(mockClients[0].options.apiEndpoint).toBe('aiplatform.eu.rep.googleapis.com');
+    expect(mockClients[0].models).toEqual([
+      {
+        model: 'gemini-3.8-flash',
+        tools: [{ enterpriseWebSearch: { excludeDomains: ['junk.example'] } }],
+      },
+    ]);
+  });
+
+  test('lets an explicit model override replace the agent model', () => {
+    process.env.WEB_GROUNDING_MODEL = 'gemini-3.5-flash-lite';
+
+    new WebGroundingEnterprise({ geminiModel: 'gemini-3.8-flash' });
+
+    expect(mockClients[0].models.map((m) => m.model)).toEqual(['gemini-3.5-flash-lite']);
   });
 });

@@ -1,482 +1,334 @@
 const {
-  isDomainInTier,
-  partitionChunks,
-  attributeClaims,
-  evaluateTier,
-  runCascade,
-  buildTierQuery,
+  isVerified,
+  parsePolicyConfig,
+  parseSourceBlock,
+  mergeSources,
+  renumberCitations,
   formatAnswer,
-  parseTierConfig,
-  byteToCharIndex,
-  citationPoints,
-  annotateInline,
-  buildRankedQuery,
-  rankResponse,
+  buildGroundingPrompt,
 } = require('./groundingPolicy');
 
-describe('isDomainInTier', () => {
-  test('matches a subdomain of a listed domain', () => {
-    const tier = { name: 'Literature', domains: ['nih.gov'] };
+const chunk = (domain, uri = `stub-${domain}`) => ({ web: { uri, title: domain, domain } });
+const source = (n, domain) => ({ n, domain, jahr: '2023', beschreibung: 'x' });
 
-    expect(isDomainInTier('pubmed.ncbi.nlm.nih.gov', tier)).toBe(true);
+describe('isVerified', () => {
+  test('covers subdomains of a verified institution', () => {
+    expect(isVerified('register.awmf.org', ['awmf.org'])).toBe(true);
+  });
+
+  test('does not match a lookalike domain that merely ends in the same letters', () => {
+    expect(isVerified('fake-awmf.org', ['awmf.org'])).toBe(false);
   });
 });
 
-describe('partitionChunks', () => {
-  test('separates chunks from unlisted domains', () => {
-    const tier = { name: 'German official', domains: ['awmf.org'] };
-    const chunks = [
-      { web: { uri: 'stub-1', domain: 'awmf.org', title: 'awmf.org' } },
-      { web: { uri: 'stub-2', domain: 'ratgeber.medium.com', title: 'ratgeber.medium.com' } },
-    ];
-
-    const { inTier, offTier } = partitionChunks(chunks, tier);
-
-    expect(inTier.map((c) => c.domain)).toEqual(['awmf.org']);
-    expect(offTier.map((c) => c.domain)).toEqual(['ratgeber.medium.com']);
-  });
-});
-
-describe('isDomainInTier edge cases', () => {
-  test('never matches when the chunk carries no domain', () => {
-    const tier = { name: 'German official', domains: ['awmf.org'] };
-
-    expect(isDomainInTier(undefined, tier)).toBe(false);
-  });
-});
-
-describe('partitionChunks index preservation', () => {
-  test('keeps each chunk original position so supports can be resolved', () => {
-    const tier = { name: 'German official', domains: ['awmf.org'] };
-    const chunks = [
-      { web: { uri: 'stub-1', domain: 'ratgeber.medium.com' } },
-      { web: { uri: 'stub-2', domain: 'awmf.org' } },
-    ];
-
-    const { inTier } = partitionChunks(chunks, tier);
-
-    expect(inTier[0].index).toBe(1);
-  });
-});
-
-describe('attributeClaims', () => {
-  test('drops claims backed only by off-tier chunks', () => {
-    const supports = [
-      { groundingChunkIndices: [0], segment: { text: 'Amoxicillin 3 x 1.000 mg p. o.' } },
-      { groundingChunkIndices: [1], segment: { text: 'Laut einem Blogbeitrag reicht Ruhe.' } },
-    ];
-
-    const claims = attributeClaims(supports, [0]);
-
-    expect(claims.map((c) => c.text)).toEqual(['Amoxicillin 3 x 1.000 mg p. o.']);
-  });
-});
-
-describe('attributeClaims offsets', () => {
-  test('carries the segment end offset so a citation can be placed', () => {
-    const supports = [
-      { groundingChunkIndices: [0], segment: { text: 'Lamotrigin', startIndex: 12, endIndex: 42 } },
-    ];
-
-    expect(attributeClaims(supports, [0])[0].endIndex).toBe(42);
-  });
-});
-
-describe('evaluateTier', () => {
-  const awmf = { name: 'AWMF-Leitlinienregister', domains: ['awmf.org'] };
-
-  test('treats the NO_SOURCE_IN_SCOPE sentinel as a miss', () => {
-    const response = { text: 'NO_SOURCE_IN_SCOPE', chunks: [], supports: [] };
-
-    expect(evaluateTier(response, awmf).hit).toBe(false);
-  });
-
-  test('misses when every returned chunk is off-tier', () => {
-    const response = {
-      text: 'Ruhe und Tee helfen.',
-      chunks: [{ web: { uri: 'stub-1', domain: 'ratgeber.medium.com' } }],
-      supports: [{ groundingChunkIndices: [0], segment: { text: 'Ruhe und Tee helfen.' } }],
-    };
-
-    expect(evaluateTier(response, awmf).hit).toBe(false);
-  });
-
-  test('hits when an in-tier chunk backs at least one claim', () => {
-    const response = {
-      text: 'Amoxicillin 3 x 1.000 mg p. o.',
-      chunks: [{ web: { uri: 'stub-1', domain: 'awmf.org' } }],
-      supports: [
-        { groundingChunkIndices: [0], segment: { text: 'Amoxicillin 3 x 1.000 mg p. o.' } },
+describe('parsePolicyConfig', () => {
+  test('treats the domains of a mounted tier config as the verified institutions', () => {
+    const policy = parsePolicyConfig({
+      tiers: [
+        { name: 'AWMF', domains: ['awmf.org'] },
+        { name: 'Behörden', domains: ['rki.de', 'g-ba.de'] },
       ],
-    };
+    });
 
-    expect(evaluateTier(response, awmf).hit).toBe(true);
+    expect(policy.verifiedDomains).toEqual(['awmf.org', 'rki.de', 'g-ba.de']);
   });
 
-  test('reports off-tier domains so the caller can exclude them on retry', () => {
-    const response = {
-      text: 'Amoxicillin 3 x 1.000 mg p. o.',
-      chunks: [
-        { web: { uri: 'stub-1', domain: 'awmf.org' } },
-        { web: { uri: 'stub-2', domain: 'ratgeber.medium.com' } },
-      ],
-      supports: [
-        { groundingChunkIndices: [0], segment: { text: 'Amoxicillin 3 x 1.000 mg p. o.' } },
-      ],
-    };
+  test('passes a configured exclusion list through', () => {
+    const policy = parsePolicyConfig({
+      verifiedDomains: ['awmf.org'],
+      excludeDomains: ['junk.example'],
+    });
 
-    expect(evaluateTier(response, awmf).offTierDomains).toEqual(['ratgeber.medium.com']);
+    expect(policy.excludeDomains).toEqual(['junk.example']);
   });
 
-  test('carries the answer text through so the result can be rendered', () => {
-    const response = {
-      text: 'Amoxicillin 3 x 1.000 mg p. o.',
-      chunks: [{ web: { uri: 'stub-1', domain: 'awmf.org' } }],
-      supports: [
-        { groundingChunkIndices: [0], segment: { text: 'Amoxicillin 3 x 1.000 mg p. o.' } },
-      ],
-    };
+  test('still verifies AWMF and excludes content farms without a mounted config', () => {
+    const policy = parsePolicyConfig(null);
 
-    expect(evaluateTier(response, awmf).text).toBe('Amoxicillin 3 x 1.000 mg p. o.');
-  });
-});
-
-describe('runCascade', () => {
-  const tiers = [
-    { name: 'AWMF-Leitlinienregister', domains: ['awmf.org'] },
-    { name: 'Deutsche Fachbehörden', domains: ['rki.de'] },
-    { name: 'Fachliteratur', domains: ['pubmed.ncbi.nlm.nih.gov'] },
-  ];
-
-  const hitFrom = (domain) => ({
-    text: 'Amoxicillin 3 x 1.000 mg p. o.',
-    chunks: [{ web: { uri: 'stub-1', domain } }],
-    supports: [{ groundingChunkIndices: [0], segment: { text: 'Amoxicillin 3 x 1.000 mg p. o.' } }],
+    expect(isVerified('register.awmf.org', policy.verifiedDomains)).toBe(true);
+    expect(policy.excludeDomains.length).toBeGreaterThan(0);
   });
 
-  test('stops at the first tier that hits, leaving later tiers untried', async () => {
-    const asked = [];
-    const ask = async (tier) => {
-      asked.push(tier.name);
-      return hitFrom('awmf.org');
-    };
-
-    const result = await runCascade({ tiers, ask });
-
-    expect(asked).toEqual(['AWMF-Leitlinienregister']);
-    expect(result.hit).toBe(true);
+  test('rejects a verified list that contains something other than a domain', () => {
+    expect(() => parsePolicyConfig({ verifiedDomains: ['awmf.org', 42] })).toThrow(
+      /verifiedDomains/,
+    );
   });
 
-  test('tries every configured tier when no cap is set', async () => {
-    const asked = [];
-    const ask = async (tier) => {
-      asked.push(tier.name);
-      return { text: 'NO_SOURCE_IN_SCOPE', chunks: [], supports: [] };
-    };
-    const fourTiers = [...tiers, { name: 'Fachliteratur EU', domains: ['ema.europa.eu'] }];
-
-    await runCascade({ tiers: fourTiers, ask });
-
-    expect(asked).toHaveLength(4);
+  test('rejects an exclusion list that is not a list of domains', () => {
+    expect(() =>
+      parsePolicyConfig({ verifiedDomains: ['awmf.org'], excludeDomains: 'junk.example' }),
+    ).toThrow(/excludeDomains/);
   });
 
-  test('stops after the configured tier cap even when tiers remain', async () => {
-    const asked = [];
-    const ask = async (tier) => {
-      asked.push(tier.name);
-      return { text: 'NO_SOURCE_IN_SCOPE', chunks: [], supports: [] };
-    };
-
-    await runCascade({ tiers, ask, maxTiers: 2 });
-
-    expect(asked).toEqual(['AWMF-Leitlinienregister', 'Deutsche Fachbehörden']);
+  test('rejects a tier without domains rather than silently verifying nothing', () => {
+    expect(() => parsePolicyConfig({ tiers: [{ name: 'Leer', domains: [] }] })).toThrow(/Leer/);
   });
 });
 
-describe('buildTierQuery', () => {
-  const awmf = {
-    name: 'AWMF-Leitlinienregister',
-    domains: ['awmf.org', 'register.awmf.org'],
-  };
+describe('parseSourceBlock', () => {
+  test('separates the answer from the trailing source block', () => {
+    const text =
+      'Thrombolyse bis 4,5 h [1].\n\n[[QUELLEN]]\n1|awmf.org|2023|S2e-Leitlinie Schlaganfall';
 
-  test('restricts the search to the tier domains and offers the sentinel escape', () => {
-    const prompt = buildTierQuery('Erstlinientherapie der Pneumonie', awmf);
-
-    expect(prompt).toContain('awmf.org');
-    expect(prompt).toContain('register.awmf.org');
-    expect(prompt).toContain('NO_SOURCE_IN_SCOPE');
+    expect(parseSourceBlock(text)).toEqual({
+      body: 'Thrombolyse bis 4,5 h [1].',
+      sources: [
+        { n: 1, domain: 'awmf.org', jahr: '2023', beschreibung: 'S2e-Leitlinie Schlaganfall' },
+      ],
+    });
   });
 
-  test('carries the original question through unchanged', () => {
-    const prompt = buildTierQuery('Erstlinientherapie der Pneumonie', awmf);
-
-    expect(prompt).toContain('Erstlinientherapie der Pneumonie');
+  test('reports no sources when the model left the block out', () => {
+    expect(parseSourceBlock('Nur Text.')).toEqual({ body: 'Nur Text.', sources: null });
   });
 
-  test('does not ask the model to quote document identifiers', () => {
-    const prompt = buildTierQuery('Erstlinientherapie der Pneumonie', awmf);
+  test('reduces a URL written in place of a domain to its host', () => {
+    const { sources } = parseSourceBlock(
+      'A\n[[QUELLEN]]\n1|https://www.awmf.org/leitlinien/detail/030-046|2023|x',
+    );
 
-    expect(prompt).not.toMatch(/AWMF-Register|PMID|DOI|identifier/i);
+    expect(sources[0].domain).toBe('awmf.org');
+  });
+
+  test('reads a block wrapped in a code fence', () => {
+    const { sources } = parseSourceBlock('A\n[[QUELLEN]]\n```\n1|rki.de|2024|STIKO\n```');
+
+    expect(sources.map((s) => s.domain)).toEqual(['rki.de']);
+  });
+
+  test('treats a dash as an unknown year', () => {
+    const { sources } = parseSourceBlock('A\n[[QUELLEN]]\n1|gelbe-liste.de|-|Datenbank');
+
+    expect(sources[0]).toMatchObject({ jahr: null, beschreibung: 'Datenbank' });
+  });
+
+  test('finds the year even when the model inserts an extra field before it', () => {
+    const { sources } = parseSourceBlock('A\n[[QUELLEN]]\n1|awmf.org|1|2023|S3');
+
+    expect(sources[0]).toMatchObject({ jahr: '2023', beschreibung: 'S3' });
+  });
+
+  test('keeps a source whose line carries no year at all', () => {
+    const { sources } = parseSourceBlock('A\n[[QUELLEN]]\n1|esur-cm.org|ESUR Guidelines');
+
+    expect(sources[0]).toMatchObject({
+      domain: 'esur-cm.org',
+      jahr: null,
+      beschreibung: 'ESUR Guidelines',
+    });
+  });
+
+  test('numbers sources by position when the model writes section-style numbers', () => {
+    const { sources } = parseSourceBlock('A\n[[QUELLEN]]\n1.1.1|awmf.org|2023\n1.2.1|rki.de|2024');
+
+    expect(sources.map((s) => s.n)).toEqual([1, 2]);
+  });
+
+  test('ignores a format template the model echoed back', () => {
+    const { sources } = parseSourceBlock(
+      'A\n[[QUELLEN]]\nNummer|Domain|Jahr oder -|Kurzbeschreibung\n1|rki.de|2024|STIKO',
+    );
+
+    expect(sources.map((s) => s.domain)).toEqual(['rki.de']);
+  });
+});
+
+describe('mergeSources', () => {
+  const verifiedDomains = ['awmf.org', 'rki.de'];
+
+  test('drops a cited source the search never returned', () => {
+    const { entries, dropped } = mergeSources({
+      sources: [source(1, 'awmf.org'), source(2, 'erfunden.de')],
+      chunks: [chunk('awmf.org')],
+      verifiedDomains,
+    });
+
+    expect(entries.map((e) => e.domain)).toEqual(['awmf.org']);
+    expect(dropped.map((d) => d.domain)).toEqual(['erfunden.de']);
+  });
+
+  test('verifies on the domain the search returned, not the one the model wrote', () => {
+    const { entries } = mergeSources({
+      sources: [source(1, 'register.awmf.org')],
+      chunks: [chunk('awmf.org')],
+      verifiedDomains: ['register.awmf.org'],
+    });
+
+    expect(entries[0]).toMatchObject({ domain: 'awmf.org', verified: false });
+  });
+
+  test('keeps a search result the answer is attributed to, even when the model did not name it', () => {
+    const { entries } = mergeSources({
+      sources: [source(1, 'awmf.org')],
+      chunks: [chunk('netdoktor.de'), chunk('awmf.org')],
+      supports: [{ segment: { endIndex: 40, text: 'x' }, groundingChunkIndices: [0, 1] }],
+      verifiedDomains,
+    });
+
+    expect(entries.map((e) => e.domain)).toEqual(['awmf.org', 'netdoktor.de']);
+  });
+
+  test('drops a search result that no passage of the answer is attributed to', () => {
+    const { entries } = mergeSources({
+      sources: [source(1, 'awmf.org')],
+      chunks: [chunk('netdoktor.de'), chunk('awmf.org')],
+      supports: [{ segment: { endIndex: 40, text: 'x' }, groundingChunkIndices: [1] }],
+      verifiedDomains,
+    });
+
+    expect(entries.map((e) => e.domain)).toEqual(['awmf.org']);
+  });
+
+  test('links two cited pages from one domain to their own search results', () => {
+    const { entries } = mergeSources({
+      sources: [source(1, 'doccheck.com'), source(2, 'doccheck.com')],
+      chunks: [chunk('doccheck.com', 'stub-1'), chunk('doccheck.com', 'stub-2')],
+      verifiedDomains,
+    });
+
+    expect(entries.map((e) => e.uri)).toEqual(['stub-1', 'stub-2']);
+  });
+
+  test('merges repeated citations of one search result into a single entry', () => {
+    const { entries, numbering } = mergeSources({
+      sources: [source(1, 'doccheck.com'), source(2, 'doccheck.com')],
+      chunks: [chunk('doccheck.com', 'stub-1')],
+      verifiedDomains,
+    });
+
+    expect(entries.map((e) => e.uri)).toEqual(['stub-1']);
+    expect([...numbering]).toEqual([
+      [1, 1],
+      [2, 1],
+    ]);
+  });
+
+  test('puts verified institutions first and numbers to match', () => {
+    const { entries, numbering } = mergeSources({
+      sources: [source(1, 'esur-cm.org'), source(2, 'rki.de')],
+      chunks: [chunk('esur-cm.org'), chunk('rki.de')],
+      verifiedDomains,
+    });
+
+    expect(entries.map((e) => e.domain)).toEqual(['rki.de', 'esur-cm.org']);
+    expect([...numbering]).toEqual([
+      [1, 2],
+      [2, 1],
+    ]);
+  });
+
+  test('numbers kept sources consecutively and maps dropped ones to nothing', () => {
+    const { numbering } = mergeSources({
+      sources: [source(1, 'awmf.org'), source(2, 'erfunden.de'), source(3, 'rki.de')],
+      chunks: [chunk('awmf.org'), chunk('rki.de')],
+      verifiedDomains,
+    });
+
+    expect([...numbering]).toEqual([
+      [1, 1],
+      [2, null],
+      [3, 2],
+    ]);
+  });
+});
+
+describe('renumberCitations', () => {
+  const numbering = new Map([
+    [1, 1],
+    [2, null],
+    [3, 2],
+  ]);
+
+  test('renumbers citations to follow the kept sources', () => {
+    expect(renumberCitations('A [1]. B [3].', numbering)).toBe('A [1]. B [2].');
+  });
+
+  test('removes the marker of a dropped source', () => {
+    expect(renumberCitations('A [2]. B [1].', numbering)).toBe('A. B [1].');
+  });
+
+  test('rewrites a list of citations inside one bracket', () => {
+    expect(renumberCitations('A [1, 3].', numbering)).toBe('A [1, 2].');
+  });
+
+  test('drops only the removed number from a list', () => {
+    expect(renumberCitations('A [1, 2].', numbering)).toBe('A [1].');
+  });
+
+  test('collapses two citations that now point at the same merged source', () => {
+    expect(
+      renumberCitations(
+        'A [1, 2].',
+        new Map([
+          [1, 1],
+          [2, 1],
+        ]),
+      ),
+    ).toBe('A [1].');
+  });
+
+  test('leaves bracketed numbers alone when they are not source numbers', () => {
+    expect(renumberCitations('Stand [2023] [1].', numbering)).toBe('Stand [2023] [1].');
   });
 });
 
 describe('formatAnswer', () => {
-  test('reports that nothing approved was found when every tier missed', () => {
-    const out = formatAnswer({ hit: false, claims: [], sources: [] });
+  const entry = (over) => ({
+    domain: 'awmf.org',
+    uri: 'stub-a',
+    jahr: '2023',
+    beschreibung: 'S3',
+    verified: true,
+    ...over,
+  });
+  const lineFor = (out, domain) => out.split('\n').find((l) => l.includes(`[${domain}](`));
+  const answer = (over) =>
+    formatAnswer({ body: 'A', entries: [entry()], dropped: [], grounded: true, ...over });
 
-    expect(out).toMatch(/no approved source/i);
+  test('links each source by its domain with verification, year and description', () => {
+    const line = lineFor(answer({}), 'awmf.org');
+
+    expect(line).toContain('[awmf.org](stub-a)');
+    expect(line).toMatch(/2023/);
+    expect(line).toMatch(/S3/);
+    expect(line).not.toMatch(/nicht verifiziert/);
+    expect(line).not.toMatch(/klassifiziert/);
   });
 
-  const cleanHit = {
-    hit: true,
-    tier: { name: 'AWMF-Leitlinienregister' },
-    text: 'Amoxicillin 3 x 1.000 mg p. o. ist Mittel der Wahl.',
-    claims: [{ text: 'Amoxicillin 3 x 1.000 mg p. o. ist Mittel der Wahl.', chunkIndices: [0] }],
-    sources: [
-      {
-        index: 0,
-        uri: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/ABC',
-        domain: 'awmf.org',
-      },
-    ],
-    offTierDomains: [],
-  };
-
-  test('renders the answer, the tier it came from, and a linked source per domain', () => {
-    const out = formatAnswer(cleanHit);
-
-    expect(out).toContain('Amoxicillin 3 x 1.000 mg p. o. ist Mittel der Wahl.');
-    expect(out).toContain('AWMF-Leitlinienregister');
-    expect(out).toContain('awmf.org');
-    expect(out).toContain('https://vertexaisearch.cloud.google.com/grounding-api-redirect/ABC');
+  test('does not warn when a search backed the answer', () => {
+    expect(answer({})).not.toMatch(/WARNUNG/);
   });
 
-  test('cites each claim inline when two sources back the answer', () => {
-    const body = 'Lamotrigin ist Mittel der ersten Wahl. Lacosamid kann erwogen werden.';
-    const bytesTo = (upTo) => Buffer.byteLength(body.slice(0, upTo), 'utf8');
-
-    const out = formatAnswer({
-      hit: true,
-      tier: { name: 'AWMF-Leitlinienregister' },
-      text: body,
-      claims: [
-        { text: 'a', endIndex: bytesTo(37), chunkIndices: [0] },
-        { text: 'b', endIndex: bytesTo(68), chunkIndices: [1] },
-      ],
-      sources: [
-        { index: 0, uri: 'https://stub/a', domain: 'awmf.org' },
-        { index: 1, uri: 'https://stub/b', domain: 'register.awmf.org' },
-      ],
-      offTierDomains: [],
+  test('marks a source outside the verified register as unverified', () => {
+    const out = answer({
+      entries: [entry({ domain: 'esur-cm.org', uri: 'stub-e', verified: false })],
     });
 
-    expect(out).toContain('Mittel der ersten Wahl [1].');
-    expect(out).toContain('erwogen werden [2].');
-    expect(out).toContain('1. [awmf.org](https://stub/a)');
-    expect(out).toContain('2. [register.awmf.org](https://stub/b)');
+    expect(lineFor(out, 'esur-cm.org')).toMatch(/nicht verifiziert/);
   });
 
-  test('lists two documents from the same domain separately', () => {
-    const out = formatAnswer({
-      ...cleanHit,
-      sources: [
-        { index: 0, uri: 'https://stub/doc-a', domain: 'awmf.org' },
-        { index: 1, uri: 'https://stub/doc-b', domain: 'awmf.org' },
-      ],
-    });
-
-    expect(out).toContain('https://stub/doc-a');
-    expect(out).toContain('https://stub/doc-b');
+  test('points out when no verified institution backs the answer', () => {
+    expect(answer({ entries: [entry({ verified: false })] })).toMatch(/verifizierten Register/);
+    expect(answer({})).not.toMatch(/verifizierten Register/);
   });
 
-  test('falls back to attributed claims only when off-tier sources were present', () => {
-    const contaminated = {
-      ...cleanHit,
-      text: 'Amoxicillin ist Mittel der Wahl. Ein Blog empfiehlt nur Ruhe.',
-      claims: [{ text: 'Amoxicillin ist Mittel der Wahl.', chunkIndices: [0] }],
-      offTierDomains: ['ratgeber.medium.com'],
-    };
+  test('answers with a warning rather than refusing when no search backed the answer', () => {
+    const out = answer({ body: 'Aus dem Gedächtnis.', entries: [], grounded: false });
 
-    const out = formatAnswer(contaminated);
+    expect(out).toContain('Aus dem Gedächtnis.');
+    expect(out).toMatch(/WARNUNG/);
+  });
 
-    expect(out).toContain('Amoxicillin ist Mittel der Wahl.');
-    expect(out).not.toContain('Ein Blog empfiehlt nur Ruhe.');
+  test('says how many cited sources were removed as unverifiable', () => {
+    expect(answer({ dropped: [{ domain: 'erfunden.de' }] })).toMatch(/1 zitierte Quelle.*entfernt/);
   });
 });
 
-describe('parseTierConfig', () => {
-  test('keeps the configured tier order', () => {
-    const raw = {
-      tiers: [
-        { name: 'AWMF-Leitlinienregister', domains: ['register.awmf.org', 'awmf.org'] },
-        { name: 'Deutsche Fachbehörden', domains: ['rki.de', 'g-ba.de'] },
-      ],
-    };
+describe('buildGroundingPrompt', () => {
+  test('carries the clinical question through unchanged', () => {
+    const query = 'Welches Zeitfenster gilt für die Thrombolyse?';
 
-    expect(parseTierConfig(raw).map((t) => t.name)).toEqual([
-      'AWMF-Leitlinienregister',
-      'Deutsche Fachbehörden',
-    ]);
-  });
-
-  test('rejects a tier with no domains rather than silently approving nothing', () => {
-    const raw = { tiers: [{ name: 'Leer', domains: [] }] };
-
-    expect(() => parseTierConfig(raw)).toThrow(/Leer/);
-  });
-});
-
-describe('byteToCharIndex', () => {
-  test('maps a UTF-8 byte offset onto the JS string index', () => {
-    // "Für " is 5 bytes (ü is two) but 4 characters.
-    const text = 'Für fokale Epilepsie';
-
-    expect(byteToCharIndex(text, 5)).toBe(4);
-  });
-
-  test('is the identity for pure ASCII', () => {
-    expect(byteToCharIndex('Lamotrigin first', 11)).toBe(11);
-  });
-});
-
-describe('citationPoints', () => {
-  test('returns the insertion point just before the closing period', () => {
-    const text = 'Lamotrigin ist Mittel der Wahl.';
-
-    expect(citationPoints(text)).toEqual([text.indexOf('.')]);
-  });
-
-  test('does not treat the German abbreviation "z. B." as a sentence end', () => {
-    const text = 'Gabe von z. B. Lamotrigin. Danach Kontrolle.';
-
-    expect(citationPoints(text)).toHaveLength(2);
-  });
-
-  test('keeps "p. o." and dosage abbreviations intact', () => {
-    const text = 'Amoxicillin 3 x 1.000 mg p. o. ist Mittel der Wahl. Danach Kontrolle.';
-
-    expect(citationPoints(text)).toHaveLength(2);
-  });
-});
-
-describe('annotateInline', () => {
-  const text = 'Lamotrigin ist Mittel der ersten Wahl. Lacosamid kann erwogen werden.';
-  const bytesTo = (upTo) => Buffer.byteLength(text.slice(0, upTo), 'utf8');
-  const twoSources = [
-    { index: 0, uri: 'https://stub/a', domain: 'awmf.org' },
-    { index: 1, uri: 'https://stub/b', domain: 'awmf.org' },
-  ];
-  const twoClaims = [
-    { text: 'Lamotrigin ist Mittel der ersten Wahl', endIndex: bytesTo(37), chunkIndices: [0] },
-    { text: 'Lacosamid kann erwogen werden', endIndex: bytesTo(68), chunkIndices: [1] },
-  ];
-
-  test('places each marker before the closing period of its sentence', () => {
-    expect(annotateInline(text, twoClaims, twoSources)).toBe(
-      'Lamotrigin ist Mittel der ersten Wahl [1]. Lacosamid kann erwogen werden [2].',
-    );
-  });
-
-  test('renders each marker as a plain numeric marker', () => {
-    const out = annotateInline(text, twoClaims, twoSources);
-
-    expect(out).toContain('[1]');
-    expect(out).toContain('[2]');
-  });
-
-  test('still cites a claim whose span runs to the very end of the text', () => {
-    const claims = [{ text: 'a', endIndex: Buffer.byteLength(text, 'utf8'), chunkIndices: [1] }];
-
-    expect(annotateInline(text, claims, twoSources)).toContain('[2]');
-  });
-
-  test('leaves the text alone when a single source backs everything', () => {
-    const oneSource = [{ index: 0, uri: 'https://stub/a', domain: 'awmf.org' }];
-    const claims = [{ text: 'x', endIndex: bytesTo(37), chunkIndices: [0] }];
-
-    expect(annotateInline(text, claims, oneSource)).toBe(text);
-  });
-
-  test('does not repeat a marker when nested spans cite the same source', () => {
-    const nested = [
-      { text: 'a', endIndex: bytesTo(37), chunkIndices: [0] },
-      { text: 'b', endIndex: bytesTo(20), chunkIndices: [0] },
-      { text: 'c', endIndex: bytesTo(68), chunkIndices: [1] },
-    ];
-
-    expect(annotateInline(text, nested, twoSources)).toBe(
-      'Lamotrigin ist Mittel der ersten Wahl [1]. Lacosamid kann erwogen werden [2].',
-    );
-  });
-});
-
-describe('formatAnswer with nested grounding spans', () => {
-  test('does not repeat text when one cited span contains another', () => {
-    const text = 'Lamotrigin ist erste Wahl. Lacosamid ist Zusatztherapie.';
-    const bytesTo = (upTo) => Buffer.byteLength(text.slice(0, upTo), 'utf8');
-
-    const out = formatAnswer({
-      hit: true,
-      tier: { name: 'Deutsche Fachbehörden' },
-      text,
-      claims: [
-        {
-          text: 'Lamotrigin ist erste Wahl',
-          startIndex: 0,
-          endIndex: bytesTo(25),
-          chunkIndices: [0],
-        },
-        {
-          text: 'Lamotrigin ist erste Wahl. Lacosamid ist Zusatztherapie',
-          startIndex: 0,
-          endIndex: bytesTo(55),
-          chunkIndices: [0],
-        },
-      ],
-      sources: [{ index: 0, uri: 'https://stub/a', domain: 'g-ba.de' }],
-      // An off-tier domain forces the attributed-claims-only path.
-      offTierDomains: ['thieme.de'],
-    });
-
-    expect(out.match(/Lamotrigin/g)).toHaveLength(1);
-  });
-});
-
-describe('single-call ranking', () => {
-  const tiers = [
-    { name: 'AWMF-Leitlinienregister', domains: ['awmf.org'] },
-    { name: 'Deutsche Fachbehörden', domains: ['rki.de', 'g-ba.de'] },
-  ];
-  const responseWith = (...domains) => ({
-    text: 'Lamotrigin ist Mittel der ersten Wahl.',
-    chunks: domains.map((d, i) => ({ web: { uri: `https://stub/${i}`, domain: d } })),
-    supports: domains.map((_, i) => ({
-      groundingChunkIndices: [i],
-      segment: { text: 'Lamotrigin ist Mittel der ersten Wahl.', startIndex: 0, endIndex: 37 },
-    })),
-  });
-
-  test('names every approved domain, preferred tier first', () => {
-    const prompt = buildRankedQuery('Therapie der Epilepsie', tiers);
-
-    expect(prompt.indexOf('awmf.org')).toBeLessThan(prompt.indexOf('g-ba.de'));
-    expect(prompt).toContain('rki.de');
-    expect(prompt).toContain('NO_SOURCE_IN_SCOPE');
-  });
-
-  test('prefers the highest tier present in one response', () => {
-    const result = rankResponse(responseWith('g-ba.de', 'awmf.org'), tiers);
-
-    expect(result.tier.name).toBe('AWMF-Leitlinienregister');
-  });
-
-  test('falls to the next tier when the preferred one is absent', () => {
-    const result = rankResponse(responseWith('g-ba.de'), tiers);
-
-    expect(result.tier.name).toBe('Deutsche Fachbehörden');
-  });
-
-  test('misses when no approved domain is present', () => {
-    expect(rankResponse(responseWith('wikipedia.org'), tiers).hit).toBe(false);
+    expect(buildGroundingPrompt(query)).toContain(query);
   });
 });

@@ -1,343 +1,286 @@
-/**
- * Source policy for the web_grounding_enterprise tool: which domains are
- * acceptable, in what order they are tried, and how a grounded response is
- * turned into an attributed answer.
- */
+/** Source policy for web_grounding_enterprise: its prompt, how the model's source
+ * list is checked against the real search results, and how the answer is rendered. */
 
-/** Label-aware suffix match, so `nih.gov` covers `pubmed.ncbi.nlm.nih.gov`. */
-function isDomainInTier(domain, tier) {
-  if (!domain) {
-    return false;
+const SOURCE_BLOCK_MARKER = '[[QUELLEN]]';
+
+/** Institutions whose identity is a fact rather than a judgement. */
+const DEFAULT_VERIFIED_DOMAINS = [
+  'awmf.org',
+  'leitlinien.de',
+  'g-ba.de',
+  'iqwig.de',
+  'rki.de',
+  'bfarm.de',
+  'pei.de',
+  'ema.europa.eu',
+  'nice.org.uk',
+  'cochranelibrary.com',
+];
+
+/** Never citable. A missing entry is harmless: unlisted junk is still shown as unverified. */
+const DEFAULT_EXCLUDE_DOMAINS = [
+  'gesundheits-lexikon.com',
+  'gelenk-klinik.de',
+  'knowunity.de',
+  'heilpraxisnet.de',
+  'zentrum-der-gesundheit.de',
+  'symptoma.de',
+  'jameda.de',
+  'doktorweigl.de',
+  'krank.de',
+  'medlexi.de',
+];
+
+/** Models write `https://www.awmf.org/...` as often as `awmf.org`; both mean the host. */
+function normalizeDomain(value) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z]+:\/\//, '')
+    .split(/[/?#]/)[0]
+    .replace(/^www\./, '');
+}
+
+const HOSTNAME = /^(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}$/u;
+const YEAR = /^(?:\d{4}|-)$/;
+
+/** Label-aware suffix match, so `awmf.org` covers `register.awmf.org` but not `fake-awmf.org`. */
+function domainMatches(domain, listed) {
+  return domain === listed || domain.endsWith(`.${listed}`);
+}
+
+function isVerified(domain, verifiedDomains) {
+  const host = normalizeDomain(domain);
+  return (
+    Boolean(host) &&
+    (verifiedDomains ?? []).some((listed) => domainMatches(host, normalizeDomain(listed)))
+  );
+}
+
+function domainList(value, field) {
+  if (!Array.isArray(value) || value.some((d) => typeof d !== 'string' || !d.trim())) {
+    throw new Error(`Grounding source config: "${field}" must be a list of domains.`);
   }
-  return (tier.domains ?? []).some((listed) => domain === listed || domain.endsWith(`.${listed}`));
+  return value.map(normalizeDomain);
 }
 
-/** Grounding chunks arrive as either `web` or `retrievedContext`. */
-function normalizeChunk(chunk, index) {
-  const source = chunk.web ?? chunk.retrievedContext ?? {};
-  return { index, uri: source.uri, domain: source.domain, title: source.title };
-}
+/** Fails loudly rather than running on a policy nobody wrote. A `tiers` config lists
+ * the institutions an administrator vouches for, which is the verified register. */
+function parsePolicyConfig(raw) {
+  if (!raw) {
+    return { verifiedDomains: DEFAULT_VERIFIED_DOMAINS, excludeDomains: DEFAULT_EXCLUDE_DOMAINS };
+  }
 
-function partitionChunks(chunks, tier) {
-  const inTier = [];
-  const offTier = [];
-  (chunks ?? []).forEach((chunk, index) => {
-    const normalized = normalizeChunk(chunk, index);
-    (isDomainInTier(normalized.domain ?? '', tier) ? inTier : offTier).push(normalized);
-  });
-  return { inTier, offTier };
-}
-
-/**
- * Keeps the claims an approved source stands behind. A claim citing both an
- * approved and an unapproved chunk is kept but attributed only to the approved
- * one, since dropping it would discard content the tier does support.
- */
-function attributeClaims(supports, allowedIndices) {
-  const allowed = new Set(allowedIndices);
-  const claims = [];
-  for (const support of supports ?? []) {
-    const cited = (support.groundingChunkIndices ?? []).filter((i) => allowed.has(i));
-    if (!cited.length) {
-      continue;
-    }
-    claims.push({
-      text: support.segment?.text ?? '',
-      startIndex: support.segment?.startIndex,
-      endIndex: support.segment?.endIndex,
-      chunkIndices: cited,
+  let verifiedDomains = DEFAULT_VERIFIED_DOMAINS;
+  if (raw.verifiedDomains !== undefined) {
+    verifiedDomains = domainList(raw.verifiedDomains, 'verifiedDomains');
+  } else if (Array.isArray(raw.tiers)) {
+    verifiedDomains = raw.tiers.flatMap((tier) => {
+      if (!Array.isArray(tier?.domains) || !tier.domains.length) {
+        throw new Error(`Grounding source tier "${tier?.name ?? '?'}" lists no domains.`);
+      }
+      return domainList(tier.domains, `tiers.${tier.name}`);
     });
   }
-  return claims;
+
+  const excludeDomains =
+    raw.excludeDomains === undefined
+      ? DEFAULT_EXCLUDE_DOMAINS
+      : domainList(raw.excludeDomains, 'excludeDomains');
+
+  return { verifiedDomains, excludeDomains };
 }
 
-/** What a tier is told to reply when it finds nothing, so a miss is explicit. */
-const NO_SOURCE_SENTINEL = 'NO_SOURCE_IN_SCOPE';
-
-function evaluateTier(response, tier) {
-  const { text = '', chunks = [], supports = [] } = response ?? {};
-  if (text.trim().startsWith(NO_SOURCE_SENTINEL)) {
-    return { hit: false, tier, text, claims: [], sources: [], offTierDomains: [] };
-  }
-  const { inTier, offTier } = partitionChunks(chunks, tier);
-  const claims = attributeClaims(
-    supports,
-    inTier.map((c) => c.index),
-  );
-  return {
-    hit: inTier.length > 0 && claims.length > 0,
-    tier,
-    text,
-    claims,
-    sources: inTier,
-    offTierDomains: [...new Set(offTier.map((c) => c.domain).filter(Boolean))],
-  };
-}
-
-/**
- * Steers the search at one tier. The steering is advisory - correctness comes
- * from checking the domains that actually come back - but it raises the hit
- * rate and gives the model an explicit way to report an empty tier.
- */
-function buildTierQuery(query, tier) {
-  const domains = (tier.domains ?? []).join(', ');
+function buildGroundingPrompt(query) {
   return [
-    `Answer using only sources from these domains: ${domains}.`,
-    `If they hold nothing relevant, reply with exactly ${NO_SOURCE_SENTINEL} and nothing else.`,
+    'Beantworte die medizinische Frage auf Basis einer Websuche. Stütze die Antwort',
+    'ausschließlich auf tatsächlich gefundene Quellen und belege Aussagen im Text mit [n].',
     '',
-    query,
+    'Bevorzuge in dieser Reihenfolge: Leitlinien medizinischer Fachgesellschaften',
+    '(z. B. AWMF, ESC, ERN), regulatorische und HTA-Quellen (z. B. G-BA, IQWiG, BfArM,',
+    'EMA, RKI), systematische Übersichtsarbeiten und Metaanalysen, Studien in',
+    'peer-reviewten Fachzeitschriften. Meide Patientenportale, Blogs und kommerzielle Seiten.',
+    'Wenn nur schwache Quellen verfügbar sind, antworte trotzdem, weise aber ausdrücklich',
+    'darauf hin, dass belastbare Evidenz fehlt.',
+    '',
+    `Beende die Antwort IMMER mit ${SOURCE_BLOCK_MARKER} und danach einer Zeile pro Quelle,`,
+    'Felder durch | getrennt, ohne weitere Zeichen:',
+    'Nummer (1, 2, 3 …)|Domain|Jahr oder -|Kurzbeschreibung',
+    '',
+    `Frage: ${query}`,
   ].join('\n');
 }
 
-/**
- * Validates the mounted tier config. An empty or malformed tier would answer
- * every question with "no approved source", so it fails here instead.
- */
-function parseTierConfig(raw) {
-  const tiers = raw?.tiers;
-  if (!Array.isArray(tiers) || !tiers.length) {
-    throw new Error('Grounding source config has no tiers.');
-  }
-  for (const tier of tiers) {
-    if (!tier.name) {
-      throw new Error('Grounding source config has a tier without a name.');
-    }
-    if (!Array.isArray(tier.domains) || !tier.domains.length) {
-      throw new Error(`Grounding source tier "${tier.name}" lists no domains.`);
-    }
-  }
-  return tiers;
+/** Each distinct host the search actually returned, in order of first appearance. */
+function resultDomains(chunks) {
+  const hosts = (chunks ?? []).map((c) =>
+    normalizeDomain((c.web ?? c.retrievedContext ?? {}).domain),
+  );
+  return [...new Set(hosts.filter((h) => HOSTNAME.test(h)))];
 }
 
-/**
- * Grounding segment offsets are UTF-8 byte positions, not JS string indices,
- * so any answer containing an umlaut shifts them. Measured against a live
- * response: byte 135 was character 134.
- */
-function byteToCharIndex(text, byteIndex) {
-  const bytes = Buffer.byteLength(text, 'utf8');
-  if (byteIndex >= bytes) {
-    return text.length;
+function parseSourceBlock(text) {
+  const raw = String(text ?? '');
+  const at = raw.lastIndexOf(SOURCE_BLOCK_MARKER);
+  if (at < 0) {
+    return { body: raw.trim(), sources: null };
   }
-  return Buffer.from(text, 'utf8').subarray(0, byteIndex).toString('utf8').length;
+
+  const sources = raw
+    .slice(at + SOURCE_BLOCK_MARKER.length)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('```'))
+    .map((line) => line.split('|').map((field) => field.trim()))
+    .filter((fields) => fields.length >= 2 && HOSTNAME.test(normalizeDomain(fields[1])))
+    .map(([n, domain, ...rest], i) => {
+      // Models drift from the format, e.g. slipping in an extra field, so locate the year.
+      const y = rest.findIndex((field) => YEAR.test(field));
+      return {
+        // `1.1.1`-style numbers would all parse as 1; only a plain integer counts.
+        n: /^\d+$/.test(n) ? Number(n) : i + 1,
+        domain: normalizeDomain(domain),
+        jahr: y >= 0 && rest[y] !== '-' ? rest[y] : null,
+        beschreibung: (y >= 0 ? rest.slice(y + 1) : rest).join('|').trim() || null,
+      };
+    });
+
+  return { body: raw.slice(0, at).trim(), sources: sources.length ? sources : null };
 }
 
-/**
- * Abbreviations whose periods Intl.Segmenter would read as sentence ends. It
- * already handles a lowercase continuation such as `p. o.`, but not a capital
- * one such as `z. B.`, which is common in German clinical text.
- */
-const ABBREVIATIONS =
-  /\b(z\. ?B|d\. ?h|u\. ?a|s\. ?o|s\. ?u|i\. ?v|p\. ?o|bzw|ggf|ca|inkl|evtl|Nr|Abb|Tab|vgl|max|min)\./g;
+const verifiedFirst = (list) => [
+  ...list.filter((e) => e.verified),
+  ...list.filter((e) => !e.verified),
+];
 
-/**
- * Where a citation marker belongs in each sentence: just before the closing
- * punctuation, so the text reads "... der Wahl [1]." rather than "... [1]".
- */
-function citationPoints(text) {
-  // Same-length substitution, so every index still refers to the original text.
-  // A private-use character, because U+2024 is itself a sentence terminator.
-  const masked = text.replace(ABBREVIATIONS, (m) => m.replace(/\./g, '\uE000'));
-  const segmenter = new Intl.Segmenter('de', { granularity: 'sentence' });
+/** A named source the search never returned is dropped as fabricated; an unnamed result
+ * stays only if the answer is attributed to it. Verification uses Google's domain. */
+function mergeSources({ sources, chunks, supports, verifiedDomains }) {
+  const results = (chunks ?? [])
+    .map((c) => c.web ?? c.retrievedContext ?? {})
+    .map((w, index) => ({ domain: normalizeDomain(w.domain), uri: w.uri, index, claimed: false }))
+    .filter((r) => HOSTNAME.test(r.domain));
+  const used = new Set((supports ?? []).flatMap((s) => s.groundingChunkIndices ?? []));
 
-  const points = [];
-  for (const { segment, index } of segmenter.segment(masked)) {
-    let end = index + segment.length;
-    while (end > index && /[\s.!?;:]/.test(masked[end - 1])) {
-      end -= 1;
+  const named = [];
+  const dropped = [];
+  const entryOf = new Map();
+
+  for (const s of sources ?? []) {
+    const matching = results.filter(
+      (r) => domainMatches(r.domain, s.domain) || domainMatches(s.domain, r.domain),
+    );
+    if (!matching.length) {
+      dropped.push(s);
+      entryOf.set(s.n, null);
+      continue;
     }
-    if (end > index) {
-      points.push(end);
+    // Prefer an unclaimed result so two pages from one domain keep their own links;
+    // with none left, the citation repeats a page that is already listed.
+    const fresh = matching.find((r) => !r.claimed);
+    if (!fresh) {
+      entryOf.set(s.n, named.find((e) => e.uri === matching[0].uri) ?? null);
+      continue;
     }
+    fresh.claimed = true;
+    const entry = {
+      domain: fresh.domain,
+      uri: fresh.uri,
+      jahr: s.jahr,
+      beschreibung: s.beschreibung,
+      verified: isVerified(fresh.domain, verifiedDomains),
+    };
+    named.push(entry);
+    entryOf.set(s.n, entry);
   }
-  return points;
+
+  const unnamed = [];
+  const seen = new Set(named.map((e) => e.uri));
+  for (const r of results) {
+    if (r.claimed || seen.has(r.uri) || !used.has(r.index)) {
+      continue;
+    }
+    seen.add(r.uri);
+    unnamed.push({
+      domain: r.domain,
+      uri: r.uri,
+      jahr: null,
+      beschreibung: null,
+      verified: isVerified(r.domain, verifiedDomains),
+    });
+  }
+
+  const entries = [...verifiedFirst(named), ...verifiedFirst(unnamed)];
+  const numbering = new Map([...entryOf].map(([n, e]) => [n, e ? entries.indexOf(e) + 1 : null]));
+  return { entries, dropped, numbering };
 }
 
-/**
- * The parts of the answer an approved source stands behind, taken from the
- * original text by merged character range. Joining the spans' own texts would
- * duplicate content, because grounding spans nest inside one another.
- */
-function supportedText(text, claims) {
-  const ranges = (claims ?? [])
-    .filter((c) => typeof c.startIndex === 'number' && typeof c.endIndex === 'number')
-    .map((c) => [byteToCharIndex(text, c.startIndex), byteToCharIndex(text, c.endIndex)])
-    .sort((a, b) => a[0] - b[0]);
-
-  // Without offsets, fall back to the spans' own texts, dropping any span
-  // wholly contained in another so nesting still cannot duplicate content.
-  if (!ranges.length) {
-    const texts = (claims ?? []).map((c) => c.text).filter(Boolean);
-    return texts
-      .filter((t, i) => !texts.some((other, j) => j !== i && other.includes(t) && other !== t))
-      .filter((t, i, list) => list.indexOf(t) === i)
-      .join(' ');
-  }
-
-  const merged = [];
-  for (const [start, end] of ranges) {
-    const last = merged[merged.length - 1];
-    if (last && start <= last[1]) {
-      last[1] = Math.max(last[1], end);
-    } else {
-      merged.push([start, end]);
+/** Rewrites `[n]` markers to the kept numbering. A bracket is left alone unless every
+ * number in it is a source number, so `[2023]` survives. */
+function renumberCitations(body, numbering) {
+  return String(body ?? '').replace(/\s*\[(\d+(?:\s*,\s*\d+)*)\]/g, (match, list) => {
+    const numbers = list.split(',').map((n) => Number.parseInt(n, 10));
+    if (!numbers.every((n) => numbering.has(n))) {
+      return match;
     }
-  }
-  return merged
-    .map(([start, end]) => text.slice(start, end).trim())
+    const kept = [...new Set(numbers.map((n) => numbering.get(n)).filter((n) => n !== null))];
+    if (!kept.length) {
+      return '';
+    }
+    return `${match.match(/^\s*/)[0]}[${kept.join(', ')}]`;
+  });
+}
+
+function formatEntry(entry) {
+  return [
+    `[${entry.domain}](${entry.uri})`,
+    entry.verified ? 'verifiziert' : 'nicht verifiziert',
+    entry.jahr,
+    entry.beschreibung,
+  ]
     .filter(Boolean)
-    .join(' ');
+    .join(' · ');
 }
 
-/** Numbers the sources the way formatSources lists them: one per document. */
-function sourceNumbers(sources) {
-  const numbers = new Map();
-  const uris = [];
-  for (const source of sources) {
-    if (!uris.includes(source.uri)) {
-      uris.push(source.uri);
-    }
-    numbers.set(source.index, uris.indexOf(source.uri) + 1);
+/** Never refuses: missing evidence is stated, not withheld. */
+function formatAnswer({ body, entries, dropped, grounded }) {
+  const parts = [];
+  if (!grounded) {
+    parts.push('WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.');
   }
-  return { numbers, count: uris.length };
-}
+  parts.push(body || 'Es wurde kein Antworttext zurückgegeben.');
 
-/**
- * Puts each claim's citation at the end of the sentence it falls in, rather
- * than at the raw span end - grounding spans stop mid-phrase and sometimes
- * inside markdown emphasis, where a marker would corrupt the formatting.
- */
-function annotateInline(text, claims, sources) {
-  const { numbers, count } = sourceNumbers(sources ?? []);
-  // With one source every marker would read [1]; the source line says it once.
-  if (count < 2) {
-    return text;
+  if (entries.length) {
+    parts.push(['Quellen:', ...entries.map((e, i) => `${i + 1}. ${formatEntry(e)}`)].join('\n'));
   }
 
-  const points = citationPoints(text);
-  const byPoint = new Map();
-  for (const claim of claims ?? []) {
-    if (typeof claim.endIndex !== 'number') {
-      continue;
-    }
-    const charEnd = byteToCharIndex(text, claim.endIndex);
-    // A span ending at the very end of the text sits past the last boundary,
-    // which is before the closing punctuation - cite the final sentence.
-    const point = points.find((p) => p >= charEnd) ?? points[points.length - 1];
-    if (point === undefined) {
-      continue;
-    }
-    const cited = byPoint.get(point) ?? new Set();
-    claim.chunkIndices.forEach((i) => numbers.has(i) && cited.add(numbers.get(i)));
-    byPoint.set(point, cited);
+  const notes = [];
+  if (entries.length && !entries.some((e) => e.verified)) {
+    notes.push(
+      'Hinweis: Keine Quelle aus dem verifizierten Register; die Quellen sind nicht geprüft.',
+    );
+  }
+  if (dropped.length) {
+    const one = dropped.length === 1;
+    notes.push(
+      `Hinweis: ${dropped.length} zitierte ${one ? 'Quelle wurde' : 'Quellen wurden'} entfernt, ` +
+        `weil sie nicht in den Suchergebnissen enthalten ${one ? 'war' : 'waren'}.`,
+    );
+  }
+  if (notes.length) {
+    parts.push(notes.join('\n'));
   }
 
-  // Back to front, so earlier insertion points keep their indices.
-  let annotated = text;
-  for (const point of [...byPoint.keys()].sort((a, b) => b - a)) {
-    const marker = [...byPoint.get(point)]
-      .sort((a, b) => a - b)
-      .map((n) => `[${n}]`)
-      .join('');
-    annotated = `${annotated.slice(0, point)} ${marker}${annotated.slice(point)}`;
-  }
-  return annotated;
-}
-
-/**
- * One prompt covering every approved domain, preferred tier first. Trades the
- * forced tier-by-tier search for a single call; priority is then enforced by
- * ranking what comes back rather than by the order of the searches.
- */
-function buildRankedQuery(query, tiers) {
-  const preference = (tiers ?? []).map(
-    (tier, i) => `${i + 1}. ${tier.name}: ${(tier.domains ?? []).join(', ')}`,
-  );
-  return [
-    'Answer using only sources from the domains listed below, preferring those',
-    'higher in the list. Use a lower group only where the ones above hold nothing.',
-    ...preference,
-    `If none of them hold anything relevant, reply with exactly ${NO_SOURCE_SENTINEL} and nothing else.`,
-    '',
-    query,
-  ].join('\n');
-}
-
-/** The highest-priority tier that the single response actually supports. */
-function rankResponse(response, tiers) {
-  for (const tier of tiers ?? []) {
-    const result = evaluateTier(response, tier);
-    if (result.hit) {
-      return result;
-    }
-  }
-  return { hit: false, tier: null, text: '', claims: [], sources: [], offTierDomains: [] };
-}
-
-/**
- * Tries each tier in order and returns the first that a source actually backs.
- * `ask` performs one grounding call; injecting it keeps the ordering logic
- * testable without a live Vertex client.
- *
- * Every configured tier is tried unless `maxTiers` caps it - silently skipping
- * a tier an administrator listed would be worse than the extra latency.
- */
-async function runCascade({ tiers, ask, maxTiers }) {
-  for (const tier of (tiers ?? []).slice(0, maxTiers ?? undefined)) {
-    const result = evaluateTier(await ask(tier), tier);
-    if (result.hit) {
-      return result;
-    }
-  }
-  return { hit: false, tier: null, text: '', claims: [], sources: [], offTierDomains: [] };
-}
-
-const NO_APPROVED_SOURCE =
-  'No approved source was found for this question. The configured source tiers ' +
-  'returned nothing relevant, so no answer is given rather than one drawn from ' +
-  'an unapproved source.';
-
-/**
- * `web.title` only ever carries the domain, so a source line shows the domain
- * and links the redirect stub - the identifier itself is quoted by the model
- * inside the answer text.
- */
-function formatSources(sources, tier) {
-  const seen = new Map(sources.map((source) => [source.uri, source]));
-  const unique = [...seen.values()];
-  // Written as a complete markdown link so the calling model can copy the
-  // string verbatim rather than joining a label to a separate definition.
-  const lines = unique.map((source, i) => `${i + 1}. [${source.domain}](${source.uri})`);
-  return [`Sources (${tier?.name ?? 'approved'}):`, ...lines].join('\n');
-}
-
-function formatAnswer(result) {
-  if (!result?.hit) {
-    return NO_APPROVED_SOURCE;
-  }
-  // Off-tier chunks mean the text was written partly from sources we reject, so
-  // only the claims an approved source stands behind are kept.
-  const body = result.offTierDomains?.length
-    ? supportedText(result.text, result.claims)
-    : result.text;
-  const cited = annotateInline(body, result.claims, result.sources ?? []);
-  return `${cited}\n\n${formatSources(result.sources ?? [], result.tier)}`;
+  return parts.join('\n\n');
 }
 
 module.exports = {
-  NO_SOURCE_SENTINEL,
-  isDomainInTier,
-  partitionChunks,
-  attributeClaims,
-  evaluateTier,
-  runCascade,
-  buildTierQuery,
+  isVerified,
+  parsePolicyConfig,
+  buildGroundingPrompt,
+  resultDomains,
+  parseSourceBlock,
+  mergeSources,
+  renumberCitations,
   formatAnswer,
-  parseTierConfig,
-  byteToCharIndex,
-  citationPoints,
-  annotateInline,
-  supportedText,
-  buildRankedQuery,
-  rankResponse,
 };
