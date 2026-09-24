@@ -532,6 +532,11 @@ spec:
                 configMapKeyRef:
                   key: VERTEX_AI_DATASTORE_ID
                   name: env
+            - name: WEB_GROUNDING_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  key: WEB_GROUNDING_MODEL
+                  name: env
             - name: CUSTOM_FOOTER
               valueFrom:
                 configMapKeyRef:

@@ -2,6 +2,7 @@ const path = require('path');
 const { z } = require('zod');
 const { Tool } = require('@librechat/agents/langchain/tools');
 const { VertexAI } = require('@google-cloud/vertexai');
+const { Tools } = require('librechat-data-provider');
 const { logger } = require('@librechat/data-schemas');
 const { extractGroundingResponse } = require('../util/vertexGrounding');
 const {
@@ -12,6 +13,7 @@ const {
     mergeSources,
     renumberCitations,
     formatAnswer,
+    toOrganicSources,
 } = require('../util/groundingPolicy');
 
 /**
@@ -56,6 +58,7 @@ class WebGroundingEnterprise extends Tool {
         this.name = 'web_grounding_enterprise';
         this.description =
             'Use the GDPR-compliant \'web_grounding_enterprise\' tool to retrieve search results from the web.';
+        this.responseFormat = 'content_and_artifact';
 
         /* Used to initialize the Tool without necessary variables. */
         this.override = fields.override ?? false;
@@ -154,7 +157,8 @@ class WebGroundingEnterprise extends Tool {
         return extractGroundingResponse((await this.generativeModel.generateContent(request)).response);
     }
 
-    async _call(data) {
+    /** The text is what the agent reads; the artifact feeds LibreChat's Sources panel. */
+    async _call(data, _runManager, config) {
         const { query } = data;
 
         try {
@@ -167,15 +171,20 @@ class WebGroundingEnterprise extends Tool {
                 verifiedDomains: this.policy.verifiedDomains,
             });
 
-            return formatAnswer({
+            const answer = formatAnswer({
                 body: renumberCitations(body, numbering),
                 entries,
                 dropped,
                 grounded: resultDomains(chunks).length > 0,
             });
+            if (!entries.length) {
+                return [answer, undefined];
+            }
+            const turn = config?.toolCall?.turn ?? 0;
+            return [answer, { [Tools.web_search]: { turn, organic: toOrganicSources(entries) } }];
         } catch (error) {
             logger.error('Web Grounding for Enterprise request failed', error);
-            return 'There was an error with the Web Grounding for Enterprise Search.';
+            return ['There was an error with the Web Grounding for Enterprise Search.', undefined];
         }
     }
 }

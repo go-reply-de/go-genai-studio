@@ -90,15 +90,68 @@ const toolWith = (search) => {
   return tool;
 };
 
+/** Invokes the tool the way LibreChat's tool executor does, so the result is a ToolMessage. */
+const invokeTool = (tool, turn = 0) =>
+  tool.invoke(
+    { query: QUERY },
+    { toolCall: { id: 'call_1', name: 'web_grounding_enterprise', args: { query: QUERY }, turn } },
+  );
+
 describe('WebGroundingEnterprise', () => {
   test('searches once when the search returns results', async () => {
     const search = stubModel([
       groundedResponse('Bis 4,5 h [1].\n[[QUELLEN]]\n1|awmf.org|2023|S2e', ['awmf.org']),
     ]);
 
-    await toolWith(search)._call({ query: QUERY });
+    await invokeTool(toolWith(search));
 
     expect(search.asked).toHaveLength(1);
+  });
+
+  test('hands the sources to the Sources panel in the order the answer numbers them', async () => {
+    const search = stubModel([
+      groundedResponse(
+        'Bis 4,5 h [1], laut Leitlinie [2].\n[[QUELLEN]]\n1|dgn.org|2023|DGN\n2|awmf.org|2023|S2e',
+        ['dgn.org', 'awmf.org'],
+      ),
+    ]);
+
+    const { artifact } = await invokeTool(toolWith(search), 2);
+
+    expect(artifact).toEqual({
+      web_search: {
+        turn: 2,
+        organic: [
+          {
+            position: 1,
+            link: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/awmf.org',
+            title: 'awmf.org',
+            attribution: 'awmf.org',
+            snippet: 'verifiziert · 2023 · S2e',
+          },
+          {
+            position: 2,
+            link: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/dgn.org',
+            title: 'dgn.org',
+            attribution: 'dgn.org',
+            snippet: 'nicht verifiziert · 2023 · DGN',
+          },
+        ],
+      },
+    });
+  });
+
+  test('keeps a cited source the search never returned out of the Sources panel', async () => {
+    const search = stubModel([
+      groundedResponse(
+        'A gilt [1]. B gilt [2].\n[[QUELLEN]]\n1|awmf.org|2023|S3\n2|erfunden.de|2024|x',
+        ['awmf.org'],
+      ),
+    ]);
+
+    const { artifact } = await invokeTool(toolWith(search));
+
+    expect(artifact?.web_search?.organic?.map((source) => source.title)).toEqual(['awmf.org']);
   });
 
   test('retries once with the same question when the first search comes back empty', async () => {
@@ -107,7 +160,7 @@ describe('WebGroundingEnterprise', () => {
       groundedResponse('Bis 4,5 h [1].\n[[QUELLEN]]\n1|awmf.org|2023|S2e', ['awmf.org']),
     ]);
 
-    const out = await toolWith(search)._call({ query: QUERY });
+    const { content: out } = await invokeTool(toolWith(search));
 
     expect(search.asked).toHaveLength(2);
     expect(search.asked[1]).toBe(search.asked[0]);
@@ -122,7 +175,7 @@ describe('WebGroundingEnterprise', () => {
       groundedResponse('Dritter Versuch.', ['awmf.org']),
     ]);
 
-    const out = await toolWith(search)._call({ query: QUERY });
+    const { content: out } = await invokeTool(toolWith(search));
 
     expect(search.asked).toHaveLength(2);
     expect(out).toMatch(/nicht durch eine Websuche belegt/);
@@ -138,7 +191,7 @@ describe('WebGroundingEnterprise', () => {
       ),
     ]);
 
-    const out = await toolWith(search)._call({ query: QUERY });
+    const { content: out } = await invokeTool(toolWith(search));
 
     expect(out).toContain('A gilt [1]. B gilt. C gilt [2].');
     expect(out).not.toContain('erfunden.de');
@@ -152,7 +205,7 @@ describe('WebGroundingEnterprise', () => {
       ]),
     ]);
 
-    const out = await toolWith(search)._call({ query: QUERY });
+    const { content: out } = await invokeTool(toolWith(search));
 
     expect(out).toContain('Belastbare Evidenz fehlt [1].');
     expect(out).toContain('[netdoktor.de](');
@@ -168,7 +221,7 @@ describe('WebGroundingEnterprise', () => {
       ),
     ]);
 
-    const out = await toolWith(search)._call({ query: QUERY });
+    const { content: out } = await invokeTool(toolWith(search));
 
     expect(out).toContain('[dgn.org](');
     expect(out).not.toContain('aok.de');
@@ -177,7 +230,7 @@ describe('WebGroundingEnterprise', () => {
   test('reports a failed search as a message instead of throwing', async () => {
     const search = stubModel([new Error('503 Service Unavailable')]);
 
-    const out = await toolWith(search)._call({ query: QUERY });
+    const { content: out } = await invokeTool(toolWith(search));
 
     expect(out).toMatch(/error with the Web Grounding for Enterprise Search/);
   });

@@ -231,15 +231,25 @@ function renumberCitations(body, numbering) {
   });
 }
 
-function formatEntry(entry) {
-  return [
-    `[${entry.domain}](${entry.uri})`,
-    entry.verified ? 'verifiziert' : 'nicht verifiziert',
-    entry.jahr,
-    entry.beschreibung,
-  ]
+function describeEntry(entry) {
+  return [entry.verified ? 'verifiziert' : 'nicht verifiziert', entry.jahr, entry.beschreibung]
     .filter(Boolean)
     .join(' · ');
+}
+
+function formatEntry(entry) {
+  return `[${entry.domain}](${entry.uri}) · ${describeEntry(entry)}`;
+}
+
+/** The answer's source list as LibreChat Sources-panel items, numbered like the text. */
+function toOrganicSources(entries) {
+  return entries.map((entry, i) => ({
+    position: i + 1,
+    link: entry.uri,
+    title: entry.domain,
+    attribution: entry.domain,
+    snippet: describeEntry(entry),
+  }));
 }
 
 /** Never refuses: missing evidence is stated, not withheld. */
@@ -283,4 +293,5 @@ module.exports = {
   mergeSources,
   renumberCitations,
   formatAnswer,
+  toOrganicSources,
 };
