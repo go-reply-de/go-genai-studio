@@ -1,7 +1,8 @@
 /**
  * Gemini 3 rejects a tool call sent back without its thought signature (HTTP 400), and
  * @langchain/google-common 0.2.x drops it whenever the stored signatures don't line up with
- * the message parts. Stamps Google's documented placeholder on tool calls that have none.
+ * the message parts. Re-attaches the dropped signatures to the tool calls in order, like upstream's
+ * fixThoughtSignatures; tool calls that never had one get Google's documented placeholder.
  */
 const fs = require('fs');
 const path = require('path');
@@ -51,9 +52,11 @@ function patchFile(file) {
   const indent = ret[1];
   const insertAt = at + ret.index + 1;
   const stamp = [
+    `${indent}const unattached = signatures.filter((s) => s && !parts.some((p) => p.thoughtSignature === s));`,
+    `${indent}let nextSignature = 0;`,
     `${indent}for (const part of parts) {`,
     `${indent}    if (part.functionCall && !part.thoughtSignature) {`,
-    `${indent}        part.thoughtSignature = "${PLACEHOLDER}";`,
+    `${indent}        part.thoughtSignature = unattached[nextSignature++] ?? "${PLACEHOLDER}";`,
     `${indent}    }`,
     `${indent}}`,
     '',
