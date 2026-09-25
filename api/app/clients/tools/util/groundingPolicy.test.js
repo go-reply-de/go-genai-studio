@@ -1,5 +1,4 @@
 const {
-  isVerified,
   parsePolicyConfig,
   parseSourceBlock,
   mergeSources,
@@ -11,58 +10,28 @@ const {
 const chunk = (domain, uri = `stub-${domain}`) => ({ web: { uri, title: domain, domain } });
 const source = (n, domain) => ({ n, domain, jahr: '2023', beschreibung: 'x' });
 
-describe('isVerified', () => {
-  test('covers subdomains of a verified institution', () => {
-    expect(isVerified('register.awmf.org', ['awmf.org'])).toBe(true);
-  });
-
-  test('does not match a lookalike domain that merely ends in the same letters', () => {
-    expect(isVerified('fake-awmf.org', ['awmf.org'])).toBe(false);
-  });
-});
-
 describe('parsePolicyConfig', () => {
-  test('treats the domains of a mounted tier config as the verified institutions', () => {
-    const policy = parsePolicyConfig({
-      tiers: [
-        { name: 'AWMF', domains: ['awmf.org'] },
-        { name: 'Behörden', domains: ['rki.de', 'g-ba.de'] },
-      ],
-    });
+  test('passes a configured exclusion list through', () => {
+    const policy = parsePolicyConfig({ excludeDomains: ['junk.example'] });
 
-    expect(policy.verifiedDomains).toEqual(['awmf.org', 'rki.de', 'g-ba.de']);
+    expect(policy).toEqual({ excludeDomains: ['junk.example'] });
   });
 
-  test('passes a configured exclusion list through', () => {
+  test('excludes content farms without a mounted config', () => {
+    expect(parsePolicyConfig(null).excludeDomains.length).toBeGreaterThan(0);
+  });
+
+  test('reads nothing but the exclusion list from a mounted config', () => {
     const policy = parsePolicyConfig({
-      verifiedDomains: ['awmf.org'],
+      tiers: [{ name: 'AWMF', domains: ['awmf.org'] }],
       excludeDomains: ['junk.example'],
     });
 
-    expect(policy.excludeDomains).toEqual(['junk.example']);
-  });
-
-  test('still verifies AWMF and excludes content farms without a mounted config', () => {
-    const policy = parsePolicyConfig(null);
-
-    expect(isVerified('register.awmf.org', policy.verifiedDomains)).toBe(true);
-    expect(policy.excludeDomains.length).toBeGreaterThan(0);
-  });
-
-  test('rejects a verified list that contains something other than a domain', () => {
-    expect(() => parsePolicyConfig({ verifiedDomains: ['awmf.org', 42] })).toThrow(
-      /verifiedDomains/,
-    );
+    expect(policy).toEqual({ excludeDomains: ['junk.example'] });
   });
 
   test('rejects an exclusion list that is not a list of domains', () => {
-    expect(() =>
-      parsePolicyConfig({ verifiedDomains: ['awmf.org'], excludeDomains: 'junk.example' }),
-    ).toThrow(/excludeDomains/);
-  });
-
-  test('rejects a tier without domains rather than silently verifying nothing', () => {
-    expect(() => parsePolicyConfig({ tiers: [{ name: 'Leer', domains: [] }] })).toThrow(/Leer/);
+    expect(() => parsePolicyConfig({ excludeDomains: 'junk.example' })).toThrow(/excludeDomains/);
   });
 });
 
@@ -135,27 +104,28 @@ describe('parseSourceBlock', () => {
 });
 
 describe('mergeSources', () => {
-  const verifiedDomains = ['awmf.org', 'rki.de'];
-
   test('drops a cited source the search never returned', () => {
     const { entries, dropped } = mergeSources({
       sources: [source(1, 'awmf.org'), source(2, 'erfunden.de')],
       chunks: [chunk('awmf.org')],
-      verifiedDomains,
     });
 
     expect(entries.map((e) => e.domain)).toEqual(['awmf.org']);
     expect(dropped.map((d) => d.domain)).toEqual(['erfunden.de']);
   });
 
-  test('verifies on the domain the search returned, not the one the model wrote', () => {
+  test('lists the domain the search returned, not the one the model wrote', () => {
     const { entries } = mergeSources({
       sources: [source(1, 'register.awmf.org')],
       chunks: [chunk('awmf.org')],
-      verifiedDomains: ['register.awmf.org'],
     });
 
-    expect(entries[0]).toMatchObject({ domain: 'awmf.org', verified: false });
+    expect(entries[0]).toEqual({
+      domain: 'awmf.org',
+      uri: 'stub-awmf.org',
+      jahr: '2023',
+      beschreibung: 'x',
+    });
   });
 
   test('keeps a search result the answer is attributed to, even when the model did not name it', () => {
@@ -163,7 +133,6 @@ describe('mergeSources', () => {
       sources: [source(1, 'awmf.org')],
       chunks: [chunk('netdoktor.de'), chunk('awmf.org')],
       supports: [{ segment: { endIndex: 40, text: 'x' }, groundingChunkIndices: [0, 1] }],
-      verifiedDomains,
     });
 
     expect(entries.map((e) => e.domain)).toEqual(['awmf.org', 'netdoktor.de']);
@@ -174,7 +143,6 @@ describe('mergeSources', () => {
       sources: [source(1, 'awmf.org')],
       chunks: [chunk('netdoktor.de'), chunk('awmf.org')],
       supports: [{ segment: { endIndex: 40, text: 'x' }, groundingChunkIndices: [1] }],
-      verifiedDomains,
     });
 
     expect(entries.map((e) => e.domain)).toEqual(['awmf.org']);
@@ -184,7 +152,6 @@ describe('mergeSources', () => {
     const { entries } = mergeSources({
       sources: [source(1, 'doccheck.com'), source(2, 'doccheck.com')],
       chunks: [chunk('doccheck.com', 'stub-1'), chunk('doccheck.com', 'stub-2')],
-      verifiedDomains,
     });
 
     expect(entries.map((e) => e.uri)).toEqual(['stub-1', 'stub-2']);
@@ -194,7 +161,6 @@ describe('mergeSources', () => {
     const { entries, numbering } = mergeSources({
       sources: [source(1, 'doccheck.com'), source(2, 'doccheck.com')],
       chunks: [chunk('doccheck.com', 'stub-1')],
-      verifiedDomains,
     });
 
     expect(entries.map((e) => e.uri)).toEqual(['stub-1']);
@@ -204,17 +170,16 @@ describe('mergeSources', () => {
     ]);
   });
 
-  test('puts verified institutions first and numbers to match', () => {
+  test('keeps the order in which the answer cites its sources', () => {
     const { entries, numbering } = mergeSources({
       sources: [source(1, 'esur-cm.org'), source(2, 'rki.de')],
-      chunks: [chunk('esur-cm.org'), chunk('rki.de')],
-      verifiedDomains,
+      chunks: [chunk('rki.de'), chunk('esur-cm.org')],
     });
 
-    expect(entries.map((e) => e.domain)).toEqual(['rki.de', 'esur-cm.org']);
+    expect(entries.map((e) => e.domain)).toEqual(['esur-cm.org', 'rki.de']);
     expect([...numbering]).toEqual([
-      [1, 2],
-      [2, 1],
+      [1, 1],
+      [2, 2],
     ]);
   });
 
@@ -222,7 +187,6 @@ describe('mergeSources', () => {
     const { numbering } = mergeSources({
       sources: [source(1, 'awmf.org'), source(2, 'erfunden.de'), source(3, 'rki.de')],
       chunks: [chunk('awmf.org'), chunk('rki.de')],
-      verifiedDomains,
     });
 
     expect([...numbering]).toEqual([
@@ -247,13 +211,7 @@ describe('anchorClaims', () => {
       groundingChunkIndices,
     };
   };
-  const entry = (domain) => ({
-    domain,
-    uri: `stub-${domain}`,
-    jahr: null,
-    beschreibung: null,
-    verified: false,
-  });
+  const entry = (domain) => ({ domain, uri: `stub-${domain}`, jahr: null, beschreibung: null });
 
   test('puts an anchor behind each passage Google attributes to a kept source', () => {
     const text =
@@ -384,38 +342,26 @@ describe('formatAnswer', () => {
     uri: 'stub-a',
     jahr: '2023',
     beschreibung: 'S3',
-    verified: true,
     ...over,
   });
   const lineFor = (out, domain) => out.split('\n').find((l) => l.includes(`[${domain}](`));
   const answer = (over) =>
     formatAnswer({ body: 'A', entries: [entry()], dropped: [], grounded: true, ...over });
 
-  test('links each source by its domain with verification, year and description', () => {
+  test('links each source by its domain with year and description', () => {
     const line = lineFor(answer({}), 'awmf.org');
 
-    expect(line).toContain('[awmf.org](stub-a)');
-    expect(line).toMatch(/2023/);
-    expect(line).toMatch(/S3/);
-    expect(line).not.toMatch(/nicht verifiziert/);
-    expect(line).not.toMatch(/klassifiziert/);
+    expect(line).toBe('1. [awmf.org](stub-a) · 2023 · S3');
   });
 
   test('does not warn when a search backed the answer', () => {
     expect(answer({})).not.toMatch(/WARNUNG/);
   });
 
-  test('marks a source outside the verified register as unverified', () => {
-    const out = answer({
-      entries: [entry({ domain: 'esur-cm.org', uri: 'stub-e', verified: false })],
-    });
+  test('never rates a source as verified, checked or unverified', () => {
+    const out = answer({ entries: [entry(), entry({ domain: 'esur-cm.org', uri: 'stub-e' })] });
 
-    expect(lineFor(out, 'esur-cm.org')).toMatch(/nicht verifiziert/);
-  });
-
-  test('points out when no verified institution backs the answer', () => {
-    expect(answer({ entries: [entry({ verified: false })] })).toMatch(/verifizierten Register/);
-    expect(answer({})).not.toMatch(/verifizierten Register/);
+    expect(out).not.toMatch(/verifiziert|Register|geprüft/);
   });
 
   test('answers with a warning rather than refusing when no search backed the answer', () => {

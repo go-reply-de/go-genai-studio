@@ -537,6 +537,11 @@ spec:
                 configMapKeyRef:
                   key: WEB_GROUNDING_MODEL
                   name: env
+            - name: WEB_GROUNDING_THINKING_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  key: WEB_GROUNDING_THINKING_LEVEL
+                  name: env
             - name: CUSTOM_FOOTER
               valueFrom:
                 configMapKeyRef:
@@ -590,8 +595,8 @@ spec:
             - mountPath: /app/api/app/clients/tools/manifest.json
               name: plugin-manifest
               subPath: manifest.json
-            # Absent in environments without the ConfigMap, which leaves web
-            # grounding unrestricted.
+            # Optional excludeDomains override for web grounding; absent, the tool
+            # uses its built-in exclusion list.
             - mountPath: /app/api/app/clients/tools/grounding-sources.json
               name: grounding-sources
               subPath: grounding-sources.json

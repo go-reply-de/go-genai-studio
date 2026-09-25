@@ -85,7 +85,7 @@ const QUERY = 'Welches Zeitfenster gilt für die Thrombolyse bei Frau M., 67 Jah
 
 const toolWith = (search) => {
   const tool = new WebGroundingEnterprise({ override: true });
-  tool.policy = { verifiedDomains: ['awmf.org'], excludeDomains: [] };
+  tool.policy = { excludeDomains: [] };
   tool.generativeModel = search;
   return tool;
 };
@@ -108,7 +108,7 @@ describe('WebGroundingEnterprise', () => {
     expect(search.asked).toHaveLength(1);
   });
 
-  test('hands the sources to the Sources panel in the order the answer numbers them', async () => {
+  test('hands the sources to the Sources panel by domain, in the order the answer cites them', async () => {
     const search = stubModel([
       groundedResponse(
         'Bis 4,5 h [1], laut Leitlinie [2].\n[[QUELLEN]]\n1|dgn.org|2023|DGN\n2|awmf.org|2023|S2e',
@@ -124,17 +124,15 @@ describe('WebGroundingEnterprise', () => {
         organic: [
           {
             position: 1,
-            link: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/awmf.org',
-            title: 'awmf.org',
-            attribution: '1 · awmf.org',
-            snippet: 'verifiziert',
+            link: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/dgn.org',
+            title: 'dgn.org',
+            attribution: 'dgn.org',
           },
           {
             position: 2,
-            link: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/dgn.org',
-            title: 'dgn.org',
-            attribution: '2 · dgn.org',
-            snippet: 'nicht verifiziert',
+            link: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/awmf.org',
+            title: 'awmf.org',
+            attribution: 'awmf.org',
           },
         ],
       },
@@ -224,7 +222,7 @@ describe('WebGroundingEnterprise', () => {
 
     expect(out).toContain('Belastbare Evidenz fehlt.');
     expect(out).toContain('[netdoktor.de](');
-    expect(out).toMatch(/verifizierten Register/);
+    expect(out).not.toMatch(/verifiziert/);
   });
 
   test('keeps only the unnamed search results the answer is attributed to', async () => {
@@ -268,14 +266,12 @@ describe('WebGroundingEnterprise client wiring', () => {
         private_key: 'k',
       }),
     );
-    fs.writeFileSync(
-      policy,
-      JSON.stringify({ verifiedDomains: ['awmf.org'], excludeDomains: ['junk.example'] }),
-    );
+    fs.writeFileSync(policy, JSON.stringify({ excludeDomains: ['junk.example'] }));
     process.env.GOOGLE_LOC = 'eu';
     process.env.GOOGLE_SERVICE_KEY_FILE = key;
     process.env.WEB_GROUNDING_SOURCES_FILE = policy;
     delete process.env.WEB_GROUNDING_MODEL;
+    delete process.env.WEB_GROUNDING_THINKING_LEVEL;
   });
 
   afterEach(() => {
@@ -302,5 +298,20 @@ describe('WebGroundingEnterprise client wiring', () => {
     new WebGroundingEnterprise({ geminiModel: 'gemini-3.8-flash' });
 
     expect(mockClients[0].models.map((m) => m.model)).toEqual(['gemini-3.5-flash-lite']);
+  });
+
+  test('sets the thinking level of the search model when one is configured', () => {
+    process.env.WEB_GROUNDING_MODEL = 'gemini-3.5-flash';
+    process.env.WEB_GROUNDING_THINKING_LEVEL = 'LOW';
+
+    new WebGroundingEnterprise({ geminiModel: 'gemini-3.8-flash' });
+
+    expect(mockClients[0].models).toEqual([
+      {
+        model: 'gemini-3.5-flash',
+        tools: [{ enterpriseWebSearch: { excludeDomains: ['junk.example'] } }],
+        generationConfig: { thinkingConfig: { thinkingLevel: 'LOW' } },
+      },
+    ]);
   });
 });

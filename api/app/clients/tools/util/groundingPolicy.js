@@ -3,21 +3,7 @@
 
 const SOURCE_BLOCK_MARKER = '[[QUELLEN]]';
 
-/** Institutions whose identity is a fact rather than a judgement. */
-const DEFAULT_VERIFIED_DOMAINS = [
-  'awmf.org',
-  'leitlinien.de',
-  'g-ba.de',
-  'iqwig.de',
-  'rki.de',
-  'bfarm.de',
-  'pei.de',
-  'ema.europa.eu',
-  'nice.org.uk',
-  'cochranelibrary.com',
-];
-
-/** Never citable. A missing entry is harmless: unlisted junk is still shown as unverified. */
+/** Never citable. A missing entry only means that host can still appear as a source. */
 const DEFAULT_EXCLUDE_DOMAINS = [
   'gesundheits-lexikon.com',
   'gelenk-klinik.de',
@@ -29,6 +15,33 @@ const DEFAULT_EXCLUDE_DOMAINS = [
   'doktorweigl.de',
   'krank.de',
   'medlexi.de',
+  'doccheck.com',
+  'researchgate.net',
+  'proquest.com',
+  'wikipedia.org',
+  'netdoktor.de',
+  'apotheken-umschau.de',
+  'onmeda.de',
+  'gesundheit.de',
+  'pflegeportal.ch',
+  'news-papers.eu',
+  'anesthesiaservicesla.com',
+  'getclarimed.com',
+  'medizinio.de',
+  'facebook.com',
+  'britehealth.com',
+  'golighter.de',
+  'cme-kurs.de',
+  'dguht.de',
+  'nerdfallmedizin.de',
+  'consu-med.de',
+  'medi-know.org',
+  'shotsyapp.com',
+  'cureal.de',
+  'pflege.de',
+  'radprax-vorsorge.de',
+  'helios-gesundheit.de',
+  'idw-online.de',
 ];
 
 /** Models write `https://www.awmf.org/...` as often as `awmf.org`; both mean the host. */
@@ -49,14 +62,6 @@ function domainMatches(domain, listed) {
   return domain === listed || domain.endsWith(`.${listed}`);
 }
 
-function isVerified(domain, verifiedDomains) {
-  const host = normalizeDomain(domain);
-  return (
-    Boolean(host) &&
-    (verifiedDomains ?? []).some((listed) => domainMatches(host, normalizeDomain(listed)))
-  );
-}
-
 function domainList(value, field) {
   if (!Array.isArray(value) || value.some((d) => typeof d !== 'string' || !d.trim())) {
     throw new Error(`Grounding source config: "${field}" must be a list of domains.`);
@@ -64,31 +69,14 @@ function domainList(value, field) {
   return value.map(normalizeDomain);
 }
 
-/** Fails loudly rather than running on a policy nobody wrote. A `tiers` config lists
- * the institutions an administrator vouches for, which is the verified register. */
+/** Only the exclusion list is read from a mounted config; a malformed one fails loudly. */
 function parsePolicyConfig(raw) {
-  if (!raw) {
-    return { verifiedDomains: DEFAULT_VERIFIED_DOMAINS, excludeDomains: DEFAULT_EXCLUDE_DOMAINS };
-  }
-
-  let verifiedDomains = DEFAULT_VERIFIED_DOMAINS;
-  if (raw.verifiedDomains !== undefined) {
-    verifiedDomains = domainList(raw.verifiedDomains, 'verifiedDomains');
-  } else if (Array.isArray(raw.tiers)) {
-    verifiedDomains = raw.tiers.flatMap((tier) => {
-      if (!Array.isArray(tier?.domains) || !tier.domains.length) {
-        throw new Error(`Grounding source tier "${tier?.name ?? '?'}" lists no domains.`);
-      }
-      return domainList(tier.domains, `tiers.${tier.name}`);
-    });
-  }
-
   const excludeDomains =
-    raw.excludeDomains === undefined
+    raw?.excludeDomains === undefined
       ? DEFAULT_EXCLUDE_DOMAINS
       : domainList(raw.excludeDomains, 'excludeDomains');
 
-  return { verifiedDomains, excludeDomains };
+  return { excludeDomains };
 }
 
 function buildGroundingPrompt(query) {
@@ -148,14 +136,9 @@ function parseSourceBlock(text) {
   return { body: raw.slice(0, at).trim(), sources: sources.length ? sources : null };
 }
 
-const verifiedFirst = (list) => [
-  ...list.filter((e) => e.verified),
-  ...list.filter((e) => !e.verified),
-];
-
 /** A named source the search never returned is dropped as fabricated; an unnamed result
- * stays only if the answer is attributed to it. Verification uses Google's domain. */
-function mergeSources({ sources, chunks, supports, verifiedDomains }) {
+ * stays only if the answer is attributed to it. Entries carry Google's domain, not the model's. */
+function mergeSources({ sources, chunks, supports }) {
   const results = (chunks ?? [])
     .map((c) => c.web ?? c.retrievedContext ?? {})
     .map((w, index) => ({ domain: normalizeDomain(w.domain), uri: w.uri, index, claimed: false }))
@@ -188,7 +171,6 @@ function mergeSources({ sources, chunks, supports, verifiedDomains }) {
       uri: fresh.uri,
       jahr: s.jahr,
       beschreibung: s.beschreibung,
-      verified: isVerified(fresh.domain, verifiedDomains),
     };
     named.push(entry);
     entryOf.set(s.n, entry);
@@ -201,16 +183,10 @@ function mergeSources({ sources, chunks, supports, verifiedDomains }) {
       continue;
     }
     seen.add(r.uri);
-    unnamed.push({
-      domain: r.domain,
-      uri: r.uri,
-      jahr: null,
-      beschreibung: null,
-      verified: isVerified(r.domain, verifiedDomains),
-    });
+    unnamed.push({ domain: r.domain, uri: r.uri, jahr: null, beschreibung: null });
   }
 
-  const entries = [...verifiedFirst(named), ...verifiedFirst(unnamed)];
+  const entries = [...named, ...unnamed];
   const numbering = new Map([...entryOf].map(([n, e]) => [n, e ? entries.indexOf(e) + 1 : null]));
   return { entries, dropped, numbering };
 }
@@ -340,25 +316,19 @@ function anchorClaims({ text, supports, chunks, entries, numbering, turn = 0 }) 
 }
 
 function formatEntry(entry) {
-  return [
-    `[${entry.domain}](${entry.uri})`,
-    entry.verified ? 'verifiziert' : 'nicht verifiziert',
-    entry.jahr,
-    entry.beschreibung,
-  ]
+  return [`[${entry.domain}](${entry.uri})`, entry.jahr, entry.beschreibung]
     .filter(Boolean)
     .join(' · ');
 }
 
-/** The source list as LibreChat citation data; the chip label carries the list number. Year and
- * description stay out, as they do in the agent's answer. */
+/** The source list as LibreChat citation data: only the domain and link Google returned, so a chip
+ * reads `awmf.org` and never carries model-written year or description. */
 function toOrganicSources(entries) {
   return entries.map((entry, i) => ({
     position: i + 1,
     link: entry.uri,
     title: entry.domain,
-    attribution: `${i + 1} · ${entry.domain}`,
-    snippet: entry.verified ? 'verifiziert' : 'nicht verifiziert',
+    attribution: entry.domain,
   }));
 }
 
@@ -374,28 +344,18 @@ function formatAnswer({ body, entries, dropped, grounded }) {
     parts.push(['Quellen:', ...entries.map((e, i) => `${i + 1}. ${formatEntry(e)}`)].join('\n'));
   }
 
-  const notes = [];
-  if (entries.length && !entries.some((e) => e.verified)) {
-    notes.push(
-      'Hinweis: Keine Quelle aus dem verifizierten Register; die Quellen sind nicht geprüft.',
-    );
-  }
   if (dropped.length) {
     const one = dropped.length === 1;
-    notes.push(
+    parts.push(
       `Hinweis: ${dropped.length} zitierte ${one ? 'Quelle wurde' : 'Quellen wurden'} entfernt, ` +
         `weil sie nicht in den Suchergebnissen enthalten ${one ? 'war' : 'waren'}.`,
     );
-  }
-  if (notes.length) {
-    parts.push(notes.join('\n'));
   }
 
   return parts.join('\n\n');
 }
 
 module.exports = {
-  isVerified,
   parsePolicyConfig,
   buildGroundingPrompt,
   resultDomains,

@@ -64,6 +64,8 @@ class WebGroundingEnterprise extends Tool {
         this.override = fields.override ?? false;
         this.policy = loadPolicy();
         this.geminiModel = process.env.WEB_GROUNDING_MODEL || fields.geminiModel || 'gemini-2.5-flash';
+        /** Thinking past LOW makes Gemini Flash search in rounds and return no attributable chunks. */
+        this.thinkingLevel = process.env.WEB_GROUNDING_THINKING_LEVEL;
 
         let serviceKey = {};
         try {
@@ -136,6 +138,9 @@ class WebGroundingEnterprise extends Tool {
             this.generativeModel = this.vertexAI.preview.getGenerativeModel({
                 model: this.geminiModel,
                 tools: [{ enterpriseWebSearch: { excludeDomains: this.policy.excludeDomains } }],
+                ...(this.thinkingLevel
+                    ? { generationConfig: { thinkingConfig: { thinkingLevel: this.thinkingLevel } } }
+                    : {}),
             });
 
         } catch (error) {
@@ -164,12 +169,7 @@ class WebGroundingEnterprise extends Tool {
         try {
             const { text, chunks, supports } = await this._search(query);
             const { sources } = parseSourceBlock(text);
-            const { entries, dropped, numbering } = mergeSources({
-                sources,
-                chunks,
-                supports,
-                verifiedDomains: this.policy.verifiedDomains,
-            });
+            const { entries, dropped, numbering } = mergeSources({ sources, chunks, supports });
             const turn = config?.toolCall?.turn ?? 0;
 
             const answer = formatAnswer({
