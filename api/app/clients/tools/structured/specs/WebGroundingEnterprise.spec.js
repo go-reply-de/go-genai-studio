@@ -126,19 +126,33 @@ describe('WebGroundingEnterprise', () => {
             position: 1,
             link: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/awmf.org',
             title: 'awmf.org',
-            attribution: 'awmf.org',
-            snippet: 'verifiziert · 2023 · S2e',
+            attribution: '1 · awmf.org',
+            snippet: 'verifiziert',
           },
           {
             position: 2,
             link: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/dgn.org',
             title: 'dgn.org',
-            attribution: 'dgn.org',
-            snippet: 'nicht verifiziert · 2023 · DGN',
+            attribution: '2 · dgn.org',
+            snippet: 'nicht verifiziert',
           },
         ],
       },
     });
+  });
+
+  test('marks each claim in the text the agent reads with an anchor to its source', async () => {
+    const claim = 'Bis 4,5 h nach Symptombeginn';
+    const response = groundedResponse(`${claim} [1].\n[[QUELLEN]]\n1|awmf.org|2023|S2e`, [
+      'awmf.org',
+    ]);
+    response.candidates[0].groundingMetadata.groundingSupports = [
+      { segment: { endIndex: Buffer.byteLength(claim), text: claim }, groundingChunkIndices: [0] },
+    ];
+
+    const { content } = await invokeTool(toolWith(stubModel([response])), 1);
+
+    expect(content).toContain(`${claim}. \\ue202turn1search0`);
   });
 
   test('keeps a cited source the search never returned out of the Sources panel', async () => {
@@ -164,7 +178,7 @@ describe('WebGroundingEnterprise', () => {
 
     expect(search.asked).toHaveLength(2);
     expect(search.asked[1]).toBe(search.asked[0]);
-    expect(out).toContain('Bis 4,5 h [1].');
+    expect(out).toContain('Bis 4,5 h.');
     expect(out).not.toMatch(/WARNUNG/);
   });
 
@@ -183,7 +197,7 @@ describe('WebGroundingEnterprise', () => {
     expect(out).not.toContain('dgn.org');
   });
 
-  test('drops a cited source the search never returned and renumbers the rest', async () => {
+  test('drops a cited source the search never returned and numbers the rest', async () => {
     const search = stubModel([
       groundedResponse(
         'A gilt [1]. B gilt [2]. C gilt [3].\n[[QUELLEN]]\n1|awmf.org|2023|S3\n2|erfunden.de|2024|x\n3|dgn.org|2023|DGN',
@@ -193,7 +207,8 @@ describe('WebGroundingEnterprise', () => {
 
     const { content: out } = await invokeTool(toolWith(search));
 
-    expect(out).toContain('A gilt [1]. B gilt. C gilt [2].');
+    expect(out).toContain('A gilt. B gilt. C gilt.');
+    expect(out).toMatch(/1\. \[awmf\.org\]\([^)]*\)[^\n]*\n2\. \[dgn\.org\]/);
     expect(out).not.toContain('erfunden.de');
     expect(out).toMatch(/1 zitierte Quelle wurde entfernt/);
   });
@@ -207,7 +222,7 @@ describe('WebGroundingEnterprise', () => {
 
     const { content: out } = await invokeTool(toolWith(search));
 
-    expect(out).toContain('Belastbare Evidenz fehlt [1].');
+    expect(out).toContain('Belastbare Evidenz fehlt.');
     expect(out).toContain('[netdoktor.de](');
     expect(out).toMatch(/verifizierten Register/);
   });

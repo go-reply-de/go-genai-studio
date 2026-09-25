@@ -11,7 +11,7 @@ const {
     resultDomains,
     parseSourceBlock,
     mergeSources,
-    renumberCitations,
+    anchorClaims,
     formatAnswer,
     toOrganicSources,
 } = require('../util/groundingPolicy');
@@ -163,16 +163,17 @@ class WebGroundingEnterprise extends Tool {
 
         try {
             const { text, chunks, supports } = await this._search(query);
-            const { body, sources } = parseSourceBlock(text);
+            const { sources } = parseSourceBlock(text);
             const { entries, dropped, numbering } = mergeSources({
                 sources,
                 chunks,
                 supports,
                 verifiedDomains: this.policy.verifiedDomains,
             });
+            const turn = config?.toolCall?.turn ?? 0;
 
             const answer = formatAnswer({
-                body: renumberCitations(body, numbering),
+                body: anchorClaims({ text, supports, chunks, entries, numbering, turn }),
                 entries,
                 dropped,
                 grounded: resultDomains(chunks).length > 0,
@@ -180,7 +181,6 @@ class WebGroundingEnterprise extends Tool {
             if (!entries.length) {
                 return [answer, undefined];
             }
-            const turn = config?.toolCall?.turn ?? 0;
             return [answer, { [Tools.web_search]: { turn, organic: toOrganicSources(entries) } }];
         } catch (error) {
             logger.error('Web Grounding for Enterprise request failed', error);

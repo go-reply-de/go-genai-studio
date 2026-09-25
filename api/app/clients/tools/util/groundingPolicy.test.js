@@ -3,7 +3,7 @@ const {
   parsePolicyConfig,
   parseSourceBlock,
   mergeSources,
-  renumberCitations,
+  anchorClaims,
   formatAnswer,
   buildGroundingPrompt,
 } = require('./groundingPolicy');
@@ -233,43 +233,148 @@ describe('mergeSources', () => {
   });
 });
 
-describe('renumberCitations', () => {
-  const numbering = new Map([
-    [1, 1],
-    [2, null],
-    [3, 2],
-  ]);
-
-  test('renumbers citations to follow the kept sources', () => {
-    expect(renumberCitations('A [1]. B [3].', numbering)).toBe('A [1]. B [2].');
+describe('anchorClaims', () => {
+  const bytes = (s) => Buffer.byteLength(s, 'utf8');
+  /** A grounding support located the way Vertex reports it: UTF-8 byte offsets plus the text. */
+  const supportFor = (text, passage, groundingChunkIndices, from = 0) => {
+    const at = text.indexOf(passage, from);
+    return {
+      segment: {
+        startIndex: bytes(text.slice(0, at)),
+        endIndex: bytes(text.slice(0, at + passage.length)),
+        text: passage,
+      },
+      groundingChunkIndices,
+    };
+  };
+  const entry = (domain) => ({
+    domain,
+    uri: `stub-${domain}`,
+    jahr: null,
+    beschreibung: null,
+    verified: false,
   });
 
-  test('removes the marker of a dropped source', () => {
-    expect(renumberCitations('A [2]. B [1].', numbering)).toBe('A. B [1].');
+  test('puts an anchor behind each passage Google attributes to a kept source', () => {
+    const text =
+      'Bis 4,5 h nach Symptombeginn [1]. Danach nicht [1].\n[[QUELLEN]]\n1|awmf.org|2023|S2e';
+
+    const body = anchorClaims({
+      text,
+      supports: [supportFor(text, 'Bis 4,5 h nach Symptombeginn', [0])],
+      chunks: [chunk('awmf.org')],
+      entries: [entry('awmf.org')],
+      numbering: new Map([[1, 1]]),
+      turn: 2,
+    });
+
+    expect(body).toBe('Bis 4,5 h nach Symptombeginn. \\ue202turn2search0 Danach nicht.');
   });
 
-  test('rewrites a list of citations inside one bracket', () => {
-    expect(renumberCitations('A [1, 3].', numbering)).toBe('A [1, 2].');
+  test('gives every attributed sentence its own anchor', () => {
+    const text = 'Feste Nahrung bis 6 h vorher. Klare Flüssigkeit bis 2 h vorher.';
+
+    const body = anchorClaims({
+      text,
+      supports: [
+        supportFor(text, 'Feste Nahrung bis 6 h vorher.', [0]),
+        supportFor(text, 'Klare Flüssigkeit bis 2 h vorher.', [1]),
+      ],
+      chunks: [chunk('awmf.org'), chunk('dgn.org')],
+      entries: [entry('awmf.org'), entry('dgn.org')],
+      numbering: new Map(),
+    });
+
+    expect(body).toBe(
+      'Feste Nahrung bis 6 h vorher. \\ue202turn0search0 Klare Flüssigkeit bis 2 h vorher. \\ue202turn0search1',
+    );
   });
 
-  test('drops only the removed number from a list', () => {
-    expect(renumberCitations('A [1, 2].', numbering)).toBe('A [1].');
+  test('anchors the occurrence Google pointed at when a sentence repeats after umlauts', () => {
+    const text = 'Für Ältere: Dosis 2,5 mg. Für Jüngere gilt: Dosis 2,5 mg.';
+
+    const body = anchorClaims({
+      text,
+      supports: [supportFor(text, 'Dosis 2,5 mg.', [0], text.indexOf('Jüngere'))],
+      chunks: [chunk('awmf.org')],
+      entries: [entry('awmf.org')],
+      numbering: new Map(),
+    });
+
+    expect(body).toBe(
+      'Für Ältere: Dosis 2,5 mg. Für Jüngere gilt: Dosis 2,5 mg. \\ue202turn0search0',
+    );
   });
 
-  test('collapses two citations that now point at the same merged source', () => {
-    expect(
-      renumberCitations(
-        'A [1, 2].',
-        new Map([
-          [1, 1],
-          [2, 1],
-        ]),
-      ),
-    ).toBe('A [1].');
+  test('merges nested passages that cite the same source into one anchor', () => {
+    const text = 'Bis 4,5 h ist die Lyse zugelassen, danach nur nach Bildgebung.';
+
+    const body = anchorClaims({
+      text,
+      supports: [
+        supportFor(text, 'Bis 4,5 h ist die Lyse zugelassen', [0]),
+        supportFor(text, text, [0]),
+      ],
+      chunks: [chunk('awmf.org')],
+      entries: [entry('awmf.org')],
+      numbering: new Map(),
+    });
+
+    expect(body).toBe(`${text} \\ue202turn0search0`);
   });
 
-  test('leaves bracketed numbers alone when they are not source numbers', () => {
-    expect(renumberCitations('Stand [2023] [1].', numbering)).toBe('Stand [2023] [1].');
+  test('groups several sources behind one passage', () => {
+    const text = 'Apixaban wird auf 2,5 mg reduziert.';
+
+    const body = anchorClaims({
+      text,
+      supports: [supportFor(text, text, [1, 0])],
+      chunks: [chunk('awmf.org'), chunk('dgn.org')],
+      entries: [entry('awmf.org'), entry('dgn.org')],
+      numbering: new Map(),
+    });
+
+    expect(body).toBe(`${text} \\ue200\\ue202turn0search0\\ue202turn0search1\\ue201`);
+  });
+
+  test('numbers an anchor by the source list, not by the search result order', () => {
+    const text = 'Laut DGN gilt X.';
+
+    const body = anchorClaims({
+      text,
+      supports: [supportFor(text, text, [0])],
+      chunks: [chunk('dgn.org'), chunk('awmf.org')],
+      entries: [entry('awmf.org'), entry('dgn.org')],
+      numbering: new Map(),
+    });
+
+    expect(body).toBe(`${text} \\ue202turn0search1`);
+  });
+
+  test('gives no anchor to a search result that is not among the kept sources', () => {
+    const text = 'Kassenleistung Y.';
+
+    const body = anchorClaims({
+      text,
+      supports: [supportFor(text, text, [1])],
+      chunks: [chunk('awmf.org'), chunk('aok.de')],
+      entries: [entry('awmf.org')],
+      numbering: new Map(),
+    });
+
+    expect(body).toBe(text);
+  });
+
+  test("removes the model's citation markers but keeps bracketed numbers that are not sources", () => {
+    const body = anchorClaims({
+      text: 'Studie [2023] zeigt Z [1].',
+      supports: [],
+      chunks: [],
+      entries: [],
+      numbering: new Map([[1, null]]),
+    });
+
+    expect(body).toBe('Studie [2023] zeigt Z.');
   });
 });
 

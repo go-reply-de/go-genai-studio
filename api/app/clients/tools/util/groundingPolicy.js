@@ -215,40 +215,150 @@ function mergeSources({ sources, chunks, supports, verifiedDomains }) {
   return { entries, dropped, numbering };
 }
 
-/** Rewrites `[n]` markers to the kept numbering. A bracket is left alone unless every
- * number in it is a source number, so `[2023]` survives. */
-function renumberCitations(body, numbering) {
-  return String(body ?? '').replace(/\s*\[(\d+(?:\s*,\s*\d+)*)\]/g, (match, list) => {
-    const numbers = list.split(',').map((n) => Number.parseInt(n, 10));
-    if (!numbers.every((n) => numbering.has(n))) {
-      return match;
-    }
-    const kept = [...new Set(numbers.map((n) => numbering.get(n)).filter((n) => n !== null))];
-    if (!kept.length) {
-      return '';
-    }
-    return `${match.match(/^\s*/)[0]}[${kept.join(', ')}]`;
-  });
+const CITATION_MARKER = /\s*\[(\d+(?:\s*,\s*\d+)*)\]/g;
+const LEADING_MARKER = /^\s*\[\d+(?:\s*,\s*\d+)*\]/;
+const TRAILING_PUNCTUATION = /[.,;:!?)»"”]/;
+
+/** Vertex reports segment offsets as UTF-8 bytes; JS strings index UTF-16 code units. */
+function charIndexAt(text, byteOffset) {
+  return Buffer.from(text, 'utf8').subarray(0, byteOffset).toString('utf8').length;
 }
 
-function describeEntry(entry) {
-  return [entry.verified ? 'verifiziert' : 'nicht verifiziert', entry.jahr, entry.beschreibung]
+/** Trusts the byte offset only when it lands on the segment's own text, else finds the text. */
+function segmentRange(text, segment) {
+  const passage = segment?.text ?? '';
+  if (!passage) {
+    return null;
+  }
+  if (segment.endIndex != null) {
+    const end = charIndexAt(text, segment.endIndex);
+    if (text.slice(end - passage.length, end) === passage) {
+      return { start: end - passage.length, end };
+    }
+  }
+  const at = text.indexOf(passage);
+  return at < 0 ? null : { start: at, end: at + passage.length };
+}
+
+/** Nested spans citing one source collapse into their outermost end. */
+function mergedEnds(ranges) {
+  const sorted = [...ranges].sort((a, b) => a.start - b.start || b.end - a.end);
+  const ends = [];
+  let current = null;
+  for (const range of sorted) {
+    if (current && range.start < current.end) {
+      current.end = Math.max(current.end, range.end);
+      continue;
+    }
+    current = { ...range };
+    ends.push(current);
+  }
+  return ends.map((range) => range.end);
+}
+
+/** An anchor goes after the model's own marker and the sentence's punctuation. */
+function snapPast(text, position, limit) {
+  let at = position;
+  for (;;) {
+    const marker = LEADING_MARKER.exec(text.slice(at, limit));
+    if (marker) {
+      at += marker[0].length;
+    } else if (at < limit && TRAILING_PUNCTUATION.test(text[at])) {
+      at += 1;
+    } else {
+      return at;
+    }
+  }
+}
+
+function anchorFor(entryIndices, turn) {
+  const anchors = [...entryIndices]
+    .sort((a, b) => a - b)
+    .map((index) => `\\ue202turn${turn}search${index}`);
+  return anchors.length === 1 ? anchors[0] : `\\ue200${anchors.join('')}\\ue201`;
+}
+
+/** The answer body with a LibreChat citation anchor behind every passage Google attributes to a
+ * kept source, numbered like the source list; the model's own `[n]` markers are dropped. */
+function anchorClaims({ text, supports, chunks, entries, numbering, turn = 0 }) {
+  const raw = String(text ?? '');
+  const blockAt = raw.lastIndexOf(SOURCE_BLOCK_MARKER);
+  const bodyEnd = blockAt < 0 ? raw.length : blockAt;
+  const entryOfChunk = (chunks ?? []).map((c) =>
+    entries.findIndex((e) => e.uri === (c.web ?? c.retrievedContext ?? {}).uri),
+  );
+
+  const rangesByEntry = new Map();
+  for (const support of supports ?? []) {
+    const range = segmentRange(raw, support.segment);
+    if (!range || range.end > bodyEnd) {
+      continue;
+    }
+    for (const chunkIndex of support.groundingChunkIndices ?? []) {
+      const entryIndex = entryOfChunk[chunkIndex];
+      if (entryIndex == null || entryIndex < 0) {
+        continue;
+      }
+      rangesByEntry.set(entryIndex, [...(rangesByEntry.get(entryIndex) ?? []), range]);
+    }
+  }
+
+  const anchorsAt = new Map();
+  for (const [entryIndex, ranges] of rangesByEntry) {
+    for (const end of mergedEnds(ranges)) {
+      const at = snapPast(raw, end, bodyEnd);
+      anchorsAt.set(at, (anchorsAt.get(at) ?? new Set()).add(entryIndex));
+    }
+  }
+
+  // Same rule as the source numbering: `[2023]` is not a citation.
+  const markers = new Map();
+  for (const m of raw.slice(0, bodyEnd).matchAll(CITATION_MARKER)) {
+    const numbers = m[1].split(',').map((n) => Number.parseInt(n, 10));
+    if (numbers.every((n) => numbering?.has(n))) {
+      markers.set(m.index, m.index + m[0].length);
+    }
+  }
+
+  let out = '';
+  for (let i = 0; i <= bodyEnd; ) {
+    if (anchorsAt.has(i)) {
+      const before = out && !/\s$/.test(out) ? ' ' : '';
+      const after = i < bodyEnd && !/\s/.test(raw[i]) ? ' ' : '';
+      out += `${before}${anchorFor(anchorsAt.get(i), turn)}${after}`;
+    }
+    if (markers.has(i)) {
+      i = markers.get(i);
+      continue;
+    }
+    if (i < bodyEnd) {
+      out += raw[i];
+    }
+    i += 1;
+  }
+  return out.trim();
+}
+
+function formatEntry(entry) {
+  return [
+    `[${entry.domain}](${entry.uri})`,
+    entry.verified ? 'verifiziert' : 'nicht verifiziert',
+    entry.jahr,
+    entry.beschreibung,
+  ]
     .filter(Boolean)
     .join(' · ');
 }
 
-function formatEntry(entry) {
-  return `[${entry.domain}](${entry.uri}) · ${describeEntry(entry)}`;
-}
-
-/** The answer's source list as LibreChat Sources-panel items, numbered like the text. */
+/** The source list as LibreChat citation data; the chip label carries the list number. Year and
+ * description stay out, as they do in the agent's answer. */
 function toOrganicSources(entries) {
   return entries.map((entry, i) => ({
     position: i + 1,
     link: entry.uri,
     title: entry.domain,
-    attribution: entry.domain,
-    snippet: describeEntry(entry),
+    attribution: `${i + 1} · ${entry.domain}`,
+    snippet: entry.verified ? 'verifiziert' : 'nicht verifiziert',
   }));
 }
 
@@ -291,7 +401,7 @@ module.exports = {
   resultDomains,
   parseSourceBlock,
   mergeSources,
-  renumberCitations,
+  anchorClaims,
   formatAnswer,
   toOrganicSources,
 };
