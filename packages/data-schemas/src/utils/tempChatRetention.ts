@@ -1,4 +1,5 @@
 import type { AppConfig } from '~/types';
+import { getWeeklyReset, nextWeeklyReset } from './weeklyRetention';
 import logger from '~/config/winston';
 
 /**
@@ -72,6 +73,13 @@ export function getTempChatRetentionHours(
  * @returns The expiration date
  */
 export function createTempChatExpirationDate(interfaceConfig?: AppConfig['interfaceConfig']): Date {
+  /* A fixed weekly boundary overrides the rolling window: re-saving a record
+   * recomputes the same instant, so activity cannot extend its retention. */
+  const weeklyReset = getWeeklyReset();
+  if (weeklyReset) {
+    return nextWeeklyReset(weeklyReset);
+  }
+
   const retentionHours = getTempChatRetentionHours(interfaceConfig);
   return new Date(Date.now() + retentionHours * 60 * 60 * 1000);
 }
