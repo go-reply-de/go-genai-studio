@@ -43,6 +43,13 @@ describe('hasGroundingSources', () => {
     expect(hasGroundingSources(content, searchResults)).toBe(false);
   });
 
+  it('shows nothing when only the unofficial hints have sources', () => {
+    const content = [toolCall('web_grounding_enterprise'), text] as TMessage['content'];
+    const blog = { position: 1, link: 'https://stub/blog', title: 'blog.example', official: false };
+
+    expect(hasGroundingSources(content, { '0': { turn: 0, organic: [blog] } })).toBe(false);
+  });
+
   it('shows nothing when the search returned no sources', () => {
     const content = [toolCall('web_grounding_enterprise'), text] as TMessage['content'];
 
@@ -62,6 +69,19 @@ describe('GroundingSources', () => {
       ['dgn.org', 'https://stub/dgn'],
     ]);
     expect(screen.getAllByRole('link')[0]).toHaveAttribute('target', '_blank');
+  });
+
+  it('leaves the sources of the unofficial hints off the list', () => {
+    const blog = { position: 3, link: 'https://stub/blog', title: 'blog.example', official: false };
+
+    render(
+      <GroundingSources
+        message={grounded}
+        searchResults={{ '0': { turn: 0, organic: [awmf, dgn, blog] } }}
+      />,
+    );
+
+    expect(links().map(([title]) => title)).toEqual(['awmf.org', 'dgn.org']);
   });
 
   it('lists a source that several searches returned only once', () => {

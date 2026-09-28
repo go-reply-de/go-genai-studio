@@ -200,7 +200,7 @@ describe('WebGroundingEnterprise', () => {
     );
   });
 
-  test('moves what only unlisted sources back into unsourced hints, without doses', async () => {
+  test('moves what only unlisted sources back into the hints, with their chips but without doses', async () => {
     const listed = 'Bis 4,5 h nach Symptombeginn.';
     const other = 'Ein Blog nennt 6 h.';
     const dose = 'Dort stehen 90 mg als Dosis.';
@@ -223,14 +223,16 @@ describe('WebGroundingEnterprise', () => {
 
     expect(content).toContain(`${listed} \\ue202turn0search0`);
     expect(content).toContain(
-      `Ergänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:\n- ${other}`,
+      `Ergänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:\n- ${other} \\ue202turn0search1`,
     );
     expect(content).not.toContain('90 mg');
-    expect(content).not.toContain('blog.example');
-    expect(artifact.web_search.organic.map((source) => source.title)).toEqual(['awmf.org']);
+    expect(artifact.web_search.organic.map(({ title, official }) => [title, official])).toEqual([
+      ['awmf.org', undefined],
+      ['blog.example', false],
+    ]);
   });
 
-  test('answers with the warning and the unsourced hints when no listed source was found', async () => {
+  test('answers with the warning and the hints when no listed source was found', async () => {
     const search = stubModel([
       groundedResponse('Ein Blog nennt 6 h [1].\n[[QUELLEN]]\n1|blog.example|-|Blog', [
         'blog.example',
@@ -242,11 +244,13 @@ describe('WebGroundingEnterprise', () => {
     );
 
     expect(search.asked).toHaveLength(1);
-    expect(content).toBe(
+    expect(content).toContain(
       'WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.\n\n' +
-        'Ergänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:\n- Ein Blog nennt 6 h.',
+        'Ergänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:\n- Ein Blog nennt 6 h. \\ue202turn0search0',
     );
-    expect(artifact).toBeUndefined();
+    expect(artifact.web_search.organic.map(({ title, official }) => [title, official])).toEqual([
+      ['blog.example', false],
+    ]);
   });
 
   test('drops a cited source the search never returned and numbers the rest', async () => {

@@ -185,7 +185,7 @@ class WebGroundingEnterprise extends Tool {
         try {
             const { text, chunks, supports } = await this._search(query);
             const { sources } = parseSourceBlock(text);
-            const { entries, dropped, numbering } = mergeSources({
+            const { entries, extras, dropped, numbering } = mergeSources({
                 sources,
                 chunks,
                 supports,
@@ -193,15 +193,19 @@ class WebGroundingEnterprise extends Tool {
             });
             const turn = config?.toolCall?.turn ?? 0;
 
-            // Passages a listed source backs keep their anchors; everything else becomes unsourced hints.
+            // Passages a listed source backs keep their anchors; everything else becomes hints,
+            // anchored to the unlisted sources Google attributes them to.
             const body = anchorClaims({ text, supports, chunks, entries, numbering, turn, cut: true });
-            const unofficial = unbackedStatements({ text, supports, chunks, entries, numbering });
-            const backed = entries.length > 0 && body !== '';
-            const answer = formatAnswer({ body, entries: backed ? entries : [], dropped, unofficial });
-            if (!backed) {
+            const hints = unbackedStatements({ text, supports, chunks, entries, extras, numbering });
+            const cited = new Set(hints.flatMap((hint) => hint.uris));
+            const hintSources = extras.filter((extra) => cited.has(extra.uri));
+            const shown = entries.length > 0 && body !== '' ? entries : [];
+            const answer = formatAnswer({ body, entries: shown, dropped, hints, hintSources, turn });
+            const organic = toOrganicSources(shown, hintSources);
+            if (!organic.length) {
                 return [answer, undefined];
             }
-            return [answer, { [Tools.web_search]: { turn, organic: toOrganicSources(entries) } }];
+            return [answer, { [Tools.web_search]: { turn, organic } }];
         } catch (error) {
             logger.error('Web Grounding for Enterprise request failed', error);
             return ['There was an error with the Web Grounding for Enterprise Search.', undefined];

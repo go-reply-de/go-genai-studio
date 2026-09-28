@@ -479,7 +479,7 @@ describe('unbackedStatements', () => {
       ]),
     });
 
-    expect(statements).toEqual([
+    expect(statements.map((statement) => statement.text)).toEqual([
       'Laut Blog auch Kaugummi erlaubt.',
       'Klare Flüssigkeit: bis 2 h vorher.',
     ]);
@@ -494,7 +494,9 @@ describe('unbackedStatements', () => {
       numbering: new Map(),
     });
 
-    expect(statements).toEqual(['Bei eGFR unter 30 ml/min nicht anwenden.']);
+    expect(statements.map((statement) => statement.text)).toEqual([
+      'Bei eGFR unter 30 ml/min nicht anwenden.',
+    ]);
   });
 
   test('treats spelled-out units as doses too', () => {
@@ -506,7 +508,9 @@ describe('unbackedStatements', () => {
       numbering: new Map(),
     });
 
-    expect(statements).toEqual(['Danach langsamer Ausgleich nach Klinik.']);
+    expect(statements.map((statement) => statement.text)).toEqual([
+      'Danach langsamer Ausgleich nach Klinik.',
+    ]);
   });
 
   test('leaves a partly backed sentence to the backed text instead of splitting it', () => {
@@ -520,7 +524,21 @@ describe('unbackedStatements', () => {
       numbering: new Map(),
     });
 
-    expect(statements).toEqual(['Ein Satz ganz ohne Beleg.']);
+    expect(statements.map((statement) => statement.text)).toEqual(['Ein Satz ganz ohne Beleg.']);
+  });
+
+  test('keeps an ordinal with its sentence', () => {
+    const text = 'Als Mittel der 1. Wahl gilt Fosfomycin.';
+
+    const statements = unbackedStatements({
+      text,
+      supports: [backedBy(text, 'Wahl gilt Fosfomycin')],
+      chunks: [chunk('awmf.org')],
+      entries: [awmf],
+      numbering: new Map(),
+    });
+
+    expect(statements).toEqual([]);
   });
 
   test('does not split at abbreviations', () => {
@@ -532,7 +550,9 @@ describe('unbackedStatements', () => {
       numbering: new Map(),
     });
 
-    expect(statements).toEqual(['Gabe z. B. als Kurzinfusion. Kontrolle ggf. nach 2 h.']);
+    expect(statements.map((statement) => statement.text)).toEqual([
+      'Gabe z. B. als Kurzinfusion. Kontrolle ggf. nach 2 h.',
+    ]);
   });
 
   test('leaves out headings, labels and sentence fragments', () => {
@@ -547,7 +567,7 @@ describe('unbackedStatements', () => {
       numbering: new Map(),
     });
 
-    expect(statements).toEqual(['Ein echter Satz ohne Beleg.']);
+    expect(statements.map((statement) => statement.text)).toEqual(['Ein echter Satz ohne Beleg.']);
   });
 
   test('returns nothing when kept sources back the whole answer', () => {
@@ -562,6 +582,29 @@ describe('unbackedStatements', () => {
         numbering: new Map(),
       }),
     ).toEqual([]);
+  });
+
+  test('names the unlisted sources Google attributes a hint to', () => {
+    const text = 'Laut Leitlinie gilt A. Laut Blog gilt B.';
+    const blog = {
+      domain: 'blog.example',
+      uri: 'stub-blog.example',
+      jahr: null,
+      beschreibung: null,
+    };
+
+    const statements = unbackedStatements({
+      text,
+      supports: [{ ...backedBy(text, 'Laut Blog gilt B.'), groundingChunkIndices: [1] }],
+      chunks: [chunk('awmf.org'), chunk('blog.example')],
+      entries: [],
+      extras: [blog],
+      numbering: new Map(),
+    });
+
+    expect(statements).toEqual([
+      { text: 'Laut Leitlinie gilt A. Laut Blog gilt B.', uris: ['stub-blog.example'] },
+    ]);
   });
 });
 
@@ -593,15 +636,33 @@ describe('formatAnswer', () => {
   });
 
   test('adds the unofficial statements under their own heading, before the sources', () => {
-    const out = answer({ unofficial: ['Aussage C.', 'Aussage D.'] });
+    const out = answer({
+      hints: [
+        { text: 'Aussage C.', uris: [] },
+        { text: 'Aussage D.', uris: [] },
+      ],
+    });
 
     expect(out).toContain(
       'A\n\nErgänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:\n- Aussage C.\n- Aussage D.\n\nQuellen:',
     );
   });
 
+  test('anchors a hint to its own source, numbered after the kept ones', () => {
+    const blog = { domain: 'blog.example', uri: 'stub-b' };
+
+    const out = answer({
+      hints: [{ text: 'Aussage C.', uris: ['stub-b'] }],
+      hintSources: [blog],
+      turn: 2,
+    });
+
+    expect(out).toContain('- Aussage C. \\ue202turn2search1');
+    expect(out).toContain('Quellen der Ergänzenden Hinweise:\n2. [blog.example](stub-b)');
+  });
+
   test('keeps the unofficial statements behind the warning when no source backs the answer', () => {
-    expect(answer({ body: '', entries: [], unofficial: ['Aussage C.'] })).toBe(
+    expect(answer({ body: '', entries: [], hints: [{ text: 'Aussage C.', uris: [] }] })).toBe(
       'WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.\n\n' +
         'Ergänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:\n- Aussage C.',
     );

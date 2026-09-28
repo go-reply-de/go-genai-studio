@@ -6,6 +6,11 @@ import type { SearchResultData, TMessage } from 'librechat-data-provider';
 const GROUNDING_TOOL = 'web_grounding_enterprise';
 const HEADING = 'Quellen und weiterführende Literatur';
 
+type Organic = NonNullable<SearchResultData['organic']>[number];
+
+/** The tool marks the sources of its unofficial hints; they keep their chips but stay off this list. */
+const isOfficial = (source: Organic) => (source as { official?: boolean }).official !== false;
+
 /** The single-agent view has no source list of its own; the parallel view renders LibreChat's panel. */
 export function hasGroundingSources(
   content: TMessage['content'],
@@ -22,15 +27,18 @@ export function hasGroundingSources(
     const toolCall = part[ContentTypes.TOOL_CALL];
     return !!toolCall && 'name' in toolCall && toolCall.name === GROUNDING_TOOL;
   });
-  return searched && Object.values(searchResults ?? {}).some((result) => !!result?.organic?.length);
+  return (
+    searched &&
+    Object.values(searchResults ?? {}).some((result) => !!result?.organic?.some(isOfficial))
+  );
 }
 
-/** Each source once, in the order the searches returned them. */
+/** Each official source once, in the order the searches returned them. */
 function listedSources(searchResults?: Record<string, SearchResultData>) {
   const titleByLink = new Map<string, string>();
   for (const result of Object.values(searchResults ?? {})) {
     for (const source of result?.organic ?? []) {
-      if (source.link && !titleByLink.has(source.link)) {
+      if (isOfficial(source) && source.link && !titleByLink.has(source.link)) {
         titleByLink.set(source.link, source.title || source.link);
       }
     }

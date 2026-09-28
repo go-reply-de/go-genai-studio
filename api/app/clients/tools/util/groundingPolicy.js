@@ -154,7 +154,14 @@ function mergeSources({ sources, chunks, supports, sourceDomains = [] }) {
   const entries = [...named, ...unnamed];
   const numbering = new Map([...entryOf].map(([n, e]) => [n, e ? entries.indexOf(e) + 1 : null]));
   const unlisted = [...new Set(results.filter((r) => !r.listed).map((r) => r.domain))];
-  return { entries, dropped, numbering, unlisted };
+  // Unlisted results the answer is attributed to; they can back the unofficial hints.
+  const extras = [];
+  for (const r of results) {
+    if (!r.listed && used.has(r.index) && !extras.some((e) => e.uri === r.uri)) {
+      extras.push({ domain: r.domain, uri: r.uri, jahr: null, beschreibung: null });
+    }
+  }
+  return { entries, extras, dropped, numbering, unlisted };
 }
 
 const CITATION_MARKER = /\s*\[(\d+(?:\s*,\s*\d+)*)\]/g;
@@ -332,12 +339,13 @@ const ABBREVIATION =
   /(?:^|[\s(])(?:z|u|d|o|s|ca|bzw|ggf|evtl|inkl|vgl|sog|Dr|Prof|Nr|Abb|Tab|max|min|mind|i\.v|p\.o|s\.c|i\.m|z\. ?B|d\. ?h|u\. ?a)$/i;
 
 /** Sentence offsets within a line: a break is a sentence end followed by a capital, but not after
- * `z. B.`, `ggf.`, `i.v.` and the like. */
+ * `z. B.`, `ggf.`, `i.v.` and the like, nor after an ordinal such as `1. Wahl`. */
 function sentenceSpans(line) {
   const spans = [];
   let start = 0;
   for (const m of line.matchAll(/[.!?]\s+(?=\p{Lu})/gu)) {
-    if (ABBREVIATION.test(line.slice(start, m.index))) {
+    const before = line.slice(start, m.index);
+    if (ABBREVIATION.test(before) || (line[m.index] === '.' && /\d$/.test(before))) {
       continue;
     }
     spans.push([start, m.index + 1]);
@@ -352,14 +360,26 @@ const DOSE =
   /\d(?:[\d.,]*\d)?\s*(?:(?:-|–|bis)\s*\d(?:[\d.,]*\d)?\s*)?(?:mg|µg|μg|mcg|ng|g|ml|l|IE|I\.\s?E\.|Einheiten|mmol|mval|Milligramm|Mikrogramm|Gramm|Milliliter|Litern?|Tabletten?|Tbl\.|Kapseln?|Ampullen?|Hübe|Hub|Tropfen)(?!\p{L})(?!\s*\/\s*(?:dl|l|min)(?!\p{L}))/iu;
 
 /** Every sentence no kept source backs any part of, as plain statements for the agent's hints
- * section; a partly backed sentence already lives in the backed text. Markup, the model's `[n]`
- * markers, headings and labels go, and so does every sentence with a dose. */
-function unbackedStatements({ text, supports, chunks, entries, numbering }) {
+ * section, each with the extra (unlisted) sources Google attributes it to; a partly backed
+ * sentence already lives in the backed text. Markup, the model's `[n]` markers, headings and
+ * labels go, and so does every sentence with a dose. */
+function unbackedStatements({ text, supports, chunks, entries, extras = [], numbering }) {
   const raw = String(text ?? '');
   const bodyEnd = bodyEndOf(raw);
   const { kept } = backedPassages({ raw, bodyEnd, supports, chunks, entries });
   const markers = citationMarkers(raw, bodyEnd, numbering);
   const backed = (from, to) => kept.some((range) => range.start < to && range.end > from);
+  const extraUris = new Set(extras.map((e) => e.uri));
+  const attributions = (supports ?? [])
+    .map((support) => ({
+      range: segmentRange(raw, support.segment),
+      uris: (support.groundingChunkIndices ?? [])
+        .map((i) => ((chunks ?? [])[i]?.web ?? (chunks ?? [])[i]?.retrievedContext ?? {}).uri)
+        .filter((uri) => extraUris.has(uri)),
+    }))
+    .filter((a) => a.range && a.uris.length);
+  const urisOf = (from, to) =>
+    attributions.filter((a) => a.range.start < to && a.range.end > from).flatMap((a) => a.uris);
   const plain = (from, to) => {
     let out = '';
     for (let i = from; i < to; ) {
@@ -381,14 +401,14 @@ function unbackedStatements({ text, supports, chunks, entries, numbering }) {
   let lineStart = 0;
   for (const line of raw.slice(0, bodyEnd).split('\n')) {
     if (!/^\s*#/.test(line)) {
-      const statement = sentenceSpans(line)
+      const sentences = sentenceSpans(line)
         .map(([from, to]) => [lineStart + from, lineStart + to])
         .filter(([from, to]) => !backed(from, to))
-        .map(([from, to]) => plain(from, to))
-        .filter((sentence) => sentence && !DOSE.test(sentence))
-        .join(' ');
+        .map(([from, to]) => ({ text: plain(from, to), uris: urisOf(from, to) }))
+        .filter((sentence) => sentence.text && !DOSE.test(sentence.text));
+      const statement = sentences.map((sentence) => sentence.text).join(' ');
       if (statement.length >= 12 && !statement.endsWith(':') && /^[\p{Lu}\d„"(]/u.test(statement)) {
-        statements.push(statement);
+        statements.push({ text: statement, uris: [...new Set(sentences.flatMap((x) => x.uris))] });
       }
     }
     lineStart += line.length + 1;
@@ -403,32 +423,54 @@ function formatEntry(entry) {
 }
 
 /** The source list as LibreChat citation data: only the domain and link Google returned, so a chip
- * reads `awmf.org` and never carries model-written year or description. */
-function toOrganicSources(entries) {
-  return entries.map((entry, i) => ({
+ * reads `awmf.org` and never carries model-written year or description. The hints' sources follow,
+ * marked so the sources block under the answer can leave them out. */
+function toOrganicSources(entries, hintSources = []) {
+  const organic = (entry, i) => ({
     position: i + 1,
     link: entry.uri,
     title: entry.domain,
     attribution: entry.domain,
-  }));
+  });
+  return [
+    ...entries.map(organic),
+    ...hintSources.map((entry, i) => ({ ...organic(entry, entries.length + i), official: false })),
+  ];
 }
 
 const UNOFFICIAL_HEADING =
   'Ergänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:';
 
-/** Backed text with its sources, then what no kept source backs under its own heading, never with
- * a source name. Without a kept source the warning leads. */
-function formatAnswer({ body, entries, dropped, unofficial = [] }) {
-  const hints = unofficial.length
-    ? [[UNOFFICIAL_HEADING, ...unofficial.map((statement) => `- ${statement}`)].join('\n')]
+/** Backed text with its sources, then what no kept source backs under its own heading, anchored to
+ * the unlisted sources Google attributes it to. Without a kept source the warning leads. Anchors
+ * number the sources as `toOrganicSources` lists them: kept ones first, then the hints'. */
+function formatAnswer({ body, entries, dropped, hints = [], hintSources = [], turn = 0 }) {
+  const indexOf = new Map(hintSources.map((e, k) => [e.uri, entries.length + k]));
+  const hintLines = hints.map((hint) => {
+    const indices = hint.uris.map((uri) => indexOf.get(uri)).filter((i) => i != null);
+    return `- ${hint.text}${indices.length ? ` ${anchorFor(new Set(indices), turn)}` : ''}`;
+  });
+  const hintParts = hints.length ? [[UNOFFICIAL_HEADING, ...hintLines].join('\n')] : [];
+  const hintSourceList = hintSources.length
+    ? [
+        [
+          'Quellen der Ergänzenden Hinweise:',
+          ...hintSources.map((e, k) => `${entries.length + k + 1}. [${e.domain}](${e.uri})`),
+        ].join('\n'),
+      ]
     : [];
   if (!entries.length) {
-    return ['WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.', ...hints].join('\n\n');
+    return [
+      'WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.',
+      ...hintParts,
+      ...hintSourceList,
+    ].join('\n\n');
   }
   const parts = [
     body,
-    ...hints,
+    ...hintParts,
     ['Quellen:', ...entries.map((e, i) => `${i + 1}. ${formatEntry(e)}`)].join('\n'),
+    ...hintSourceList,
   ];
 
   if (dropped.length) {
