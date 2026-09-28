@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { BookOpen } from 'lucide-react';
 import { ContentTypes } from 'librechat-data-provider';
 import type { SearchResultData, TMessage } from 'librechat-data-provider';
 
@@ -42,16 +43,25 @@ function listedSources(searchResults?: Record<string, SearchResultData>) {
 function GroundingSources({
   message,
   searchResults,
+  isSubmitting = false,
 }: {
   message: TMessage;
   searchResults?: Record<string, SearchResultData>;
+  /** True while the agent is still answering; the sources arrive before its text. */
+  isSubmitting?: boolean;
 }) {
-  if (!hasGroundingSources(message.content, searchResults)) {
+  if (isSubmitting || !hasGroundingSources(message.content, searchResults)) {
     return null;
   }
   return (
-    <section aria-label={HEADING} className="mt-4">
-      <h3 className="mb-2 text-sm font-medium text-text-primary">{HEADING}</h3>
+    <section
+      aria-label={HEADING}
+      className="mt-6 rounded-xl border border-border-medium bg-surface-secondary p-4"
+    >
+      <h3 className="mb-3 flex items-center gap-2 text-base font-semibold text-text-primary">
+        <BookOpen className="h-5 w-5 shrink-0" aria-hidden="true" />
+        {HEADING}
+      </h3>
       <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
         {listedSources(searchResults).map((source) => (
           <li key={source.link}>
@@ -59,7 +69,7 @@ function GroundingSources({
               href={source.link}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex h-full items-center rounded-lg bg-surface-primary-contrast px-3 py-2 text-sm font-medium text-text-primary transition-all duration-300 hover:bg-surface-tertiary"
+              className="flex h-full items-center rounded-lg border border-border-light bg-surface-primary px-3 py-2 text-sm font-medium text-text-primary transition-all duration-300 hover:bg-surface-hover"
             >
               <span className="truncate">{source.title}</span>
             </a>

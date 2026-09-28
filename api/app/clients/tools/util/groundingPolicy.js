@@ -3,47 +3,6 @@
 
 const SOURCE_BLOCK_MARKER = '[[QUELLEN]]';
 
-/** Never citable. A missing entry only means that host can still appear as a source. */
-const DEFAULT_EXCLUDE_DOMAINS = [
-  'gesundheits-lexikon.com',
-  'gelenk-klinik.de',
-  'knowunity.de',
-  'heilpraxisnet.de',
-  'zentrum-der-gesundheit.de',
-  'symptoma.de',
-  'jameda.de',
-  'doktorweigl.de',
-  'krank.de',
-  'medlexi.de',
-  'doccheck.com',
-  'researchgate.net',
-  'proquest.com',
-  'wikipedia.org',
-  'netdoktor.de',
-  'apotheken-umschau.de',
-  'onmeda.de',
-  'gesundheit.de',
-  'pflegeportal.ch',
-  'news-papers.eu',
-  'anesthesiaservicesla.com',
-  'getclarimed.com',
-  'medizinio.de',
-  'facebook.com',
-  'britehealth.com',
-  'golighter.de',
-  'cme-kurs.de',
-  'dguht.de',
-  'nerdfallmedizin.de',
-  'consu-med.de',
-  'medi-know.org',
-  'shotsyapp.com',
-  'cureal.de',
-  'pflege.de',
-  'radprax-vorsorge.de',
-  'helios-gesundheit.de',
-  'idw-online.de',
-];
-
 /** Models write `https://www.awmf.org/...` as often as `awmf.org`; both mean the host. */
 function normalizeDomain(value) {
   return String(value ?? '')
@@ -69,12 +28,11 @@ function domainList(value, field) {
   return value.map(normalizeDomain);
 }
 
-/** Only the exclusion list is read from a mounted config; a malformed one fails loudly. */
+/** The exclusion list comes from the grounding-sources ConfigMap (terraform
+ * `grounding_exclude_domains`); a malformed one fails loudly, none means no exclusions. */
 function parsePolicyConfig(raw) {
   const excludeDomains =
-    raw?.excludeDomains === undefined
-      ? DEFAULT_EXCLUDE_DOMAINS
-      : domainList(raw.excludeDomains, 'excludeDomains');
+    raw?.excludeDomains === undefined ? [] : domainList(raw.excludeDomains, 'excludeDomains');
 
   return { excludeDomains };
 }

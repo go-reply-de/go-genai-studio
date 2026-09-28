@@ -595,8 +595,8 @@ spec:
             - mountPath: /app/api/app/clients/tools/manifest.json
               name: plugin-manifest
               subPath: manifest.json
-            # Optional excludeDomains override for web grounding; absent, the tool
-            # uses its built-in exclusion list.
+            # Web grounding's exclusion list (terraform grounding_exclude_domains); read at
+            # start via subPath, so a change needs a restart. Absent, no hosts are excluded.
             - mountPath: /app/api/app/clients/tools/grounding-sources.json
               name: grounding-sources
               subPath: grounding-sources.json

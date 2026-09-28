@@ -28,7 +28,9 @@ const VERTEX_MULTI_REGION_ENDPOINTS = {
     global: 'aiplatform.googleapis.com',
 };
 
-/** Mounted next to manifest.json from a ConfigMap; absent means the built-in defaults. */
+let warnedNoExclusions = false;
+
+/** Mounted next to manifest.json from the grounding-sources ConfigMap. */
 function loadPolicy() {
     const configPath =
         process.env.WEB_GROUNDING_SOURCES_FILE ||
@@ -37,9 +39,14 @@ function loadPolicy() {
     try {
         raw = require(configPath);
     } catch (e) {
-        logger.debug('No grounding source config mounted; using the built-in defaults.');
+        logger.debug('No grounding source config mounted.');
     }
-    return parsePolicyConfig(raw);
+    const policy = parsePolicyConfig(raw);
+    if (!policy.excludeDomains.length && !warnedNoExclusions) {
+        warnedNoExclusions = true;
+        logger.warn('web_grounding_enterprise has no exclusion list configured; searching without exclusions.');
+    }
+    return policy;
 }
 
 function contentsOf(text) {

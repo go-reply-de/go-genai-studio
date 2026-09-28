@@ -82,4 +82,18 @@ describe('GroundingSources', () => {
 
     expect(container).toBeEmptyDOMElement();
   });
+
+  it('waits until the agent has finished its answer', () => {
+    const { container, rerender } = render(
+      <GroundingSources message={grounded} searchResults={searchResults} isSubmitting />,
+    );
+
+    expect(container).toBeEmptyDOMElement();
+
+    rerender(<GroundingSources message={grounded} searchResults={searchResults} />);
+
+    expect(
+      screen.getByRole('heading', { name: 'Quellen und weiterführende Literatur' }),
+    ).toBeInTheDocument();
+  });
 });

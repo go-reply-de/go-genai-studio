@@ -17,8 +17,14 @@ describe('parsePolicyConfig', () => {
     expect(policy).toEqual({ excludeDomains: ['junk.example'] });
   });
 
-  test('excludes content farms without a mounted config', () => {
-    expect(parsePolicyConfig(null).excludeDomains.length).toBeGreaterThan(0);
+  test('excludes nothing without a mounted config', () => {
+    expect(parsePolicyConfig(null)).toEqual({ excludeDomains: [] });
+  });
+
+  test('normalises the configured hosts', () => {
+    const policy = parsePolicyConfig({ excludeDomains: ['https://www.Junk.example/page'] });
+
+    expect(policy).toEqual({ excludeDomains: ['junk.example'] });
   });
 
   test('reads nothing but the exclusion list from a mounted config', () => {

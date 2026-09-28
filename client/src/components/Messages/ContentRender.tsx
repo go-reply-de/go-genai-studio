@@ -232,7 +232,11 @@ const ContentRender = memo(function ContentRender({
               conversationId={conversation?.conversationId}
               content={msg.content as Array<TMessageContentParts | undefined>}
             />
-            <GroundingSources message={msg} searchResults={searchResults} />
+            <GroundingSources
+              message={msg}
+              searchResults={searchResults}
+              isSubmitting={isSubmitting}
+            />
           </div>
           {hasNoChildren && isSubmitting ? (
             <PlaceholderRow />
