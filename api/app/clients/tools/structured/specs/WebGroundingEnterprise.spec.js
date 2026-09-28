@@ -83,9 +83,9 @@ const emptyResponse = (text) => ({
 
 const QUERY = 'Welches Zeitfenster gilt für die Thrombolyse bei Frau M., 67 Jahre?';
 
-const toolWith = (search) => {
+const toolWith = (search, policy = {}) => {
   const tool = new WebGroundingEnterprise({ override: true });
-  tool.policy = { excludeDomains: [] };
+  tool.policy = { excludeDomains: [], sourceDomains: [], ...policy };
   tool.generativeModel = search;
   return tool;
 };
@@ -190,9 +190,50 @@ describe('WebGroundingEnterprise', () => {
     const { content: out } = await invokeTool(toolWith(search));
 
     expect(search.asked).toHaveLength(2);
-    expect(out).toMatch(/nicht durch eine Websuche belegt/);
-    expect(out).toContain('Zweiter Versuch.');
-    expect(out).not.toContain('dgn.org');
+    expect(out).toBe('WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.');
+  });
+
+  test('hands the agent only what the listed sources back', async () => {
+    const listed = 'Bis 4,5 h nach Symptombeginn.';
+    const other = 'Ein Blog nennt 6 h.';
+    const response = groundedResponse(
+      `${listed} ${other}\n[[QUELLEN]]\n1|awmf.org|2023|S2e\n2|blog.example|-|Blog`,
+      ['awmf.org', 'blog.example'],
+    );
+    response.candidates[0].groundingMetadata.groundingSupports = [
+      {
+        segment: { endIndex: Buffer.byteLength(listed), text: listed },
+        groundingChunkIndices: [0],
+      },
+      {
+        segment: { endIndex: Buffer.byteLength(`${listed} ${other}`), text: other },
+        groundingChunkIndices: [1],
+      },
+    ];
+
+    const { content, artifact } = await invokeTool(
+      toolWith(stubModel([response]), { sourceDomains: ['awmf.org'] }),
+    );
+
+    expect(content).toContain(`${listed} \\ue202turn0search0`);
+    expect(content).not.toContain('Blog');
+    expect(artifact.web_search.organic.map((source) => source.title)).toEqual(['awmf.org']);
+  });
+
+  test('answers with the warning alone when no listed source was found', async () => {
+    const search = stubModel([
+      groundedResponse('Ein Blog nennt 6 h [1].\n[[QUELLEN]]\n1|blog.example|-|Blog', [
+        'blog.example',
+      ]),
+    ]);
+
+    const { content, artifact } = await invokeTool(
+      toolWith(search, { sourceDomains: ['awmf.org'] }),
+    );
+
+    expect(search.asked).toHaveLength(1);
+    expect(content).toBe('WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.');
+    expect(artifact).toBeUndefined();
   });
 
   test('drops a cited source the search never returned and numbers the rest', async () => {

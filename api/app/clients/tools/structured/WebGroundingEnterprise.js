@@ -28,7 +28,13 @@ const VERTEX_MULTI_REGION_ENDPOINTS = {
     global: 'aiplatform.googleapis.com',
 };
 
-let warnedNoExclusions = false;
+const warned = new Set();
+function warnOnce(message) {
+    if (!warned.has(message)) {
+        warned.add(message);
+        logger.warn(message);
+    }
+}
 
 /** Mounted next to manifest.json from the grounding-sources ConfigMap. */
 function loadPolicy() {
@@ -42,9 +48,11 @@ function loadPolicy() {
         logger.debug('No grounding source config mounted.');
     }
     const policy = parsePolicyConfig(raw);
-    if (!policy.excludeDomains.length && !warnedNoExclusions) {
-        warnedNoExclusions = true;
-        logger.warn('web_grounding_enterprise has no exclusion list configured; searching without exclusions.');
+    if (!policy.excludeDomains.length) {
+        warnOnce('web_grounding_enterprise has no exclusion list configured; searching without exclusions.');
+    }
+    if (!policy.sourceDomains.length) {
+        warnOnce('web_grounding_enterprise has no source list configured; every search result is used.');
     }
     return policy;
 }
@@ -176,16 +184,19 @@ class WebGroundingEnterprise extends Tool {
         try {
             const { text, chunks, supports } = await this._search(query);
             const { sources } = parseSourceBlock(text);
-            const { entries, dropped, numbering } = mergeSources({ sources, chunks, supports });
+            const { entries, dropped, numbering, unlisted } = mergeSources({
+                sources,
+                chunks,
+                supports,
+                sourceDomains: this.policy.sourceDomains,
+            });
             const turn = config?.toolCall?.turn ?? 0;
 
-            const answer = formatAnswer({
-                body: anchorClaims({ text, supports, chunks, entries, numbering, turn }),
-                entries,
-                dropped,
-                grounded: resultDomains(chunks).length > 0,
-            });
-            if (!entries.length) {
+            // Once an unlisted source shaped the answer, only passages a listed source backs remain.
+            const body = anchorClaims({ text, supports, chunks, entries, numbering, turn, cut: unlisted.length > 0 });
+            const backed = entries.length > 0 && body !== '';
+            const answer = formatAnswer({ body, entries: backed ? entries : [], dropped });
+            if (!backed) {
                 return [answer, undefined];
             }
             return [answer, { [Tools.web_search]: { turn, organic: toOrganicSources(entries) } }];

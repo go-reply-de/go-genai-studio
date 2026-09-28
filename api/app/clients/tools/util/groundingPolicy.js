@@ -28,13 +28,11 @@ function domainList(value, field) {
   return value.map(normalizeDomain);
 }
 
-/** The exclusion list comes from the grounding-sources ConfigMap (terraform
- * `grounding_exclude_domains`); a malformed one fails loudly, none means no exclusions. */
+/** Both lists come from the grounding-sources ConfigMap (terraform `grounding_exclude_domains`,
+ * `grounding_source_domains`); a malformed one fails loudly, a missing one is empty. */
 function parsePolicyConfig(raw) {
-  const excludeDomains =
-    raw?.excludeDomains === undefined ? [] : domainList(raw.excludeDomains, 'excludeDomains');
-
-  return { excludeDomains };
+  const list = (field) => (raw?.[field] === undefined ? [] : domainList(raw[field], field));
+  return { excludeDomains: list('excludeDomains'), sourceDomains: list('sourceDomains') };
 }
 
 function buildGroundingPrompt(query) {
@@ -94,13 +92,17 @@ function parseSourceBlock(text) {
   return { body: raw.slice(0, at).trim(), sources: sources.length ? sources : null };
 }
 
-/** A named source the search never returned is dropped as fabricated; an unnamed result
- * stays only if the answer is attributed to it. Entries carry Google's domain, not the model's. */
-function mergeSources({ sources, chunks, supports }) {
+/** Only results on the source list are kept; an empty list keeps them all. A named source the
+ * search never returned is dropped as fabricated, and an unnamed result stays only if the answer
+ * is attributed to it. Entries carry Google's domain, not the model's. */
+function mergeSources({ sources, chunks, supports, sourceDomains = [] }) {
+  const listed = (domain) =>
+    !sourceDomains.length || sourceDomains.some((d) => domainMatches(domain, d));
   const results = (chunks ?? [])
     .map((c) => c.web ?? c.retrievedContext ?? {})
     .map((w, index) => ({ domain: normalizeDomain(w.domain), uri: w.uri, index, claimed: false }))
-    .filter((r) => HOSTNAME.test(r.domain));
+    .filter((r) => HOSTNAME.test(r.domain))
+    .map((r) => ({ ...r, listed: listed(r.domain) }));
   const used = new Set((supports ?? []).flatMap((s) => s.groundingChunkIndices ?? []));
 
   const named = [];
@@ -116,11 +118,16 @@ function mergeSources({ sources, chunks, supports }) {
       entryOf.set(s.n, null);
       continue;
     }
+    const usable = matching.filter((r) => r.listed);
+    if (!usable.length) {
+      entryOf.set(s.n, null);
+      continue;
+    }
     // Prefer an unclaimed result so two pages from one domain keep their own links;
     // with none left, the citation repeats a page that is already listed.
-    const fresh = matching.find((r) => !r.claimed);
+    const fresh = usable.find((r) => !r.claimed);
     if (!fresh) {
-      entryOf.set(s.n, named.find((e) => e.uri === matching[0].uri) ?? null);
+      entryOf.set(s.n, named.find((e) => e.uri === usable[0].uri) ?? null);
       continue;
     }
     fresh.claimed = true;
@@ -137,7 +144,7 @@ function mergeSources({ sources, chunks, supports }) {
   const unnamed = [];
   const seen = new Set(named.map((e) => e.uri));
   for (const r of results) {
-    if (r.claimed || seen.has(r.uri) || !used.has(r.index)) {
+    if (!r.listed || r.claimed || seen.has(r.uri) || !used.has(r.index)) {
       continue;
     }
     seen.add(r.uri);
@@ -146,7 +153,8 @@ function mergeSources({ sources, chunks, supports }) {
 
   const entries = [...named, ...unnamed];
   const numbering = new Map([...entryOf].map(([n, e]) => [n, e ? entries.indexOf(e) + 1 : null]));
-  return { entries, dropped, numbering };
+  const unlisted = [...new Set(results.filter((r) => !r.listed).map((r) => r.domain))];
+  return { entries, dropped, numbering, unlisted };
 }
 
 const CITATION_MARKER = /\s*\[(\d+(?:\s*,\s*\d+)*)\]/g;
@@ -190,6 +198,20 @@ function mergedEnds(ranges) {
   return ends.map((range) => range.end);
 }
 
+/** Overlapping or touching passages become one. */
+function mergedRanges(ranges) {
+  const merged = [];
+  for (const range of [...ranges].sort((a, b) => a.start - b.start || b.end - a.end)) {
+    const last = merged[merged.length - 1];
+    if (last && range.start <= last.end) {
+      last.end = Math.max(last.end, range.end);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+  return merged;
+}
+
 /** An anchor goes after the model's own marker and the sentence's punctuation. */
 function snapPast(text, position, limit) {
   let at = position;
@@ -213,8 +235,9 @@ function anchorFor(entryIndices, turn) {
 }
 
 /** The answer body with a LibreChat citation anchor behind every passage Google attributes to a
- * kept source, numbered like the source list; the model's own `[n]` markers are dropped. */
-function anchorClaims({ text, supports, chunks, entries, numbering, turn = 0 }) {
+ * kept source, numbered like the source list; the model's own `[n]` markers are dropped. With
+ * `cut`, only those passages remain, so nothing an unlisted source contributed reaches the agent. */
+function anchorClaims({ text, supports, chunks, entries, numbering, turn = 0, cut = false }) {
   const raw = String(text ?? '');
   const blockAt = raw.lastIndexOf(SOURCE_BLOCK_MARKER);
   const bodyEnd = blockAt < 0 ? raw.length : blockAt;
@@ -254,9 +277,21 @@ function anchorClaims({ text, supports, chunks, entries, numbering, turn = 0 }) 
     }
   }
 
+  // A kept passage runs up to where its anchor goes; without `cut` the whole body is one passage.
+  const kept = cut
+    ? mergedRanges(
+        [...rangesByEntry.values()]
+          .flat()
+          .map((r) => ({ start: r.start, end: snapPast(raw, r.end, bodyEnd) })),
+      )
+    : [{ start: 0, end: bodyEnd }];
+  const passageAt = (i, withEnd) =>
+    kept.findIndex((r) => i >= r.start && (withEnd ? i <= r.end : i < r.end));
+
   let out = '';
+  let lastPassage = -1;
   for (let i = 0; i <= bodyEnd; ) {
-    if (anchorsAt.has(i)) {
+    if (anchorsAt.has(i) && passageAt(i, true) >= 0) {
       const before = out && !/\s$/.test(out) ? ' ' : '';
       const after = i < bodyEnd && !/\s/.test(raw[i]) ? ' ' : '';
       out += `${before}${anchorFor(anchorsAt.get(i), turn)}${after}`;
@@ -265,8 +300,14 @@ function anchorClaims({ text, supports, chunks, entries, numbering, turn = 0 }) 
       i = markers.get(i);
       continue;
     }
-    if (i < bodyEnd) {
+    const passage = i < bodyEnd ? passageAt(i, false) : -1;
+    if (passage >= 0) {
+      if (lastPassage >= 0 && passage !== lastPassage) {
+        const gap = raw.slice(kept[lastPassage].end, kept[passage].start);
+        out = out.trimEnd() + (gap.includes('\n') ? '\n' : ' ');
+      }
       out += raw[i];
+      lastPassage = passage;
     }
     i += 1;
   }
@@ -290,17 +331,16 @@ function toOrganicSources(entries) {
   }));
 }
 
-/** Never refuses: missing evidence is stated, not withheld. */
-function formatAnswer({ body, entries, dropped, grounded }) {
-  const parts = [];
-  if (!grounded) {
-    parts.push('WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.');
+/** Without a kept source the agent gets only the warning and answers from its own knowledge;
+ * text the search model wrote from other sources never reaches it. */
+function formatAnswer({ body, entries, dropped }) {
+  if (!entries.length) {
+    return 'WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.';
   }
-  parts.push(body || 'Es wurde kein Antworttext zurückgegeben.');
-
-  if (entries.length) {
-    parts.push(['Quellen:', ...entries.map((e, i) => `${i + 1}. ${formatEntry(e)}`)].join('\n'));
-  }
+  const parts = [
+    body,
+    ['Quellen:', ...entries.map((e, i) => `${i + 1}. ${formatEntry(e)}`)].join('\n'),
+  ];
 
   if (dropped.length) {
     const one = dropped.length === 1;

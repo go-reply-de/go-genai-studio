@@ -11,33 +11,43 @@ const chunk = (domain, uri = `stub-${domain}`) => ({ web: { uri, title: domain, 
 const source = (n, domain) => ({ n, domain, jahr: '2023', beschreibung: 'x' });
 
 describe('parsePolicyConfig', () => {
-  test('passes a configured exclusion list through', () => {
-    const policy = parsePolicyConfig({ excludeDomains: ['junk.example'] });
+  test('passes the configured exclusion and source lists through', () => {
+    const policy = parsePolicyConfig({
+      excludeDomains: ['junk.example'],
+      sourceDomains: ['awmf.org', 'rki.de'],
+    });
 
-    expect(policy).toEqual({ excludeDomains: ['junk.example'] });
+    expect(policy).toEqual({
+      excludeDomains: ['junk.example'],
+      sourceDomains: ['awmf.org', 'rki.de'],
+    });
   });
 
-  test('excludes nothing without a mounted config', () => {
-    expect(parsePolicyConfig(null)).toEqual({ excludeDomains: [] });
+  test('excludes nothing and keeps every source without a mounted config', () => {
+    expect(parsePolicyConfig(null)).toEqual({ excludeDomains: [], sourceDomains: [] });
   });
 
   test('normalises the configured hosts', () => {
-    const policy = parsePolicyConfig({ excludeDomains: ['https://www.Junk.example/page'] });
+    const policy = parsePolicyConfig({
+      excludeDomains: ['https://www.Junk.example/page'],
+      sourceDomains: ['www.AWMF.org'],
+    });
 
-    expect(policy).toEqual({ excludeDomains: ['junk.example'] });
+    expect(policy).toEqual({ excludeDomains: ['junk.example'], sourceDomains: ['awmf.org'] });
   });
 
-  test('reads nothing but the exclusion list from a mounted config', () => {
+  test('ignores the tier list of the older tool', () => {
     const policy = parsePolicyConfig({
       tiers: [{ name: 'AWMF', domains: ['awmf.org'] }],
       excludeDomains: ['junk.example'],
     });
 
-    expect(policy).toEqual({ excludeDomains: ['junk.example'] });
+    expect(policy).toEqual({ excludeDomains: ['junk.example'], sourceDomains: [] });
   });
 
-  test('rejects an exclusion list that is not a list of domains', () => {
+  test('rejects a list that is not a list of domains', () => {
     expect(() => parsePolicyConfig({ excludeDomains: 'junk.example' })).toThrow(/excludeDomains/);
+    expect(() => parsePolicyConfig({ sourceDomains: ['awmf.org', 42] })).toThrow(/sourceDomains/);
   });
 });
 
@@ -201,6 +211,53 @@ describe('mergeSources', () => {
       [3, 2],
     ]);
   });
+
+  test('keeps only sources on the list, without calling the others fabricated', () => {
+    const { entries, dropped, numbering, unlisted } = mergeSources({
+      sources: [source(1, 'awmf.org'), source(2, 'thieme-connect.com')],
+      chunks: [chunk('awmf.org'), chunk('thieme-connect.com')],
+      sourceDomains: ['awmf.org'],
+    });
+
+    expect(entries.map((e) => e.domain)).toEqual(['awmf.org']);
+    expect(dropped).toEqual([]);
+    expect([...numbering]).toEqual([
+      [1, 1],
+      [2, null],
+    ]);
+    expect(unlisted).toEqual(['thieme-connect.com']);
+  });
+
+  test('keeps an unlisted result out even when the answer is attributed to it', () => {
+    const { entries } = mergeSources({
+      sources: [],
+      chunks: [chunk('thieme-connect.com'), chunk('rki.de')],
+      supports: [{ segment: { endIndex: 40, text: 'x' }, groundingChunkIndices: [0, 1] }],
+      sourceDomains: ['rki.de'],
+    });
+
+    expect(entries.map((e) => e.domain)).toEqual(['rki.de']);
+  });
+
+  test('still drops a cited source the search never returned', () => {
+    const { dropped } = mergeSources({
+      sources: [source(1, 'erfunden.de')],
+      chunks: [chunk('awmf.org')],
+      sourceDomains: ['awmf.org'],
+    });
+
+    expect(dropped.map((d) => d.domain)).toEqual(['erfunden.de']);
+  });
+
+  test('keeps every source when no list is configured', () => {
+    const { entries, unlisted } = mergeSources({
+      sources: [source(1, 'awmf.org'), source(2, 'thieme-connect.com')],
+      chunks: [chunk('awmf.org'), chunk('thieme-connect.com')],
+    });
+
+    expect(entries.map((e) => e.domain)).toEqual(['awmf.org', 'thieme-connect.com']);
+    expect(unlisted).toEqual([]);
+  });
 });
 
 describe('anchorClaims', () => {
@@ -340,6 +397,58 @@ describe('anchorClaims', () => {
 
     expect(body).toBe('Studie [2023] zeigt Z.');
   });
+
+  test('with cut, keeps only the passages a kept source backs', () => {
+    const text =
+      'Feste Nahrung bis 6 h vorher. Laut Blog auch Kaugummi. Klare Flüssigkeit bis 2 h vorher.';
+
+    const body = anchorClaims({
+      text,
+      supports: [
+        supportFor(text, 'Feste Nahrung bis 6 h vorher.', [0]),
+        supportFor(text, 'Laut Blog auch Kaugummi.', [1]),
+        supportFor(text, 'Klare Flüssigkeit bis 2 h vorher.', [0]),
+      ],
+      chunks: [chunk('awmf.org'), chunk('blog.example')],
+      entries: [entry('awmf.org')],
+      numbering: new Map(),
+      cut: true,
+    });
+
+    expect(body).toBe(
+      'Feste Nahrung bis 6 h vorher. \\ue202turn0search0 Klare Flüssigkeit bis 2 h vorher. \\ue202turn0search0',
+    );
+  });
+
+  test('with cut, keeps a paragraph break between passages from different paragraphs', () => {
+    const text = 'Erste Aussage.\n\nLaut Blog etwas anderes.\n\nZweite Aussage.';
+
+    const body = anchorClaims({
+      text,
+      supports: [supportFor(text, 'Erste Aussage.', [0]), supportFor(text, 'Zweite Aussage.', [0])],
+      chunks: [chunk('awmf.org')],
+      entries: [entry('awmf.org')],
+      numbering: new Map(),
+      cut: true,
+    });
+
+    expect(body).toBe('Erste Aussage. \\ue202turn0search0\nZweite Aussage. \\ue202turn0search0');
+  });
+
+  test('with cut, leaves nothing when no kept source backs any passage', () => {
+    const text = 'Nur ein Blog sagt das.';
+
+    const body = anchorClaims({
+      text,
+      supports: [supportFor(text, text, [0])],
+      chunks: [chunk('blog.example')],
+      entries: [],
+      numbering: new Map(),
+      cut: true,
+    });
+
+    expect(body).toBe('');
+  });
 });
 
 describe('formatAnswer', () => {
@@ -351,8 +460,7 @@ describe('formatAnswer', () => {
     ...over,
   });
   const lineFor = (out, domain) => out.split('\n').find((l) => l.includes(`[${domain}](`));
-  const answer = (over) =>
-    formatAnswer({ body: 'A', entries: [entry()], dropped: [], grounded: true, ...over });
+  const answer = (over) => formatAnswer({ body: 'A', entries: [entry()], dropped: [], ...over });
 
   test('links each source by its domain with year and description', () => {
     const line = lineFor(answer({}), 'awmf.org');
@@ -370,11 +478,10 @@ describe('formatAnswer', () => {
     expect(out).not.toMatch(/verifiziert|Register|geprüft/);
   });
 
-  test('answers with a warning rather than refusing when no search backed the answer', () => {
-    const out = answer({ body: 'Aus dem Gedächtnis.', entries: [], grounded: false });
-
-    expect(out).toContain('Aus dem Gedächtnis.');
-    expect(out).toMatch(/WARNUNG/);
+  test('hands over only the warning when no source backs the answer', () => {
+    expect(answer({ body: 'Aus anderen Quellen.', entries: [] })).toBe(
+      'WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.',
+    );
   });
 
   test('says how many cited sources were removed as unverifiable', () => {
