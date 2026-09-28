@@ -234,17 +234,17 @@ function anchorFor(entryIndices, turn) {
   return anchors.length === 1 ? anchors[0] : `\\ue200${anchors.join('')}\\ue201`;
 }
 
-/** The answer body with a LibreChat citation anchor behind every passage Google attributes to a
- * kept source, numbered like the source list; the model's own `[n]` markers are dropped. With
- * `cut`, only those passages remain, so nothing an unlisted source contributed reaches the agent. */
-function anchorClaims({ text, supports, chunks, entries, numbering, turn = 0, cut = false }) {
-  const raw = String(text ?? '');
+function bodyEndOf(raw) {
   const blockAt = raw.lastIndexOf(SOURCE_BLOCK_MARKER);
-  const bodyEnd = blockAt < 0 ? raw.length : blockAt;
+  return blockAt < 0 ? raw.length : blockAt;
+}
+
+/** Where Google says each kept source backs the answer, and those passages merged; a passage runs
+ * up to where its anchor goes. */
+function backedPassages({ raw, bodyEnd, supports, chunks, entries }) {
   const entryOfChunk = (chunks ?? []).map((c) =>
     entries.findIndex((e) => e.uri === (c.web ?? c.retrievedContext ?? {}).uri),
   );
-
   const rangesByEntry = new Map();
   for (const support of supports ?? []) {
     const range = segmentRange(raw, support.segment);
@@ -259,6 +259,34 @@ function anchorClaims({ text, supports, chunks, entries, numbering, turn = 0, cu
       rangesByEntry.set(entryIndex, [...(rangesByEntry.get(entryIndex) ?? []), range]);
     }
   }
+  const kept = mergedRanges(
+    [...rangesByEntry.values()]
+      .flat()
+      .map((r) => ({ start: r.start, end: snapPast(raw, r.end, bodyEnd) })),
+  );
+  return { rangesByEntry, kept };
+}
+
+/** The model's own `[n]` markers by start offset. Same rule as the numbering: `[2023]` is not one. */
+function citationMarkers(raw, bodyEnd, numbering) {
+  const markers = new Map();
+  for (const m of raw.slice(0, bodyEnd).matchAll(CITATION_MARKER)) {
+    const numbers = m[1].split(',').map((n) => Number.parseInt(n, 10));
+    if (numbers.every((n) => numbering?.has(n))) {
+      markers.set(m.index, m.index + m[0].length);
+    }
+  }
+  return markers;
+}
+
+/** The answer body with a LibreChat citation anchor behind every passage Google attributes to a
+ * kept source, numbered like the source list; the model's own `[n]` markers are dropped. With
+ * `cut`, only those passages remain, so nothing an unlisted source contributed reaches the agent. */
+function anchorClaims({ text, supports, chunks, entries, numbering, turn = 0, cut = false }) {
+  const raw = String(text ?? '');
+  const bodyEnd = bodyEndOf(raw);
+  const backed = backedPassages({ raw, bodyEnd, supports, chunks, entries });
+  const { rangesByEntry } = backed;
 
   const anchorsAt = new Map();
   for (const [entryIndex, ranges] of rangesByEntry) {
@@ -268,23 +296,9 @@ function anchorClaims({ text, supports, chunks, entries, numbering, turn = 0, cu
     }
   }
 
-  // Same rule as the source numbering: `[2023]` is not a citation.
-  const markers = new Map();
-  for (const m of raw.slice(0, bodyEnd).matchAll(CITATION_MARKER)) {
-    const numbers = m[1].split(',').map((n) => Number.parseInt(n, 10));
-    if (numbers.every((n) => numbering?.has(n))) {
-      markers.set(m.index, m.index + m[0].length);
-    }
-  }
-
-  // A kept passage runs up to where its anchor goes; without `cut` the whole body is one passage.
-  const kept = cut
-    ? mergedRanges(
-        [...rangesByEntry.values()]
-          .flat()
-          .map((r) => ({ start: r.start, end: snapPast(raw, r.end, bodyEnd) })),
-      )
-    : [{ start: 0, end: bodyEnd }];
+  const markers = citationMarkers(raw, bodyEnd, numbering);
+  // Without `cut` the whole body is one passage.
+  const kept = cut ? backed.kept : [{ start: 0, end: bodyEnd }];
   const passageAt = (i, withEnd) =>
     kept.findIndex((r) => i >= r.start && (withEnd ? i <= r.end : i < r.end));
 
@@ -314,6 +328,74 @@ function anchorClaims({ text, supports, chunks, entries, numbering, turn = 0, cu
   return out.trim();
 }
 
+const ABBREVIATION =
+  /(?:^|[\s(])(?:z|u|d|o|s|ca|bzw|ggf|evtl|inkl|vgl|sog|Dr|Prof|Nr|Abb|Tab|max|min|mind|i\.v|p\.o|s\.c|i\.m|z\. ?B|d\. ?h|u\. ?a)$/i;
+
+/** Sentence offsets within a line: a break is a sentence end followed by a capital, but not after
+ * `z. B.`, `ggf.`, `i.v.` and the like. */
+function sentenceSpans(line) {
+  const spans = [];
+  let start = 0;
+  for (const m of line.matchAll(/[.!?]\s+(?=\p{Lu})/gu)) {
+    if (ABBREVIATION.test(line.slice(start, m.index))) {
+      continue;
+    }
+    spans.push([start, m.index + 1]);
+    start = m.index + m[0].length;
+  }
+  spans.push([start, line.length]);
+  return spans.filter(([from, to]) => line.slice(from, to).trim());
+}
+/** A number with a dose unit. Clearance and concentration units (`ml/min`, `mmol/l`, `mg/dl`) mark
+ * thresholds, not doses, so they stay. */
+const DOSE =
+  /\d(?:[\d.,]*\d)?\s*(?:(?:-|–|bis)\s*\d(?:[\d.,]*\d)?\s*)?(?:mg|µg|μg|mcg|ng|g|ml|l|IE|I\.\s?E\.|Einheiten|mmol|mval|Milligramm|Mikrogramm|Gramm|Milliliter|Litern?|Tabletten?|Tbl\.|Kapseln?|Ampullen?|Hübe|Hub|Tropfen)(?!\p{L})(?!\s*\/\s*(?:dl|l|min)(?!\p{L}))/iu;
+
+/** Every sentence no kept source backs any part of, as plain statements for the agent's hints
+ * section; a partly backed sentence already lives in the backed text. Markup, the model's `[n]`
+ * markers, headings and labels go, and so does every sentence with a dose. */
+function unbackedStatements({ text, supports, chunks, entries, numbering }) {
+  const raw = String(text ?? '');
+  const bodyEnd = bodyEndOf(raw);
+  const { kept } = backedPassages({ raw, bodyEnd, supports, chunks, entries });
+  const markers = citationMarkers(raw, bodyEnd, numbering);
+  const backed = (from, to) => kept.some((range) => range.start < to && range.end > from);
+  const plain = (from, to) => {
+    let out = '';
+    for (let i = from; i < to; ) {
+      if (markers.has(i)) {
+        i = markers.get(i);
+        continue;
+      }
+      out += raw[i];
+      i += 1;
+    }
+    return out
+      .replace(/^\s*(?:[-*•]|\d+\.)\s+/, '')
+      .replace(/\*\*|__/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  const statements = [];
+  let lineStart = 0;
+  for (const line of raw.slice(0, bodyEnd).split('\n')) {
+    if (!/^\s*#/.test(line)) {
+      const statement = sentenceSpans(line)
+        .map(([from, to]) => [lineStart + from, lineStart + to])
+        .filter(([from, to]) => !backed(from, to))
+        .map(([from, to]) => plain(from, to))
+        .filter((sentence) => sentence && !DOSE.test(sentence))
+        .join(' ');
+      if (statement.length >= 12 && !statement.endsWith(':') && /^[\p{Lu}\d„"(]/u.test(statement)) {
+        statements.push(statement);
+      }
+    }
+    lineStart += line.length + 1;
+  }
+  return statements;
+}
+
 function formatEntry(entry) {
   return [`[${entry.domain}](${entry.uri})`, entry.jahr, entry.beschreibung]
     .filter(Boolean)
@@ -331,14 +413,21 @@ function toOrganicSources(entries) {
   }));
 }
 
-/** Without a kept source the agent gets only the warning and answers from its own knowledge;
- * text the search model wrote from other sources never reaches it. */
-function formatAnswer({ body, entries, dropped }) {
+const UNOFFICIAL_HEADING =
+  'Ergänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:';
+
+/** Backed text with its sources, then what no kept source backs under its own heading, never with
+ * a source name. Without a kept source the warning leads. */
+function formatAnswer({ body, entries, dropped, unofficial = [] }) {
+  const hints = unofficial.length
+    ? [[UNOFFICIAL_HEADING, ...unofficial.map((statement) => `- ${statement}`)].join('\n')]
+    : [];
   if (!entries.length) {
-    return 'WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.';
+    return ['WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.', ...hints].join('\n\n');
   }
   const parts = [
     body,
+    ...hints,
     ['Quellen:', ...entries.map((e, i) => `${i + 1}. ${formatEntry(e)}`)].join('\n'),
   ];
 
@@ -360,6 +449,7 @@ module.exports = {
   parseSourceBlock,
   mergeSources,
   anchorClaims,
+  unbackedStatements,
   formatAnswer,
   toOrganicSources,
 };

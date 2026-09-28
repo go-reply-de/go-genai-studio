@@ -56,10 +56,14 @@ const groundedResponse = (text, domains, attributed = domains.map((_, i) => [i])
             domain: d,
           },
         })),
-        groundingSupports: attributed.map((indices, k) => ({
-          segment: { endIndex: 10 * (k + 1), text: 'Aussage' },
-          groundingChunkIndices: indices,
-        })),
+        // Each attributed source backs the whole answer text.
+        groundingSupports: attributed.map((indices) => {
+          const body = text.split('\n[[QUELLEN]]')[0];
+          return {
+            segment: { endIndex: Buffer.byteLength(body), text: body },
+            groundingChunkIndices: indices,
+          };
+        }),
       },
     },
   ],
@@ -190,37 +194,43 @@ describe('WebGroundingEnterprise', () => {
     const { content: out } = await invokeTool(toolWith(search));
 
     expect(search.asked).toHaveLength(2);
-    expect(out).toBe('WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.');
+    expect(out).toBe(
+      'WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.\n\n' +
+        'Ergänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:\n- Zweiter Versuch.',
+    );
   });
 
-  test('hands the agent only what the listed sources back', async () => {
+  test('moves what only unlisted sources back into unsourced hints, without doses', async () => {
     const listed = 'Bis 4,5 h nach Symptombeginn.';
     const other = 'Ein Blog nennt 6 h.';
+    const dose = 'Dort stehen 90 mg als Dosis.';
     const response = groundedResponse(
-      `${listed} ${other}\n[[QUELLEN]]\n1|awmf.org|2023|S2e\n2|blog.example|-|Blog`,
+      `${listed} ${other} ${dose}\n[[QUELLEN]]\n1|awmf.org|2023|S2e\n2|blog.example|-|Blog`,
       ['awmf.org', 'blog.example'],
     );
-    response.candidates[0].groundingMetadata.groundingSupports = [
-      {
-        segment: { endIndex: Buffer.byteLength(listed), text: listed },
-        groundingChunkIndices: [0],
-      },
-      {
-        segment: { endIndex: Buffer.byteLength(`${listed} ${other}`), text: other },
-        groundingChunkIndices: [1],
-      },
-    ];
+    const upTo = (passage) =>
+      Buffer.byteLength(`${listed} ${other} ${dose}`.split(passage)[0] + passage);
+    response.candidates[0].groundingMetadata.groundingSupports = [listed, other, dose].map(
+      (passage, i) => ({
+        segment: { endIndex: upTo(passage), text: passage },
+        groundingChunkIndices: [i === 0 ? 0 : 1],
+      }),
+    );
 
     const { content, artifact } = await invokeTool(
       toolWith(stubModel([response]), { sourceDomains: ['awmf.org'] }),
     );
 
     expect(content).toContain(`${listed} \\ue202turn0search0`);
-    expect(content).not.toContain('Blog');
+    expect(content).toContain(
+      `Ergänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:\n- ${other}`,
+    );
+    expect(content).not.toContain('90 mg');
+    expect(content).not.toContain('blog.example');
     expect(artifact.web_search.organic.map((source) => source.title)).toEqual(['awmf.org']);
   });
 
-  test('answers with the warning alone when no listed source was found', async () => {
+  test('answers with the warning and the unsourced hints when no listed source was found', async () => {
     const search = stubModel([
       groundedResponse('Ein Blog nennt 6 h [1].\n[[QUELLEN]]\n1|blog.example|-|Blog', [
         'blog.example',
@@ -232,7 +242,10 @@ describe('WebGroundingEnterprise', () => {
     );
 
     expect(search.asked).toHaveLength(1);
-    expect(content).toBe('WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.');
+    expect(content).toBe(
+      'WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.\n\n' +
+        'Ergänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:\n- Ein Blog nennt 6 h.',
+    );
     expect(artifact).toBeUndefined();
   });
 

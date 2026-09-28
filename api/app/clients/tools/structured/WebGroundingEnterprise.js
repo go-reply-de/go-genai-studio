@@ -12,6 +12,7 @@ const {
     parseSourceBlock,
     mergeSources,
     anchorClaims,
+    unbackedStatements,
     formatAnswer,
     toOrganicSources,
 } = require('../util/groundingPolicy');
@@ -184,7 +185,7 @@ class WebGroundingEnterprise extends Tool {
         try {
             const { text, chunks, supports } = await this._search(query);
             const { sources } = parseSourceBlock(text);
-            const { entries, dropped, numbering, unlisted } = mergeSources({
+            const { entries, dropped, numbering } = mergeSources({
                 sources,
                 chunks,
                 supports,
@@ -192,10 +193,11 @@ class WebGroundingEnterprise extends Tool {
             });
             const turn = config?.toolCall?.turn ?? 0;
 
-            // Once an unlisted source shaped the answer, only passages a listed source backs remain.
-            const body = anchorClaims({ text, supports, chunks, entries, numbering, turn, cut: unlisted.length > 0 });
+            // Passages a listed source backs keep their anchors; everything else becomes unsourced hints.
+            const body = anchorClaims({ text, supports, chunks, entries, numbering, turn, cut: true });
+            const unofficial = unbackedStatements({ text, supports, chunks, entries, numbering });
             const backed = entries.length > 0 && body !== '';
-            const answer = formatAnswer({ body, entries: backed ? entries : [], dropped });
+            const answer = formatAnswer({ body, entries: backed ? entries : [], dropped, unofficial });
             if (!backed) {
                 return [answer, undefined];
             }

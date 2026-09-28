@@ -3,6 +3,7 @@ const {
   parseSourceBlock,
   mergeSources,
   anchorClaims,
+  unbackedStatements,
   formatAnswer,
   buildGroundingPrompt,
 } = require('./groundingPolicy');
@@ -451,6 +452,119 @@ describe('anchorClaims', () => {
   });
 });
 
+describe('unbackedStatements', () => {
+  const bytes = (s) => Buffer.byteLength(s, 'utf8');
+  const backedBy = (text, passage) => ({
+    segment: {
+      endIndex: bytes(text.slice(0, text.indexOf(passage) + passage.length)),
+      text: passage,
+    },
+    groundingChunkIndices: [0],
+  });
+  const awmf = { domain: 'awmf.org', uri: 'stub-awmf.org', jahr: null, beschreibung: null };
+
+  test('collects what no kept source backs, as plain statements', () => {
+    const text =
+      'Feste Nahrung bis 6 h vorher [1]. Laut Blog auch Kaugummi erlaubt [2].\n' +
+      '* **Klare Flüssigkeit:** bis 2 h vorher.\n[[QUELLEN]]\n1|awmf.org|2023|S3\n2|blog.example|-|x';
+
+    const statements = unbackedStatements({
+      text,
+      supports: [backedBy(text, 'Feste Nahrung bis 6 h vorher')],
+      chunks: [chunk('awmf.org'), chunk('blog.example')],
+      entries: [awmf],
+      numbering: new Map([
+        [1, 1],
+        [2, null],
+      ]),
+    });
+
+    expect(statements).toEqual([
+      'Laut Blog auch Kaugummi erlaubt.',
+      'Klare Flüssigkeit: bis 2 h vorher.',
+    ]);
+  });
+
+  test('drops every sentence with a dose but keeps thresholds', () => {
+    const statements = unbackedStatements({
+      text: 'Amoxicillin 1 g dreimal täglich. Bei eGFR unter 30 ml/min nicht anwenden. Insulin 0,1 IE/kg/h.',
+      supports: [],
+      chunks: [],
+      entries: [],
+      numbering: new Map(),
+    });
+
+    expect(statements).toEqual(['Bei eGFR unter 30 ml/min nicht anwenden.']);
+  });
+
+  test('treats spelled-out units as doses too', () => {
+    const statements = unbackedStatements({
+      text: 'In der ersten Stunde 1 Liter Flüssigkeit. Danach langsamer Ausgleich nach Klinik.',
+      supports: [],
+      chunks: [],
+      entries: [],
+      numbering: new Map(),
+    });
+
+    expect(statements).toEqual(['Danach langsamer Ausgleich nach Klinik.']);
+  });
+
+  test('leaves a partly backed sentence to the backed text instead of splitting it', () => {
+    const text = '* **Gadobutrol** (z. B. Gadovist) gilt als bevorzugt.\nEin Satz ganz ohne Beleg.';
+
+    const statements = unbackedStatements({
+      text,
+      supports: [backedBy(text, 'Gadovist) gilt als bevorzugt')],
+      chunks: [chunk('awmf.org')],
+      entries: [awmf],
+      numbering: new Map(),
+    });
+
+    expect(statements).toEqual(['Ein Satz ganz ohne Beleg.']);
+  });
+
+  test('does not split at abbreviations', () => {
+    const statements = unbackedStatements({
+      text: 'Gabe z. B. als Kurzinfusion. Kontrolle ggf. nach 2 h.',
+      supports: [],
+      chunks: [],
+      entries: [],
+      numbering: new Map(),
+    });
+
+    expect(statements).toEqual(['Gabe z. B. als Kurzinfusion. Kontrolle ggf. nach 2 h.']);
+  });
+
+  test('leaves out headings, labels and sentence fragments', () => {
+    const text =
+      '### Therapie\nErste Wahl:\nEin Satz mit Beleg, sonst nichts.\nEin echter Satz ohne Beleg.';
+
+    const statements = unbackedStatements({
+      text,
+      supports: [backedBy(text, 'Ein Satz mit Beleg')],
+      chunks: [chunk('awmf.org')],
+      entries: [awmf],
+      numbering: new Map(),
+    });
+
+    expect(statements).toEqual(['Ein echter Satz ohne Beleg.']);
+  });
+
+  test('returns nothing when kept sources back the whole answer', () => {
+    const text = 'Feste Nahrung bis 6 h vorher.';
+
+    expect(
+      unbackedStatements({
+        text,
+        supports: [backedBy(text, text)],
+        chunks: [chunk('awmf.org')],
+        entries: [awmf],
+        numbering: new Map(),
+      }),
+    ).toEqual([]);
+  });
+});
+
 describe('formatAnswer', () => {
   const entry = (over) => ({
     domain: 'awmf.org',
@@ -476,6 +590,21 @@ describe('formatAnswer', () => {
     const out = answer({ entries: [entry(), entry({ domain: 'esur-cm.org', uri: 'stub-e' })] });
 
     expect(out).not.toMatch(/verifiziert|Register|geprüft/);
+  });
+
+  test('adds the unofficial statements under their own heading, before the sources', () => {
+    const out = answer({ unofficial: ['Aussage C.', 'Aussage D.'] });
+
+    expect(out).toContain(
+      'A\n\nErgänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:\n- Aussage C.\n- Aussage D.\n\nQuellen:',
+    );
+  });
+
+  test('keeps the unofficial statements behind the warning when no source backs the answer', () => {
+    expect(answer({ body: '', entries: [], unofficial: ['Aussage C.'] })).toBe(
+      'WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.\n\n' +
+        'Ergänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:\n- Aussage C.',
+    );
   });
 
   test('hands over only the warning when no source backs the answer', () => {
