@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { ContentTypes } from 'librechat-data-provider';
 import type { SearchResultData, TMessage } from 'librechat-data-provider';
@@ -18,11 +18,6 @@ const grounded = {
   conversationId: 'conv-1',
   content: [toolCall('web_grounding_enterprise'), text],
 } as unknown as TMessage;
-const SOURCES = 'Quellen und weiterführende Literatur';
-const HINTS = 'Ergänzende Hinweise – bitte eigenständig prüfen';
-const hint = (value: string) => ({ topic: null, text: value, sources: [] });
-const results = (organic: object[], hints: object[]) =>
-  ({ '0': { turn: 0, organic, hints } }) as unknown as Record<string, SearchResultData>;
 const links = () =>
   screen.getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')]);
 
@@ -48,13 +43,6 @@ describe('hasGroundingSources', () => {
     expect(hasGroundingSources(content, searchResults)).toBe(false);
   });
 
-  it('shows nothing when only the unofficial hints have sources', () => {
-    const content = [toolCall('web_grounding_enterprise'), text] as TMessage['content'];
-    const blog = { position: 1, link: 'https://stub/blog', title: 'blog.example', official: false };
-
-    expect(hasGroundingSources(content, { '0': { turn: 0, organic: [blog] } })).toBe(false);
-  });
-
   it('shows nothing when the search returned no sources', () => {
     const content = [toolCall('web_grounding_enterprise'), text] as TMessage['content'];
 
@@ -76,19 +64,6 @@ describe('GroundingSources', () => {
     expect(screen.getAllByRole('link')[0]).toHaveAttribute('target', '_blank');
   });
 
-  it('leaves the sources of the unofficial hints off the list', () => {
-    const blog = { position: 3, link: 'https://stub/blog', title: 'blog.example', official: false };
-
-    render(
-      <GroundingSources
-        message={grounded}
-        searchResults={{ '0': { turn: 0, organic: [awmf, dgn, blog] } }}
-      />,
-    );
-
-    expect(links().map(([title]) => title)).toEqual(['awmf.org', 'dgn.org']);
-  });
-
   it('lists a source that several searches returned only once', () => {
     const rki = { position: 2, link: 'https://stub/rki', title: 'rki.de', attribution: 'rki.de' };
     const twice = { ...searchResults, '1': { turn: 1, organic: [dgn, rki] } };
@@ -103,81 +78,6 @@ describe('GroundingSources', () => {
 
     const { container } = render(
       <GroundingSources message={other} searchResults={searchResults} />,
-    );
-
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it('shows the hints above the sources when the agent left out the marker', () => {
-    const withHints = results([awmf], [hint('Kein Nystagmus.')]);
-
-    render(<GroundingSources message={grounded} searchResults={withHints} />);
-
-    const hints = screen.getByRole('region', { name: HINTS });
-    const sources = screen.getByRole('region', { name: SOURCES });
-    expect(hints.compareDocumentPosition(sources) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it('shows above the sources only the hints of sections the agent did not place', () => {
-    const placedOne = {
-      ...grounded,
-      content: [
-        toolCall('web_grounding_enterprise'),
-        { ...text, text: 'Bis 4,5 h.\n\n::hinweise{abschnitt=0-1}' },
-      ],
-    } as unknown as TMessage;
-    const sectioned = [
-      { ...hint('Eine zu rasche Senkung ist zu vermeiden.'), section: '0-1' },
-      { ...hint('Unter Insulin droht eine Hypokaliämie.'), section: '0-2' },
-    ];
-
-    render(<GroundingSources message={placedOne} searchResults={results([awmf], sectioned)} />);
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(HINTS) }));
-
-    expect(screen.getByText('Unter Insulin droht eine Hypokaliämie.')).toBeInTheDocument();
-    expect(screen.queryByText('Eine zu rasche Senkung ist zu vermeiden.')).not.toBeInTheDocument();
-  });
-
-  it('leaves the hints to the marker the agent placed in its answer', () => {
-    const placed = {
-      ...grounded,
-      content: [
-        toolCall('web_grounding_enterprise'),
-        { ...text, text: 'Bis 4,5 h.\n\n::hinweise' },
-      ],
-    } as unknown as TMessage;
-
-    render(
-      <GroundingSources
-        message={placed}
-        searchResults={results([awmf], [hint('Kein Nystagmus.')])}
-      />,
-    );
-
-    expect(screen.queryByRole('region', { name: HINTS })).not.toBeInTheDocument();
-    expect(screen.getByRole('region', { name: SOURCES })).toBeInTheDocument();
-  });
-
-  it('adds nothing when no listed source backs the answer, which then is the hints as text', () => {
-    const blog = { position: 1, link: 'https://stub/blog', title: 'blog.example', official: false };
-
-    const { container } = render(
-      <GroundingSources
-        message={grounded}
-        searchResults={results([blog], [hint('Kein Nystagmus.')])}
-      />,
-    );
-
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it('waits with the hints until the agent has finished its answer', () => {
-    const { container } = render(
-      <GroundingSources
-        message={grounded}
-        searchResults={results([awmf], [hint('Kein Nystagmus.')])}
-        isSubmitting
-      />,
     );
 
     expect(container).toBeEmptyDOMElement();

@@ -9,9 +9,10 @@ const {
     parsePolicyConfig,
     buildGroundingPrompt,
     resultDomains,
+    hasListedResult,
     parseSourceBlock,
     mergeSources,
-    splitAnswer,
+    anchorClaims,
     formatAnswer,
     toOrganicSources,
 } = require('../util/groundingPolicy');
@@ -52,7 +53,7 @@ function loadPolicy() {
         warnOnce('web_grounding_enterprise has no exclusion list configured; searching without exclusions.');
     }
     if (!policy.sourceDomains.length) {
-        warnOnce('web_grounding_enterprise has no source list configured; every search result is used.');
+        warnOnce('web_grounding_enterprise has no source list configured; any result ends the search.');
     }
     return policy;
 }
@@ -72,7 +73,9 @@ class WebGroundingEnterprise extends Tool {
         super();
         this.name = 'web_grounding_enterprise';
         this.description =
-            'Use the GDPR-compliant \'web_grounding_enterprise\' tool to retrieve search results from the web.';
+            'GDPR-compliant web search for medical information that looks in the AWMF guideline register ' +
+            'and the AWMF societies first. Use it only when you do not know the topic well enough ' +
+            'or the user asks for a web search.';
         this.responseFormat = 'content_and_artifact';
 
         /* Used to initialize the Tool without necessary variables. */
@@ -166,63 +169,46 @@ class WebGroundingEnterprise extends Tool {
         }
     }
 
-    /** An empty result leaves nothing to cite, so it earns exactly one more attempt. */
+    /** One search, pointed at the AWMF register and its societies. Only when it brings back
+     * nothing from them does a general search follow; if that finds nothing, the first stands. */
     async _search(query) {
-        const request = contentsOf(buildGroundingPrompt(query));
-        const first = extractGroundingResponse((await this.generativeModel.generateContent(request)).response);
-        if (resultDomains(first.chunks).length) {
+        const search = async (awmfFirst) => {
+            const request = contentsOf(buildGroundingPrompt(query, { awmfFirst }));
+            return extractGroundingResponse((await this.generativeModel.generateContent(request)).response);
+        };
+        const first = await search(true);
+        const { sourceDomains } = this.policy;
+        const found = sourceDomains.length
+            ? hasListedResult(first.chunks, sourceDomains)
+            : resultDomains(first.chunks).length > 0;
+        if (found) {
             return first;
         }
-        logger.info('Web grounding returned no attributable results; retrying once.');
-        return extractGroundingResponse((await this.generativeModel.generateContent(request)).response);
+        logger.info('Web grounding found nothing from the AWMF register or its societies; searching generally.');
+        const general = await search(false);
+        return resultDomains(general.chunks).length || !resultDomains(first.chunks).length ? general : first;
     }
 
-    /** The text is what the agent reads; the artifact feeds the chips, the sources block and the
-     * hints panel, so unlisted statements pass through the agent only when no listed source
-     * backs anything and they are the answer. */
+    /** The text is what the agent reads; the artifact feeds LibreChat's Sources panel. */
     async _call(data, _runManager, config) {
         const { query } = data;
 
         try {
             const { text, chunks, supports } = await this._search(query);
             const { sources } = parseSourceBlock(text);
-            const { entries, extras, dropped, numbering } = mergeSources({
-                sources,
-                chunks,
-                supports,
-                sourceDomains: this.policy.sourceDomains,
-            });
+            const { entries, dropped, numbering } = mergeSources({ sources, chunks, supports });
             const turn = config?.toolCall?.turn ?? 0;
 
-            const { body, hints, unlisted } = splitAnswer({
-                text,
-                supports,
-                chunks,
-                entries,
-                extras,
-                numbering,
-                turn,
-            });
-            const shown = body !== '' ? entries : [];
             const answer = formatAnswer({
-                body,
-                entries: shown,
+                body: anchorClaims({ text, supports, chunks, entries, numbering, turn }),
+                entries,
                 dropped,
-                hasHints: hints.length > 0,
-                unlisted,
+                grounded: resultDomains(chunks).length > 0,
             });
-            // The other sources follow the kept ones, so hints and their chips can point at them.
-            let organic = [
-                ...toOrganicSources(shown),
-                ...toOrganicSources(extras, { listed: false, from: shown.length }),
-            ];
-            if (!shown.length && !unlisted) {
-                organic = [];
-            }
-            if (!organic.length && !hints.length) {
+            if (!entries.length) {
                 return [answer, undefined];
             }
-            return [answer, { [Tools.web_search]: { turn, organic, hints } }];
+            return [answer, { [Tools.web_search]: { turn, organic: toOrganicSources(entries) } }];
         } catch (error) {
             logger.error('Web Grounding for Enterprise request failed', error);
             return ['There was an error with the Web Grounding for Enterprise Search.', undefined];
