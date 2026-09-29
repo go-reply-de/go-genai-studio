@@ -11,8 +11,7 @@ const {
     resultDomains,
     parseSourceBlock,
     mergeSources,
-    anchorClaims,
-    unbackedStatements,
+    splitAnswer,
     formatAnswer,
     toOrganicSources,
 } = require('../util/groundingPolicy');
@@ -178,7 +177,9 @@ class WebGroundingEnterprise extends Tool {
         return extractGroundingResponse((await this.generativeModel.generateContent(request)).response);
     }
 
-    /** The text is what the agent reads; the artifact feeds LibreChat's Sources panel. */
+    /** The text is what the agent reads; the artifact feeds the chips, the sources block and the
+     * hints panel, so unlisted statements pass through the agent only when no listed source
+     * backs anything and they are the answer. */
     async _call(data, _runManager, config) {
         const { query } = data;
 
@@ -193,19 +194,31 @@ class WebGroundingEnterprise extends Tool {
             });
             const turn = config?.toolCall?.turn ?? 0;
 
-            // Passages a listed source backs keep their anchors; everything else becomes hints,
-            // anchored to the unlisted sources Google attributes them to.
-            const body = anchorClaims({ text, supports, chunks, entries, numbering, turn, cut: true });
-            const hints = unbackedStatements({ text, supports, chunks, entries, extras, numbering });
-            const cited = new Set(hints.flatMap((hint) => hint.uris));
-            const hintSources = extras.filter((extra) => cited.has(extra.uri));
-            const shown = entries.length > 0 && body !== '' ? entries : [];
-            const answer = formatAnswer({ body, entries: shown, dropped, hints, hintSources, turn });
-            const organic = toOrganicSources(shown, hintSources);
-            if (!organic.length) {
+            const { body, hints, unlisted } = splitAnswer({
+                text,
+                supports,
+                chunks,
+                entries,
+                extras,
+                numbering,
+                turn,
+            });
+            const shown = body !== '' ? entries : [];
+            const answer = formatAnswer({
+                body,
+                entries: shown,
+                dropped,
+                hasHints: hints.length > 0,
+                unlisted,
+            });
+            let organic = toOrganicSources(shown);
+            if (!shown.length && unlisted) {
+                organic = toOrganicSources(extras, { listed: false });
+            }
+            if (!organic.length && !hints.length) {
                 return [answer, undefined];
             }
-            return [answer, { [Tools.web_search]: { turn, organic } }];
+            return [answer, { [Tools.web_search]: { turn, organic, hints } }];
         } catch (error) {
             logger.error('Web Grounding for Enterprise request failed', error);
             return ['There was an error with the Web Grounding for Enterprise Search.', undefined];

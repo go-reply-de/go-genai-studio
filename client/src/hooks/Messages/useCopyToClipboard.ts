@@ -9,6 +9,7 @@ import {
   STANDALONE_PATTERN,
   INVALID_CITATION_REGEX,
 } from '~/utils/citations';
+import { stripGroundingMarkup } from '~/components/Messages/GroundingHints';
 
 type Source = {
   link: string;
@@ -62,6 +63,7 @@ export default function useCopyToClipboard({
           return acc;
         }, '');
       }
+      messageText = stripGroundingMarkup(messageText);
 
       // Early return if no search data
       if (!searchResults || Object.keys(searchResults).length === 0) {

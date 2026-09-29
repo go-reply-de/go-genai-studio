@@ -2,8 +2,7 @@ const {
   parsePolicyConfig,
   parseSourceBlock,
   mergeSources,
-  anchorClaims,
-  unbackedStatements,
+  splitAnswer,
   formatAnswer,
   buildGroundingPrompt,
 } = require('./groundingPolicy');
@@ -261,11 +260,11 @@ describe('mergeSources', () => {
   });
 });
 
-describe('anchorClaims', () => {
+describe('splitAnswer', () => {
   const bytes = (s) => Buffer.byteLength(s, 'utf8');
   /** A grounding support located the way Vertex reports it: UTF-8 byte offsets plus the text. */
-  const supportFor = (text, passage, groundingChunkIndices, from = 0) => {
-    const at = text.indexOf(passage, from);
+  const support = (text, passage, groundingChunkIndices) => {
+    const at = text.indexOf(passage);
     return {
       segment: {
         startIndex: bytes(text.slice(0, at)),
@@ -275,336 +274,358 @@ describe('anchorClaims', () => {
       groundingChunkIndices,
     };
   };
-  const entry = (domain) => ({ domain, uri: `stub-${domain}`, jahr: null, beschreibung: null });
-
-  test('puts an anchor behind each passage Google attributes to a kept source', () => {
-    const text =
-      'Bis 4,5 h nach Symptombeginn [1]. Danach nicht [1].\n[[QUELLEN]]\n1|awmf.org|2023|S2e';
-
-    const body = anchorClaims({
-      text,
-      supports: [supportFor(text, 'Bis 4,5 h nach Symptombeginn', [0])],
-      chunks: [chunk('awmf.org')],
-      entries: [entry('awmf.org')],
-      numbering: new Map([[1, 1]]),
-      turn: 2,
-    });
-
-    expect(body).toBe('Bis 4,5 h nach Symptombeginn. \\ue202turn2search0 Danach nicht.');
-  });
-
-  test('gives every attributed sentence its own anchor', () => {
-    const text = 'Feste Nahrung bis 6 h vorher. Klare Flüssigkeit bis 2 h vorher.';
-
-    const body = anchorClaims({
-      text,
-      supports: [
-        supportFor(text, 'Feste Nahrung bis 6 h vorher.', [0]),
-        supportFor(text, 'Klare Flüssigkeit bis 2 h vorher.', [1]),
-      ],
-      chunks: [chunk('awmf.org'), chunk('dgn.org')],
-      entries: [entry('awmf.org'), entry('dgn.org')],
-      numbering: new Map(),
-    });
-
-    expect(body).toBe(
-      'Feste Nahrung bis 6 h vorher. \\ue202turn0search0 Klare Flüssigkeit bis 2 h vorher. \\ue202turn0search1',
-    );
-  });
-
-  test('anchors the occurrence Google pointed at when a sentence repeats after umlauts', () => {
-    const text = 'Für Ältere: Dosis 2,5 mg. Für Jüngere gilt: Dosis 2,5 mg.';
-
-    const body = anchorClaims({
-      text,
-      supports: [supportFor(text, 'Dosis 2,5 mg.', [0], text.indexOf('Jüngere'))],
-      chunks: [chunk('awmf.org')],
-      entries: [entry('awmf.org')],
-      numbering: new Map(),
-    });
-
-    expect(body).toBe(
-      'Für Ältere: Dosis 2,5 mg. Für Jüngere gilt: Dosis 2,5 mg. \\ue202turn0search0',
-    );
-  });
-
-  test('merges nested passages that cite the same source into one anchor', () => {
-    const text = 'Bis 4,5 h ist die Lyse zugelassen, danach nur nach Bildgebung.';
-
-    const body = anchorClaims({
-      text,
-      supports: [
-        supportFor(text, 'Bis 4,5 h ist die Lyse zugelassen', [0]),
-        supportFor(text, text, [0]),
-      ],
-      chunks: [chunk('awmf.org')],
-      entries: [entry('awmf.org')],
-      numbering: new Map(),
-    });
-
-    expect(body).toBe(`${text} \\ue202turn0search0`);
-  });
-
-  test('groups several sources behind one passage', () => {
-    const text = 'Apixaban wird auf 2,5 mg reduziert.';
-
-    const body = anchorClaims({
-      text,
-      supports: [supportFor(text, text, [1, 0])],
-      chunks: [chunk('awmf.org'), chunk('dgn.org')],
-      entries: [entry('awmf.org'), entry('dgn.org')],
-      numbering: new Map(),
-    });
-
-    expect(body).toBe(`${text} \\ue200\\ue202turn0search0\\ue202turn0search1\\ue201`);
-  });
-
-  test('numbers an anchor by the source list, not by the search result order', () => {
-    const text = 'Laut DGN gilt X.';
-
-    const body = anchorClaims({
-      text,
-      supports: [supportFor(text, text, [0])],
-      chunks: [chunk('dgn.org'), chunk('awmf.org')],
-      entries: [entry('awmf.org'), entry('dgn.org')],
-      numbering: new Map(),
-    });
-
-    expect(body).toBe(`${text} \\ue202turn0search1`);
-  });
-
-  test('gives no anchor to a search result that is not among the kept sources', () => {
-    const text = 'Kassenleistung Y.';
-
-    const body = anchorClaims({
-      text,
-      supports: [supportFor(text, text, [1])],
-      chunks: [chunk('awmf.org'), chunk('aok.de')],
-      entries: [entry('awmf.org')],
-      numbering: new Map(),
-    });
-
-    expect(body).toBe(text);
-  });
-
-  test("removes the model's citation markers but keeps bracketed numbers that are not sources", () => {
-    const body = anchorClaims({
-      text: 'Studie [2023] zeigt Z [1].',
-      supports: [],
-      chunks: [],
-      entries: [],
-      numbering: new Map([[1, null]]),
-    });
-
-    expect(body).toBe('Studie [2023] zeigt Z.');
-  });
-
-  test('with cut, keeps only the passages a kept source backs', () => {
-    const text =
-      'Feste Nahrung bis 6 h vorher. Laut Blog auch Kaugummi. Klare Flüssigkeit bis 2 h vorher.';
-
-    const body = anchorClaims({
-      text,
-      supports: [
-        supportFor(text, 'Feste Nahrung bis 6 h vorher.', [0]),
-        supportFor(text, 'Laut Blog auch Kaugummi.', [1]),
-        supportFor(text, 'Klare Flüssigkeit bis 2 h vorher.', [0]),
-      ],
-      chunks: [chunk('awmf.org'), chunk('blog.example')],
-      entries: [entry('awmf.org')],
-      numbering: new Map(),
-      cut: true,
-    });
-
-    expect(body).toBe(
-      'Feste Nahrung bis 6 h vorher. \\ue202turn0search0 Klare Flüssigkeit bis 2 h vorher. \\ue202turn0search0',
-    );
-  });
-
-  test('with cut, keeps a paragraph break between passages from different paragraphs', () => {
-    const text = 'Erste Aussage.\n\nLaut Blog etwas anderes.\n\nZweite Aussage.';
-
-    const body = anchorClaims({
-      text,
-      supports: [supportFor(text, 'Erste Aussage.', [0]), supportFor(text, 'Zweite Aussage.', [0])],
-      chunks: [chunk('awmf.org')],
-      entries: [entry('awmf.org')],
-      numbering: new Map(),
-      cut: true,
-    });
-
-    expect(body).toBe('Erste Aussage. \\ue202turn0search0\nZweite Aussage. \\ue202turn0search0');
-  });
-
-  test('with cut, leaves nothing when no kept source backs any passage', () => {
-    const text = 'Nur ein Blog sagt das.';
-
-    const body = anchorClaims({
-      text,
-      supports: [supportFor(text, text, [0])],
-      chunks: [chunk('blog.example')],
-      entries: [],
-      numbering: new Map(),
-      cut: true,
-    });
-
-    expect(body).toBe('');
-  });
-});
-
-describe('unbackedStatements', () => {
-  const bytes = (s) => Buffer.byteLength(s, 'utf8');
-  const backedBy = (text, passage) => ({
-    segment: {
-      endIndex: bytes(text.slice(0, text.indexOf(passage) + passage.length)),
-      text: passage,
-    },
-    groundingChunkIndices: [0],
-  });
   const awmf = { domain: 'awmf.org', uri: 'stub-awmf.org', jahr: null, beschreibung: null };
-
-  test('collects what no kept source backs, as plain statements', () => {
-    const text =
-      'Feste Nahrung bis 6 h vorher [1]. Laut Blog auch Kaugummi erlaubt [2].\n' +
-      '* **Klare Flüssigkeit:** bis 2 h vorher.\n[[QUELLEN]]\n1|awmf.org|2023|S3\n2|blog.example|-|x';
-
-    const statements = unbackedStatements({
+  const blog = { domain: 'blog.example', uri: 'stub-blog.example', jahr: null, beschreibung: null };
+  const split = (text, supports) =>
+    splitAnswer({
       text,
-      supports: [backedBy(text, 'Feste Nahrung bis 6 h vorher')],
+      supports,
       chunks: [chunk('awmf.org'), chunk('blog.example')],
       entries: [awmf],
+      extras: [blog],
+      numbering: new Map(),
+    });
+
+  test('keeps a sentence an official source mostly covers and hands the rest to the hints', () => {
+    const text = 'Feste Nahrung bis 6 h vorher. Laut Blog auch Kaugummi erlaubt.';
+
+    const { body, hints } = split(text, [
+      support(text, 'Feste Nahrung bis 6 h', [0]),
+      support(text, 'Laut Blog auch Kaugummi erlaubt.', [1]),
+    ]);
+
+    expect(body).toBe('Feste Nahrung bis 6 h vorher. \\ue202turn0search0');
+    expect(hints).toEqual([
+      {
+        topic: null,
+        text: 'Laut Blog auch Kaugummi erlaubt.',
+        sources: [{ domain: 'blog.example', link: 'stub-blog.example' }],
+      },
+    ]);
+  });
+
+  test('leaves a sentence an official source covers less than half of to the hints', () => {
+    const text = 'Klare Flüssigkeit ist bis zwei Stunden vor der Narkose erlaubt.';
+
+    const { body, hints } = split(text, [support(text, 'Klare Flüssigkeit', [0])]);
+
+    expect(body).toBe('');
+    expect(hints.map((hint) => hint.text)).toEqual([text]);
+  });
+
+  test('keeps headings and list labels with their statements in both parts', () => {
+    const text = [
+      '### HINTS',
+      '* **Kopfimpulstest:**',
+      '    * *Zentral:* Die Augen bleiben stabil auf dem Ziel.',
+      '    * *Peripher:* Es zeigt sich eine Korrektursakkade.',
+    ].join('\n');
+
+    const { body, hints } = split(text, [
+      support(text, 'Die Augen bleiben stabil auf dem Ziel.', [0]),
+    ]);
+
+    expect(body).toBe(
+      '### HINTS\n- Kopfimpulstest:\n  - Zentral: Die Augen bleiben stabil auf dem Ziel. \\ue202turn0search0',
+    );
+    expect(hints).toEqual([
+      {
+        topic: 'Kopfimpulstest',
+        text: 'Peripher: Es zeigt sich eine Korrektursakkade.',
+        sources: [],
+      },
+    ]);
+  });
+
+  test('makes an inline label the topic of its sub-items without repeating it', () => {
+    const text = [
+      '* **Kopfimpulstest (KIT):** Prüft den vestibulookulären Reflex.',
+      '    * *Peripher:* Es zeigt sich eine Korrektursakkade.',
+    ].join('\n');
+
+    const { body, hints } = split(text, [
+      support(text, 'Prüft den vestibulookulären Reflex.', [0]),
+    ]);
+
+    expect(body).toBe(
+      '- Kopfimpulstest (KIT): Prüft den vestibulookulären Reflex. \\ue202turn0search0',
+    );
+    expect(hints).toEqual([
+      {
+        topic: 'Kopfimpulstest (KIT)',
+        text: 'Peripher: Es zeigt sich eine Korrektursakkade.',
+        sources: [],
+      },
+    ]);
+  });
+
+  test('treats a short question or colon line as a lead-in, not as a statement', () => {
+    const text =
+      'Wann ist der Test "zentral"?\nEin einziges zentrales Zeichen genügt für den Verdacht.';
+
+    expect(split(text, []).hints).toEqual([
+      {
+        topic: 'Wann ist der Test "zentral"?',
+        text: 'Ein einziges zentrales Zeichen genügt für den Verdacht.',
+        sources: [],
+      },
+    ]);
+  });
+
+  test('keeps a long sentence ending in a colon as a statement that leads its list', () => {
+    const text =
+      'Die Leitlinie empfiehlt am Krankenbett den erweiterten Test mit Hörprüfung:\n- Fingerreiben vor beiden Ohren.';
+
+    expect(split(text, []).hints).toEqual([
+      {
+        topic: null,
+        text: 'Die Leitlinie empfiehlt am Krankenbett den erweiterten Test mit Hörprüfung:',
+        sources: [],
+        items: [{ text: 'Fingerreiben vor beiden Ohren.', sources: [] }],
+      },
+    ]);
+  });
+
+  test('moves what an unbacked lead-in introduces along with it, even a backed item', () => {
+    const lead =
+      'Ein Patient gilt als zentral verdächtig, wenn mindestens eines der folgenden Kriterien erfüllt ist:';
+    const text = [
+      lead,
+      '',
+      '1. Der Kopfimpulstest ist normal.',
+      '',
+      '2. Es besteht eine akute Hörminderung.',
+    ].join('\n');
+
+    const { body, hints } = split(text, [
+      support(text, 'Es besteht eine akute Hörminderung.', [0]),
+    ]);
+
+    expect(body).toBe('');
+    expect(hints).toEqual([
+      {
+        topic: null,
+        text: lead,
+        sources: [],
+        items: [
+          { text: 'Der Kopfimpulstest ist normal.', sources: [] },
+          { text: 'Es besteht eine akute Hörminderung.', sources: [] },
+        ],
+      },
+    ]);
+  });
+
+  test('keeps a backed list under its backed lead-in and names the lead-in above the rest', () => {
+    const lead = 'Die Leitlinie nennt für die Therapie der ersten Wahl die folgenden Antibiotika:';
+    const text = [lead, '- Fosfomycin als Einmalgabe.', '- Pivmecillinam über drei Tage.'].join(
+      '\n',
+    );
+
+    const { body, hints } = split(text, [
+      support(text, lead, [0]),
+      support(text, 'Fosfomycin als Einmalgabe.', [0]),
+    ]);
+
+    expect(body).toBe(
+      `${lead} \\ue202turn0search0\n- Fosfomycin als Einmalgabe. \\ue202turn0search0`,
+    );
+    expect(hints).toEqual([
+      { topic: lead.replace(/:$/, ''), text: 'Pivmecillinam über drei Tage.', sources: [] },
+    ]);
+  });
+
+  test('ends a backed lead-in with a full stop when nothing it introduces is backed', () => {
+    const lead = 'Die Leitlinie nennt für die Therapie der ersten Wahl die folgenden Antibiotika:';
+    const text = [lead, '- Pivmecillinam über drei Tage.'].join('\n');
+
+    expect(split(text, [support(text, lead, [0])]).body).toBe(
+      `${lead.replace(/:$/, '.')} \\ue202turn0search0`,
+    );
+  });
+
+  test('lets a labelled sub-list under an unbacked lead-in keep its own label', () => {
+    const text = [
+      'Das Akronym HINTS steht für drei Tests am Krankenbett, die nacheinander erfolgen:',
+      '1. **Kopfimpuls:**',
+      '   * *Zentral:* Der Test ist normal.',
+    ].join('\n');
+
+    const { body, hints } = split(text, [support(text, 'Der Test ist normal.', [0])]);
+
+    expect(body).toBe('- Kopfimpuls:\n  - Zentral: Der Test ist normal. \\ue202turn0search0');
+    expect(hints.map((hint) => hint.text)).toEqual([
+      'Das Akronym HINTS steht für drei Tests am Krankenbett, die nacheinander erfolgen.',
+    ]);
+  });
+
+  test('keeps the label of a list item on each of its sentences', () => {
+    const text =
+      '- **Bei Sepsis ohne Schock:** Zunächst weitere Diagnostik. Bleibt der Verdacht, Antibiotika binnen drei Stunden.';
+    const later = 'Bleibt der Verdacht, Antibiotika binnen drei Stunden.';
+
+    expect(split(text, [support(text, later, [0])])).toEqual({
+      body: `- Bei Sepsis ohne Schock: ${later} \\ue202turn0search0`,
+      hints: [
+        { topic: null, text: 'Bei Sepsis ohne Schock: Zunächst weitere Diagnostik.', sources: [] },
+      ],
+      unlisted: '',
+    });
+    expect(split(text, [support(text, 'Zunächst weitere Diagnostik.', [0])]).hints).toEqual([
+      { topic: null, text: `Bei Sepsis ohne Schock: ${later}`, sources: [] },
+    ]);
+  });
+
+  test('names each hint by the whole path of labels above it', () => {
+    const text = [
+      '- **Kopfimpuls:**',
+      '  - **Befund:**',
+      '    - *Peripher:* Es zeigt sich eine Korrektursakkade.',
+      '- **Nystagmus:**',
+      '  - **Befund:**',
+      '    - *Peripher:* Der Nystagmus schlägt in eine Richtung.',
+    ].join('\n');
+
+    expect(split(text, []).hints.map((hint) => hint.topic)).toEqual([
+      'Kopfimpuls – Befund',
+      'Nystagmus – Befund',
+    ]);
+  });
+
+  test('writes simple formula signs as text', () => {
+    const text =
+      'Ab einem Alter von $\\ge$ 80 Jahren prüfen. Bei $< 15\\text{ ml/min}$ nicht anwenden.';
+
+    expect(split(text, []).hints.map((hint) => hint.text)).toEqual([
+      'Ab einem Alter von ≥ 80 Jahren prüfen. Bei < 15 ml/min nicht anwenden.',
+    ]);
+  });
+
+  test('turns table rows into statements with their column headers', () => {
+    const text = [
+      '| Test | Peripher | Zentral |',
+      '|---|---|---|',
+      '| Kopfimpuls | Sakkade | stabil |',
+    ].join('\n');
+
+    expect(split(text, []).hints.map((hint) => hint.text)).toEqual([
+      'Kopfimpuls; Peripher: Sakkade; Zentral: stabil',
+    ]);
+  });
+
+  test('drops every hint with a dose but keeps thresholds', () => {
+    const text = 'Amoxicillin 1 g dreimal täglich. Bei eGFR unter 30 ml/min nicht anwenden.';
+
+    expect(split(text, []).hints.map((hint) => hint.text)).toEqual([
+      'Bei eGFR unter 30 ml/min nicht anwenden.',
+    ]);
+  });
+
+  test('keeps a dose an official source backs', () => {
+    const text = 'Amoxicillin 1 g dreimal täglich.';
+
+    expect(split(text, [support(text, text, [0])]).body).toBe(
+      'Amoxicillin 1 g dreimal täglich. \\ue202turn0search0',
+    );
+  });
+
+  test('removes stray citation numbers so a label stays a label', () => {
+    const text =
+      'Kriterien für ein zentrales Ergebnis: [5]\n- Ein unauffälliger Kopfimpulstest spricht für zentral.';
+
+    expect(split(text, []).hints).toEqual([
+      {
+        topic: 'Kriterien für ein zentrales Ergebnis',
+        text: 'Ein unauffälliger Kopfimpulstest spricht für zentral.',
+        sources: [],
+      },
+    ]);
+  });
+
+  test('joins the unbacked sentences of one line into one hint', () => {
+    const text = 'Erster Satz ohne Beleg. Zweiter Satz ohne Beleg.';
+
+    expect(split(text, []).hints.map((hint) => hint.text)).toEqual([text]);
+  });
+
+  test('does not split at abbreviations or ordinals', () => {
+    const text = 'Gabe z. B. als Kurzinfusion. Mittel der 1. Wahl ist Fosfomycin.';
+
+    expect(split(text, [support(text, 'Mittel der 1. Wahl ist Fosfomycin.', [0])])).toEqual({
+      body: 'Mittel der 1. Wahl ist Fosfomycin. \\ue202turn0search0',
+      hints: [{ topic: null, text: 'Gabe z. B. als Kurzinfusion.', sources: [] }],
+      unlisted: '',
+    });
+  });
+
+  test('writes the hints as text along the outline, anchored on the unlisted sources', () => {
+    const text = [
+      '### Wells-Score',
+      '- **Hohe Wahrscheinlichkeit:** Mehr als 4 Punkte.',
+      '- Amoxicillin 1 g dreimal täglich.',
+      '- Ohne Beleg aus dem Modell selbst.',
+    ].join('\n');
+
+    const { body, unlisted } = split(text, [support(text, 'Mehr als 4 Punkte.', [1])]);
+
+    expect(body).toBe('');
+    expect(unlisted).toBe(
+      [
+        '### Wells-Score',
+        '- Hohe Wahrscheinlichkeit: Mehr als 4 Punkte. \\ue202turn0search0',
+        '- Ohne Beleg aus dem Modell selbst.',
+      ].join('\n'),
+    );
+  });
+
+  test('ends a list before the paragraph that follows it, so the two stay apart', () => {
+    const text = [
+      '- Aktive Krebserkrankung ergibt einen Punkt.',
+      'Klassifikation nach Punkten:',
+      '- Wahrscheinlich ab vier Punkten.',
+      'Danach folgt die Bildgebung.',
+    ].join('\n');
+    const backed = [
+      'Aktive Krebserkrankung ergibt einen Punkt.',
+      'Wahrscheinlich ab vier Punkten.',
+    ];
+
+    expect(
+      split(
+        text,
+        backed.map((b) => support(text, b, [0])),
+      ).body,
+    ).toBe(
+      [
+        '- Aktive Krebserkrankung ergibt einen Punkt. \\ue202turn0search0',
+        '',
+        'Klassifikation nach Punkten:',
+        '- Wahrscheinlich ab vier Punkten. \\ue202turn0search0',
+      ].join('\n'),
+    );
+    expect(split(text, []).unlisted).toBe('');
+  });
+
+  test('leaves the text empty when no source at all can be traced', () => {
+    expect(split('Nur Modellwissen ohne jede Quelle.', []).unlisted).toBe('');
+  });
+
+  test("removes the model's own citation markers from both parts", () => {
+    const text = 'Feste Nahrung bis 6 h vorher [1]. Laut Blog auch Kaugummi [2].';
+
+    const { body, hints } = splitAnswer({
+      text,
+      supports: [support(text, 'Feste Nahrung bis 6 h vorher', [0])],
+      chunks: [chunk('awmf.org'), chunk('blog.example')],
+      entries: [awmf],
+      extras: [blog],
       numbering: new Map([
         [1, 1],
         [2, null],
       ]),
     });
 
-    expect(statements.map((statement) => statement.text)).toEqual([
-      'Laut Blog auch Kaugummi erlaubt.',
-      'Klare Flüssigkeit: bis 2 h vorher.',
-    ]);
-  });
-
-  test('drops every sentence with a dose but keeps thresholds', () => {
-    const statements = unbackedStatements({
-      text: 'Amoxicillin 1 g dreimal täglich. Bei eGFR unter 30 ml/min nicht anwenden. Insulin 0,1 IE/kg/h.',
-      supports: [],
-      chunks: [],
-      entries: [],
-      numbering: new Map(),
-    });
-
-    expect(statements.map((statement) => statement.text)).toEqual([
-      'Bei eGFR unter 30 ml/min nicht anwenden.',
-    ]);
-  });
-
-  test('treats spelled-out units as doses too', () => {
-    const statements = unbackedStatements({
-      text: 'In der ersten Stunde 1 Liter Flüssigkeit. Danach langsamer Ausgleich nach Klinik.',
-      supports: [],
-      chunks: [],
-      entries: [],
-      numbering: new Map(),
-    });
-
-    expect(statements.map((statement) => statement.text)).toEqual([
-      'Danach langsamer Ausgleich nach Klinik.',
-    ]);
-  });
-
-  test('leaves a partly backed sentence to the backed text instead of splitting it', () => {
-    const text = '* **Gadobutrol** (z. B. Gadovist) gilt als bevorzugt.\nEin Satz ganz ohne Beleg.';
-
-    const statements = unbackedStatements({
-      text,
-      supports: [backedBy(text, 'Gadovist) gilt als bevorzugt')],
-      chunks: [chunk('awmf.org')],
-      entries: [awmf],
-      numbering: new Map(),
-    });
-
-    expect(statements.map((statement) => statement.text)).toEqual(['Ein Satz ganz ohne Beleg.']);
-  });
-
-  test('keeps an ordinal with its sentence', () => {
-    const text = 'Als Mittel der 1. Wahl gilt Fosfomycin.';
-
-    const statements = unbackedStatements({
-      text,
-      supports: [backedBy(text, 'Wahl gilt Fosfomycin')],
-      chunks: [chunk('awmf.org')],
-      entries: [awmf],
-      numbering: new Map(),
-    });
-
-    expect(statements).toEqual([]);
-  });
-
-  test('does not split at abbreviations', () => {
-    const statements = unbackedStatements({
-      text: 'Gabe z. B. als Kurzinfusion. Kontrolle ggf. nach 2 h.',
-      supports: [],
-      chunks: [],
-      entries: [],
-      numbering: new Map(),
-    });
-
-    expect(statements.map((statement) => statement.text)).toEqual([
-      'Gabe z. B. als Kurzinfusion. Kontrolle ggf. nach 2 h.',
-    ]);
-  });
-
-  test('leaves out headings, labels and sentence fragments', () => {
-    const text =
-      '### Therapie\nErste Wahl:\nEin Satz mit Beleg, sonst nichts.\nEin echter Satz ohne Beleg.';
-
-    const statements = unbackedStatements({
-      text,
-      supports: [backedBy(text, 'Ein Satz mit Beleg')],
-      chunks: [chunk('awmf.org')],
-      entries: [awmf],
-      numbering: new Map(),
-    });
-
-    expect(statements.map((statement) => statement.text)).toEqual(['Ein echter Satz ohne Beleg.']);
-  });
-
-  test('returns nothing when kept sources back the whole answer', () => {
-    const text = 'Feste Nahrung bis 6 h vorher.';
-
-    expect(
-      unbackedStatements({
-        text,
-        supports: [backedBy(text, text)],
-        chunks: [chunk('awmf.org')],
-        entries: [awmf],
-        numbering: new Map(),
-      }),
-    ).toEqual([]);
-  });
-
-  test('names the unlisted sources Google attributes a hint to', () => {
-    const text = 'Laut Leitlinie gilt A. Laut Blog gilt B.';
-    const blog = {
-      domain: 'blog.example',
-      uri: 'stub-blog.example',
-      jahr: null,
-      beschreibung: null,
-    };
-
-    const statements = unbackedStatements({
-      text,
-      supports: [{ ...backedBy(text, 'Laut Blog gilt B.'), groundingChunkIndices: [1] }],
-      chunks: [chunk('awmf.org'), chunk('blog.example')],
-      entries: [],
-      extras: [blog],
-      numbering: new Map(),
-    });
-
-    expect(statements).toEqual([
-      { text: 'Laut Leitlinie gilt A. Laut Blog gilt B.', uris: ['stub-blog.example'] },
-    ]);
+    expect(body).toBe('Feste Nahrung bis 6 h vorher. \\ue202turn0search0');
+    expect(hints.map((hint) => hint.text)).toEqual(['Laut Blog auch Kaugummi.']);
   });
 });
 
@@ -635,36 +656,15 @@ describe('formatAnswer', () => {
     expect(out).not.toMatch(/verifiziert|Register|geprüft/);
   });
 
-  test('adds the unofficial statements under their own heading, before the sources', () => {
-    const out = answer({
-      hints: [
-        { text: 'Aussage C.', uris: [] },
-        { text: 'Aussage D.', uris: [] },
-      ],
-    });
-
-    expect(out).toContain(
-      'A\n\nErgänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:\n- Aussage C.\n- Aussage D.\n\nQuellen:',
+  test('marks where the hints go, between the backed text and its sources', () => {
+    expect(answer({ hasHints: true })).toBe(
+      'A\n\n::hinweise\n\nQuellen:\n1. [awmf.org](stub-a) · 2023 · S3',
     );
   });
 
-  test('anchors a hint to its own source, numbered after the kept ones', () => {
-    const blog = { domain: 'blog.example', uri: 'stub-b' };
-
-    const out = answer({
-      hints: [{ text: 'Aussage C.', uris: ['stub-b'] }],
-      hintSources: [blog],
-      turn: 2,
-    });
-
-    expect(out).toContain('- Aussage C. \\ue202turn2search1');
-    expect(out).toContain('Quellen der Ergänzenden Hinweise:\n2. [blog.example](stub-b)');
-  });
-
-  test('keeps the unofficial statements behind the warning when no source backs the answer', () => {
-    expect(answer({ body: '', entries: [], hints: [{ text: 'Aussage C.', uris: [] }] })).toBe(
-      'WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.\n\n' +
-        'Ergänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:\n- Aussage C.',
+  test('hands over the text of the other sources, led by the note, when no listed source backs it', () => {
+    expect(answer({ body: '', entries: [], hasHints: true, unlisted: 'Ein Blog nennt 6 h.' })).toBe(
+      '::quellenvermerk[Diese Angaben sind nicht durch AWMF, Fachgesellschaften, Behörden (z. B. RKI, BfArM, EMA) oder die Fachinformation belegt. Sie stammen aus anderen Quellen oder lassen sich keiner Quelle zuordnen.]\n\nEin Blog nennt 6 h.',
     );
   });
 

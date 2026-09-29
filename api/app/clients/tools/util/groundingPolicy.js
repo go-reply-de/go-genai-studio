@@ -165,8 +165,6 @@ function mergeSources({ sources, chunks, supports, sourceDomains = [] }) {
 }
 
 const CITATION_MARKER = /\s*\[(\d+(?:\s*,\s*\d+)*)\]/g;
-const LEADING_MARKER = /^\s*\[\d+(?:\s*,\s*\d+)*\]/;
-const TRAILING_PUNCTUATION = /[.,;:!?)»"”]/;
 
 /** Vertex reports segment offsets as UTF-8 bytes; JS strings index UTF-16 code units. */
 function charIndexAt(text, byteOffset) {
@@ -189,22 +187,6 @@ function segmentRange(text, segment) {
   return at < 0 ? null : { start: at, end: at + passage.length };
 }
 
-/** Nested spans citing one source collapse into their outermost end. */
-function mergedEnds(ranges) {
-  const sorted = [...ranges].sort((a, b) => a.start - b.start || b.end - a.end);
-  const ends = [];
-  let current = null;
-  for (const range of sorted) {
-    if (current && range.start < current.end) {
-      current.end = Math.max(current.end, range.end);
-      continue;
-    }
-    current = { ...range };
-    ends.push(current);
-  }
-  return ends.map((range) => range.end);
-}
-
 /** Overlapping or touching passages become one. */
 function mergedRanges(ranges) {
   const merged = [];
@@ -219,21 +201,6 @@ function mergedRanges(ranges) {
   return merged;
 }
 
-/** An anchor goes after the model's own marker and the sentence's punctuation. */
-function snapPast(text, position, limit) {
-  let at = position;
-  for (;;) {
-    const marker = LEADING_MARKER.exec(text.slice(at, limit));
-    if (marker) {
-      at += marker[0].length;
-    } else if (at < limit && TRAILING_PUNCTUATION.test(text[at])) {
-      at += 1;
-    } else {
-      return at;
-    }
-  }
-}
-
 function anchorFor(entryIndices, turn) {
   const anchors = [...entryIndices]
     .sort((a, b) => a - b)
@@ -246,34 +213,6 @@ function bodyEndOf(raw) {
   return blockAt < 0 ? raw.length : blockAt;
 }
 
-/** Where Google says each kept source backs the answer, and those passages merged; a passage runs
- * up to where its anchor goes. */
-function backedPassages({ raw, bodyEnd, supports, chunks, entries }) {
-  const entryOfChunk = (chunks ?? []).map((c) =>
-    entries.findIndex((e) => e.uri === (c.web ?? c.retrievedContext ?? {}).uri),
-  );
-  const rangesByEntry = new Map();
-  for (const support of supports ?? []) {
-    const range = segmentRange(raw, support.segment);
-    if (!range || range.end > bodyEnd) {
-      continue;
-    }
-    for (const chunkIndex of support.groundingChunkIndices ?? []) {
-      const entryIndex = entryOfChunk[chunkIndex];
-      if (entryIndex == null || entryIndex < 0) {
-        continue;
-      }
-      rangesByEntry.set(entryIndex, [...(rangesByEntry.get(entryIndex) ?? []), range]);
-    }
-  }
-  const kept = mergedRanges(
-    [...rangesByEntry.values()]
-      .flat()
-      .map((r) => ({ start: r.start, end: snapPast(raw, r.end, bodyEnd) })),
-  );
-  return { rangesByEntry, kept };
-}
-
 /** The model's own `[n]` markers by start offset. Same rule as the numbering: `[2023]` is not one. */
 function citationMarkers(raw, bodyEnd, numbering) {
   const markers = new Map();
@@ -284,55 +223,6 @@ function citationMarkers(raw, bodyEnd, numbering) {
     }
   }
   return markers;
-}
-
-/** The answer body with a LibreChat citation anchor behind every passage Google attributes to a
- * kept source, numbered like the source list; the model's own `[n]` markers are dropped. With
- * `cut`, only those passages remain, so nothing an unlisted source contributed reaches the agent. */
-function anchorClaims({ text, supports, chunks, entries, numbering, turn = 0, cut = false }) {
-  const raw = String(text ?? '');
-  const bodyEnd = bodyEndOf(raw);
-  const backed = backedPassages({ raw, bodyEnd, supports, chunks, entries });
-  const { rangesByEntry } = backed;
-
-  const anchorsAt = new Map();
-  for (const [entryIndex, ranges] of rangesByEntry) {
-    for (const end of mergedEnds(ranges)) {
-      const at = snapPast(raw, end, bodyEnd);
-      anchorsAt.set(at, (anchorsAt.get(at) ?? new Set()).add(entryIndex));
-    }
-  }
-
-  const markers = citationMarkers(raw, bodyEnd, numbering);
-  // Without `cut` the whole body is one passage.
-  const kept = cut ? backed.kept : [{ start: 0, end: bodyEnd }];
-  const passageAt = (i, withEnd) =>
-    kept.findIndex((r) => i >= r.start && (withEnd ? i <= r.end : i < r.end));
-
-  let out = '';
-  let lastPassage = -1;
-  for (let i = 0; i <= bodyEnd; ) {
-    if (anchorsAt.has(i) && passageAt(i, true) >= 0) {
-      const before = out && !/\s$/.test(out) ? ' ' : '';
-      const after = i < bodyEnd && !/\s/.test(raw[i]) ? ' ' : '';
-      out += `${before}${anchorFor(anchorsAt.get(i), turn)}${after}`;
-    }
-    if (markers.has(i)) {
-      i = markers.get(i);
-      continue;
-    }
-    const passage = i < bodyEnd ? passageAt(i, false) : -1;
-    if (passage >= 0) {
-      if (lastPassage >= 0 && passage !== lastPassage) {
-        const gap = raw.slice(kept[lastPassage].end, kept[passage].start);
-        out = out.trimEnd() + (gap.includes('\n') ? '\n' : ' ');
-      }
-      out += raw[i];
-      lastPassage = passage;
-    }
-    i += 1;
-  }
-  return out.trim();
 }
 
 const ABBREVIATION =
@@ -354,32 +244,63 @@ function sentenceSpans(line) {
   spans.push([start, line.length]);
   return spans.filter(([from, to]) => line.slice(from, to).trim());
 }
+
 /** A number with a dose unit. Clearance and concentration units (`ml/min`, `mmol/l`, `mg/dl`) mark
  * thresholds, not doses, so they stay. */
 const DOSE =
   /\d(?:[\d.,]*\d)?\s*(?:(?:-|–|bis)\s*\d(?:[\d.,]*\d)?\s*)?(?:mg|µg|μg|mcg|ng|g|ml|l|IE|I\.\s?E\.|Einheiten|mmol|mval|Milligramm|Mikrogramm|Gramm|Milliliter|Litern?|Tabletten?|Tbl\.|Kapseln?|Ampullen?|Hübe|Hub|Tropfen)(?!\p{L})(?!\s*\/\s*(?:dl|l|min)(?!\p{L}))/iu;
 
-/** Every sentence no kept source backs any part of, as plain statements for the agent's hints
- * section, each with the extra (unlisted) sources Google attributes it to; a partly backed
- * sentence already lives in the backed text. Markup, the model's `[n]` markers, headings and
- * labels go, and so does every sentence with a dose. */
-function unbackedStatements({ text, supports, chunks, entries, extras = [], numbering }) {
-  const raw = String(text ?? '');
-  const bodyEnd = bodyEndOf(raw);
-  const { kept } = backedPassages({ raw, bodyEnd, supports, chunks, entries });
-  const markers = citationMarkers(raw, bodyEnd, numbering);
-  const backed = (from, to) => kept.some((range) => range.start < to && range.end > from);
-  const extraUris = new Set(extras.map((e) => e.uri));
-  const attributions = (supports ?? [])
-    .map((support) => ({
-      range: segmentRange(raw, support.segment),
-      uris: (support.groundingChunkIndices ?? [])
-        .map((i) => ((chunks ?? [])[i]?.web ?? (chunks ?? [])[i]?.retrievedContext ?? {}).uri)
-        .filter((uri) => extraUris.has(uri)),
-    }))
-    .filter((a) => a.range && a.uris.length);
-  const urisOf = (from, to) =>
-    attributions.filter((a) => a.range.start < to && a.range.end > from).flatMap((a) => a.uris);
+const HEADING_LINE = /^\s*#{1,6}\s+(.*)$/;
+const LIST_ITEM = /^(\s*)(?:[-*•+]|\d+[.)])\s+(.*)$/;
+const TABLE_ROW = /^\s*\|(.+)\|\s*$/;
+const TABLE_RULE = /^\s*\|?[\s:|-]*-{3,}[\s:|-]*\|?\s*$/;
+// A model's `[5]` that names no listed source would otherwise keep a label looking like text.
+const LEFTOVER_MARKER = /\s*\[\d{1,2}(?:\s*,\s*\d{1,2})*\]/g;
+
+/** `$\ge$ 80` reads as `≥ 80`; anything more involved stays as the model wrote it. */
+const MATH = /\$([^$\n]*\\[^$\n]*)\$/g;
+const MATH_SYMBOLS = {
+  ge: '≥',
+  geq: '≥',
+  le: '≤',
+  leq: '≤',
+  times: '×',
+  pm: '±',
+  cdot: '·',
+  approx: '≈',
+};
+const plainMath = (text) =>
+  text.replace(MATH, (span, inner) => {
+    const out = inner
+      .replace(/\\(?:text|mathrm)\{([^{}]*)\}/g, '$1')
+      .replace(/\\([a-z]+)/gi, (command, name) => MATH_SYMBOLS[name] ?? command)
+      .replace(/\\([%,; ])/g, (_, sign) => (sign === '%' ? '%' : ' '));
+    return /[\\{}^_]/.test(out) ? span : out.trim();
+  });
+
+const tidy = (text) =>
+  plainMath(text)
+    .replace(LEFTOVER_MARKER, '')
+    .replace(/\*|__|`/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/** A short line ending in ':' or '?' introduces what follows; a long one also says something. */
+const LABEL_LENGTH = 60;
+const introduces = (text) => /[:?]$/.test(text);
+const isLabel = (text) => introduces(text) && text.length <= LABEL_LENGTH;
+const labelOf = (text) => text.replace(/:$/, '').trim();
+/** `Kopfimpulstest (KIT): Zur Prüfung …` names what its sub-items are about. */
+const inlineLabelOf = (text) => {
+  const at = text.indexOf(': ');
+  const label = at > 0 ? text.slice(0, at) : '';
+  return label && label.length <= LABEL_LENGTH && !/[.!?]/.test(label) ? label : null;
+};
+
+/** The answer as statements: whole sentences and table rows, each with the headings, lead-ins
+ * and list labels above it, so a statement keeps its meaning wherever it ends up. A long line
+ * ending in ':' is both: a statement, and a `claim` context for what it introduces. */
+function outlineStatements(raw, bodyEnd, markers) {
   const plain = (from, to) => {
     let out = '';
     for (let i = from; i < to; ) {
@@ -390,30 +311,306 @@ function unbackedStatements({ text, supports, chunks, entries, extras = [], numb
       out += raw[i];
       i += 1;
     }
-    return out
-      .replace(/^\s*(?:[-*•]|\d+\.)\s+/, '')
-      .replace(/\*\*|__/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
+    return tidy(out);
   };
 
   const statements = [];
-  let lineStart = 0;
-  for (const line of raw.slice(0, bodyEnd).split('\n')) {
-    if (!/^\s*#/.test(line)) {
-      const sentences = sentenceSpans(line)
-        .map(([from, to]) => [lineStart + from, lineStart + to])
-        .filter(([from, to]) => !backed(from, to))
-        .map(([from, to]) => ({ text: plain(from, to), uris: urisOf(from, to) }))
-        .filter((sentence) => sentence.text && !DOSE.test(sentence.text));
-      const statement = sentences.map((sentence) => sentence.text).join(' ');
-      if (statement.length >= 12 && !statement.endsWith(':') && /^[\p{Lu}\d„"(]/u.test(statement)) {
-        statements.push({ text: statement, uris: [...new Set(sentences.flatMap((x) => x.uris))] });
+  let heading = null;
+  let leadIn = null;
+  let leadInUsed = false;
+  let leadInEnds = false;
+  let labels = [];
+  let header = null;
+  let offset = 0;
+  const lines = raw.slice(0, bodyEnd).split('\n');
+  lines.forEach((line, lineIndex) => {
+    const start = offset;
+    offset += line.length + 1;
+    const context = () => [
+      ...(heading ? [{ kind: 'heading', text: heading }] : []),
+      ...(leadIn ? [{ kind: 'leadIn', ...leadIn }] : []),
+      ...labels.map(({ indent: _, ...label }, depth) => ({ kind: 'label', ...label, depth })),
+    ];
+    if (!line.trim()) {
+      leadInEnds = leadIn != null && leadInUsed;
+      header = null;
+      return;
+    }
+    // A blank line between the items of one list does not end what introduced them.
+    if (leadInEnds && !LIST_ITEM.test(line) && !TABLE_ROW.test(line)) {
+      leadIn = null;
+    }
+    leadInEnds = false;
+    const h = HEADING_LINE.exec(line);
+    if (h) {
+      heading = labelOf(plain(start + line.length - h[1].length, start + line.length));
+      leadIn = null;
+      labels = [];
+      header = null;
+      return;
+    }
+    if (TABLE_RULE.test(line)) {
+      return;
+    }
+    const row = TABLE_ROW.exec(line);
+    if (row) {
+      const cells = row[1].split('|').map((cell) => tidy(cell));
+      if (!header) {
+        header = cells;
+        return;
+      }
+      const text = cells
+        .map((cell, i) => (i > 0 && header[i] ? `${header[i]}: ${cell}` : cell))
+        .filter(Boolean)
+        .join('; ');
+      statements.push({
+        from: start,
+        to: start + line.length,
+        text,
+        context: context(),
+        line: lineIndex,
+        item: true,
+      });
+      leadInUsed = true;
+      return;
+    }
+    header = null;
+
+    const item = LIST_ITEM.exec(line);
+    const contentStart = item ? start + line.length - item[2].length : start;
+    const content = item ? item[2] : line;
+    labels = item ? labels.filter((l) => l.indent < item[1].length) : [];
+    const whole = plain(contentStart, start + line.length);
+    if (isLabel(whole)) {
+      if (item) {
+        labels.push({ indent: item[1].length, text: labelOf(whole) });
+      } else {
+        leadIn = { text: labelOf(whole) };
+        leadInUsed = false;
+      }
+      return;
+    }
+    const inline = item ? inlineLabelOf(whole) : null;
+    const own = [];
+    for (const [from, to] of sentenceSpans(content)) {
+      const text = plain(contentStart + from, contentStart + to);
+      if (text) {
+        own.push({
+          from: contentStart + from,
+          to: contentStart + to,
+          text,
+          context: context(),
+          line: lineIndex,
+          item: Boolean(item),
+          // A later sentence of `Peripherer Befund: …` still speaks about that finding.
+          ...(inline && !text.startsWith(inline) ? { itemLabel: inline } : {}),
+        });
       }
     }
-    lineStart += line.length + 1;
-  }
+    statements.push(...own);
+    if (own.length && whole.endsWith(':')) {
+      const lead = own[own.length - 1];
+      lead.leads = true;
+      const claim = { text: inline ?? labelOf(lead.text), line: lineIndex, claim: true };
+      if (!item) {
+        leadIn = claim;
+        leadInUsed = false;
+        return;
+      }
+      labels.push({ indent: item[1].length, ...claim });
+    } else if (inline) {
+      labels.push({ indent: item[1].length, text: inline, line: lineIndex });
+    }
+    leadInUsed = true;
+  });
   return statements;
+}
+
+/** Google's attributions as character ranges, each with the kept sources (entry indices) and the
+ * extra, unlisted sources (uris) it names. */
+function attributionsOf({ raw, bodyEnd, supports, chunks, entries, extras }) {
+  const uriOf = (i) => ((chunks ?? [])[i]?.web ?? (chunks ?? [])[i]?.retrievedContext ?? {}).uri;
+  const extraUris = new Set(extras.map((e) => e.uri));
+  return (supports ?? [])
+    .map((support) => {
+      const uris = (support.groundingChunkIndices ?? []).map(uriOf);
+      return {
+        range: segmentRange(raw, support.segment),
+        kept: [...new Set(uris.map((uri) => entries.findIndex((e) => e.uri === uri)))].filter(
+          (i) => i >= 0,
+        ),
+        extra: [...new Set(uris.filter((uri) => extraUris.has(uri)))],
+      };
+    })
+    .filter((a) => a.range && a.range.end <= bodyEnd && (a.kept.length || a.extra.length));
+}
+
+const OFFICIAL_SHARE = 0.5;
+
+/** Statements along the outline they came from: headings, lead-ins and list labels come along
+ * once, and each sentence ends with the anchors `anchorsOf` gives it. */
+function renderOutline(statements, anchorsOf, turn) {
+  const introduced = new Set(
+    statements.flatMap((s) => s.context.filter((c) => c.claim).map((c) => c.line)),
+  );
+  const lines = [];
+  // A line right under a list item or paragraph would continue it, so paragraphs get a blank line.
+  const push = (line) => {
+    const previous = lines[lines.length - 1];
+    if (!/^\s*- /.test(line) && previous && !previous.startsWith('#')) {
+      lines.push('');
+    }
+    lines.push(line);
+  };
+  const emitted = new Set();
+  let path = [];
+  let last = null;
+  for (const st of statements) {
+    const same = (a, b) => a && b && a.kind === b.kind && a.text === b.text;
+    let common = 0;
+    while (common < path.length && same(path[common], st.context[common])) {
+      common += 1;
+    }
+    for (const c of st.context.slice(common)) {
+      if (c.claim) {
+        // A lead-in that says something is in the text as a statement of its own.
+      } else if (c.kind === 'heading') {
+        lines.push('', `### ${c.text}`);
+      } else if (c.kind === 'leadIn') {
+        push(introduces(c.text) ? c.text : `${c.text}:`);
+      } else if (c.line == null || !emitted.has(c.line)) {
+        push(`${'  '.repeat(c.depth)}- ${introduces(c.text) ? c.text : `${c.text}:`}`);
+      }
+    }
+    const depth = st.context.filter((c) => c.kind === 'label').length;
+    const joins = last && last.line === st.line && common === st.context.length;
+    const said = st.leads && !introduced.has(st.line) ? st.text.replace(/:$/, '.') : st.text;
+    const labelled = !joins && st.itemLabel ? `${st.itemLabel}: ${said}` : said;
+    const anchors = anchorsOf(st);
+    const sentence = anchors.length ? `${labelled} ${anchorFor(anchors, turn)}` : labelled;
+    if (joins) {
+      lines[lines.length - 1] += ` ${sentence}`;
+    } else {
+      push(st.item || depth ? `${'  '.repeat(depth)}- ${sentence}` : sentence);
+    }
+    path = st.context;
+    last = st;
+    emitted.add(st.line);
+  }
+  return lines.join('\n').trim();
+}
+
+/** Splits the answer along its outline. A statement kept sources cover at least half of goes to
+ * the backed text, with its anchors and its headings, unless it depends on an unbacked lead-in;
+ * the rest becomes hints, grouped by the label above them and nested under their lead-in, with
+ * the unlisted sources Google names and never with a dose. `unlisted` is the same hints as text
+ * with anchors on `extras`, for an answer no kept source backs. */
+function splitAnswer({ text, supports, chunks, entries, extras = [], numbering, turn = 0 }) {
+  const raw = String(text ?? '');
+  const bodyEnd = bodyEndOf(raw);
+  const markers = citationMarkers(raw, bodyEnd, numbering);
+  const attributions = attributionsOf({ raw, bodyEnd, supports, chunks, entries, extras });
+  const extraByUri = new Map(extras.map((e) => [e.uri, e]));
+
+  const classified = outlineStatements(raw, bodyEnd, markers).map((st) => {
+    const overlapping = attributions.filter((a) => a.range.start < st.to && a.range.end > st.from);
+    const keptRanges = overlapping
+      .filter((a) => a.kept.length)
+      .map((a) => ({ start: Math.max(a.range.start, st.from), end: Math.min(a.range.end, st.to) }));
+    const share =
+      mergedRanges(keptRanges).reduce((sum, r) => sum + r.end - r.start, 0) /
+      Math.max(1, st.to - st.from);
+    return {
+      ...st,
+      official: share >= OFFICIAL_SHARE,
+      kept: new Set(overlapping.flatMap((a) => a.kept)),
+      extra: [...new Set(overlapping.flatMap((a) => a.extra))],
+    };
+  });
+  // A lead-in precedes what it introduces, so its verdict is known by then. Only what it
+  // introduces directly depends on it; a labelled sub-list reads on its own.
+  const leadOfficial = new Map();
+  const introducer = (st) => (st.context.at(-1)?.claim ? st.context.at(-1).line : null);
+  for (const st of classified) {
+    if (introducer(st) != null && !leadOfficial.get(introducer(st))) {
+      st.official = false;
+    }
+    if (st.leads) {
+      leadOfficial.set(st.line, st.official);
+    }
+  }
+  const body = renderOutline(
+    classified.filter((s) => s.official),
+    (st) => [...st.kept],
+    turn,
+  );
+
+  const hints = [];
+  const placed = [];
+  const hintOfLead = new Map();
+  const shown = (c) => !c.claim || leadOfficial.get(c.line);
+  // The labels above a hint, so `Befund` under two different tests stays two topics.
+  const topicOf = (st) => {
+    const path = st.context.filter(
+      (c, i) =>
+        c.kind !== 'heading' &&
+        shown(c) &&
+        (c.kind === 'label' || !c.claim || i === st.context.length - 1),
+    );
+    return path.length
+      ? path.map((c) => c.text).join(' – ')
+      : (st.context.find((c) => c.kind === 'heading')?.text ?? null);
+  };
+  for (const st of classified.filter((s) => !s.official && !DOSE.test(s.text))) {
+    const sources = st.extra.map((uri) => ({ domain: extraByUri.get(uri).domain, link: uri }));
+    const parent = hintOfLead.get(introducer(st)) ?? null;
+    const siblings = parent ? parent.items : hints;
+    const previous = siblings[siblings.length - 1];
+    if (previous && previous.line === st.line) {
+      previous.text += ` ${st.text}`;
+      previous.sources.push(
+        ...sources.filter((s) => !previous.sources.some((p) => p.link === s.link)),
+      );
+    } else if (st.text.length >= 12 && /^[\p{Lu}\d„"(]/u.test(st.text)) {
+      const text = st.itemLabel ? `${st.itemLabel}: ${st.text}` : st.text;
+      const topic = topicOf(st);
+      siblings.push(
+        parent
+          ? { text, sources, line: st.line }
+          : { topic, text, sources, line: st.line, items: [] },
+      );
+    } else {
+      continue;
+    }
+    placed.push(st);
+    if (st.leads) {
+      hintOfLead.set(st.line, parent ?? hints[hints.length - 1]);
+    }
+  }
+  const extraIndex = new Map(extras.map((e, i) => [e.uri, i]));
+
+  // A colon only reads right with something after it.
+  const closed = (text, open) => (open ? text : text.replace(/:$/, '.'));
+  return {
+    body,
+    // Text that no source at all can be traced to is the search model's own knowledge.
+    unlisted: placed.some((st) => st.extra.length)
+      ? renderOutline(placed, (st) => st.extra.map((uri) => extraIndex.get(uri)), turn)
+      : '',
+    hints: hints.map(({ topic, text, sources, items }) => ({
+      topic,
+      text: closed(text, items.length > 0),
+      sources,
+      ...(items.length
+        ? {
+            items: items.map((item, i) => ({
+              text: closed(item.text, i < items.length - 1),
+              sources: item.sources,
+            })),
+          }
+        : {}),
+    })),
+  };
 }
 
 function formatEntry(entry) {
@@ -423,54 +620,40 @@ function formatEntry(entry) {
 }
 
 /** The source list as LibreChat citation data: only the domain and link Google returned, so a chip
- * reads `awmf.org` and never carries model-written year or description. The hints' sources follow,
- * marked so the sources block under the answer can leave them out. */
-function toOrganicSources(entries, hintSources = []) {
-  const organic = (entry, i) => ({
+ * reads `awmf.org` and never carries model-written year or description. A source off the list
+ * keeps its chip but stays out of the sources block. */
+function toOrganicSources(entries, { listed = true } = {}) {
+  return entries.map((entry, i) => ({
     position: i + 1,
     link: entry.uri,
     title: entry.domain,
     attribution: entry.domain,
-  });
-  return [
-    ...entries.map(organic),
-    ...hintSources.map((entry, i) => ({ ...organic(entry, entries.length + i), official: false })),
-  ];
+    ...(listed ? {} : { official: false }),
+  }));
 }
 
-const UNOFFICIAL_HEADING =
-  'Ergänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:';
+/** The line the agent sets before its disclaimer; the chat shows the hints panel in its place. */
+const HINTS_MARKER = '::hinweise';
 
-/** Backed text with its sources, then what no kept source backs under its own heading, anchored to
- * the unlisted sources Google attributes it to. Without a kept source the warning leads. Anchors
- * number the sources as `toOrganicSources` lists them: kept ones first, then the hints'. */
-function formatAnswer({ body, entries, dropped, hints = [], hintSources = [], turn = 0 }) {
-  const indexOf = new Map(hintSources.map((e, k) => [e.uri, entries.length + k]));
-  const hintLines = hints.map((hint) => {
-    const indices = hint.uris.map((uri) => indexOf.get(uri)).filter((i) => i != null);
-    return `- ${hint.text}${indices.length ? ` ${anchorFor(new Set(indices), turn)}` : ''}`;
-  });
-  const hintParts = hints.length ? [[UNOFFICIAL_HEADING, ...hintLines].join('\n')] : [];
-  const hintSourceList = hintSources.length
-    ? [
-        [
-          'Quellen der Ergänzenden Hinweise:',
-          ...hintSources.map((e, k) => `${entries.length + k + 1}. [${e.domain}](${e.uri})`),
-        ].join('\n'),
-      ]
-    : [];
+/** Opens an answer no listed source backs; the chat shows the line as a highlighted note, worded
+ * like the hints panel's explanation. */
+const UNLISTED_NOTE =
+  '::quellenvermerk[Diese Angaben sind nicht durch AWMF, Fachgesellschaften, Behörden (z. B. RKI, BfArM, EMA) oder die Fachinformation belegt. Sie stammen aus anderen Quellen oder lassen sich keiner Quelle zuordnen.]';
+
+/** Backed text and its sources for the agent. Hints never reach it; it only gets the marker for
+ * where the panel goes. Without a kept source, the text of the other sources is the answer, led
+ * by the note; without that either, only the warning. */
+function formatAnswer({ body, entries, dropped, hasHints = false, unlisted = '' }) {
   if (!entries.length) {
-    return [
-      'WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.',
-      ...hintParts,
-      ...hintSourceList,
-    ].join('\n\n');
+    return unlisted
+      ? [UNLISTED_NOTE, unlisted].join('\n\n')
+      : 'WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.';
   }
+  const marker = hasHints ? [HINTS_MARKER] : [];
   const parts = [
     body,
-    ...hintParts,
+    ...marker,
     ['Quellen:', ...entries.map((e, i) => `${i + 1}. ${formatEntry(e)}`)].join('\n'),
-    ...hintSourceList,
   ];
 
   if (dropped.length) {
@@ -490,8 +673,8 @@ module.exports = {
   resultDomains,
   parseSourceBlock,
   mergeSources,
-  anchorClaims,
-  unbackedStatements,
+  splitAnswer,
   formatAnswer,
   toOrganicSources,
+  HINTS_MARKER,
 };

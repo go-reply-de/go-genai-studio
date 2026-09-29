@@ -18,6 +18,11 @@ const grounded = {
   conversationId: 'conv-1',
   content: [toolCall('web_grounding_enterprise'), text],
 } as unknown as TMessage;
+const SOURCES = 'Quellen und weiterführende Literatur';
+const HINTS = 'Ergänzende Hinweise – bitte eigenständig prüfen';
+const hint = (value: string) => ({ topic: null, text: value, sources: [] });
+const results = (organic: object[], hints: object[]) =>
+  ({ '0': { turn: 0, organic, hints } }) as unknown as Record<string, SearchResultData>;
 const links = () =>
   screen.getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')]);
 
@@ -98,6 +103,61 @@ describe('GroundingSources', () => {
 
     const { container } = render(
       <GroundingSources message={other} searchResults={searchResults} />,
+    );
+
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('shows the hints above the sources when the agent left out the marker', () => {
+    const withHints = results([awmf], [hint('Kein Nystagmus.')]);
+
+    render(<GroundingSources message={grounded} searchResults={withHints} />);
+
+    const hints = screen.getByRole('region', { name: HINTS });
+    const sources = screen.getByRole('region', { name: SOURCES });
+    expect(hints.compareDocumentPosition(sources) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('leaves the hints to the marker the agent placed in its answer', () => {
+    const placed = {
+      ...grounded,
+      content: [
+        toolCall('web_grounding_enterprise'),
+        { ...text, text: 'Bis 4,5 h.\n\n::hinweise' },
+      ],
+    } as unknown as TMessage;
+
+    render(
+      <GroundingSources
+        message={placed}
+        searchResults={results([awmf], [hint('Kein Nystagmus.')])}
+      />,
+    );
+
+    expect(screen.queryByRole('region', { name: HINTS })).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: SOURCES })).toBeInTheDocument();
+  });
+
+  it('adds nothing when no listed source backs the answer, which then is the hints as text', () => {
+    const blog = { position: 1, link: 'https://stub/blog', title: 'blog.example', official: false };
+
+    const { container } = render(
+      <GroundingSources
+        message={grounded}
+        searchResults={results([blog], [hint('Kein Nystagmus.')])}
+      />,
+    );
+
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('waits with the hints until the agent has finished its answer', () => {
+    const { container } = render(
+      <GroundingSources
+        message={grounded}
+        searchResults={results([awmf], [hint('Kein Nystagmus.')])}
+        isSubmitting
+      />,
     );
 
     expect(container).toBeEmptyDOMElement();

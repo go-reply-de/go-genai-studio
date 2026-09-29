@@ -139,6 +139,7 @@ describe('WebGroundingEnterprise', () => {
             attribution: 'awmf.org',
           },
         ],
+        hints: [],
       },
     });
   });
@@ -194,13 +195,10 @@ describe('WebGroundingEnterprise', () => {
     const { content: out } = await invokeTool(toolWith(search));
 
     expect(search.asked).toHaveLength(2);
-    expect(out).toBe(
-      'WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.\n\n' +
-        'Ergänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:\n- Zweiter Versuch.',
-    );
+    expect(out).toBe('WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.');
   });
 
-  test('moves what only unlisted sources back into the hints, with their chips but without doses', async () => {
+  test('hands what only unlisted sources back to the hints panel, never to the agent', async () => {
     const listed = 'Bis 4,5 h nach Symptombeginn.';
     const other = 'Ein Blog nennt 6 h.';
     const dose = 'Dort stehen 90 mg als Dosis.';
@@ -221,18 +219,24 @@ describe('WebGroundingEnterprise', () => {
       toolWith(stubModel([response]), { sourceDomains: ['awmf.org'] }),
     );
 
-    expect(content).toContain(`${listed} \\ue202turn0search0`);
-    expect(content).toContain(
-      `Ergänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:\n- ${other} \\ue202turn0search1`,
-    );
-    expect(content).not.toContain('90 mg');
-    expect(artifact.web_search.organic.map(({ title, official }) => [title, official])).toEqual([
-      ['awmf.org', undefined],
-      ['blog.example', false],
+    expect(content).toContain(`${listed} \\ue202turn0search0\n\n::hinweise`);
+    expect(content).not.toContain(other);
+    expect(artifact.web_search.organic.map((source) => source.title)).toEqual(['awmf.org']);
+    expect(artifact.web_search.hints).toEqual([
+      {
+        topic: null,
+        text: other,
+        sources: [
+          {
+            domain: 'blog.example',
+            link: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/blog.example',
+          },
+        ],
+      },
     ]);
   });
 
-  test('answers with the warning and the hints when no listed source was found', async () => {
+  test('answers with the text of the other sources, led by the note, when no listed source was found', async () => {
     const search = stubModel([
       groundedResponse('Ein Blog nennt 6 h [1].\n[[QUELLEN]]\n1|blog.example|-|Blog', [
         'blog.example',
@@ -244,13 +248,18 @@ describe('WebGroundingEnterprise', () => {
     );
 
     expect(search.asked).toHaveLength(1);
-    expect(content).toContain(
-      'WARNUNG: Diese Antwort ist nicht durch eine Websuche belegt.\n\n' +
-        'Ergänzende Hinweise ohne offizielle Quelle – bitte eigenständig prüfen:\n- Ein Blog nennt 6 h. \\ue202turn0search0',
+    expect(content).toBe(
+      '::quellenvermerk[Diese Angaben sind nicht durch AWMF, Fachgesellschaften, Behörden (z. B. RKI, BfArM, EMA) oder die Fachinformation belegt. Sie stammen aus anderen Quellen oder lassen sich keiner Quelle zuordnen.]\n\nEin Blog nennt 6 h. \\ue202turn0search0',
     );
-    expect(artifact.web_search.organic.map(({ title, official }) => [title, official])).toEqual([
-      ['blog.example', false],
+    expect(content).not.toContain('::hinweise');
+    expect(artifact.web_search.organic).toEqual([
+      expect.objectContaining({
+        title: 'blog.example',
+        attribution: 'blog.example',
+        official: false,
+      }),
     ]);
+    expect(artifact.web_search.hints.map((hint) => hint.text)).toEqual(['Ein Blog nennt 6 h.']);
   });
 
   test('drops a cited source the search never returned and numbers the rest', async () => {
@@ -263,7 +272,7 @@ describe('WebGroundingEnterprise', () => {
 
     const { content: out } = await invokeTool(toolWith(search));
 
-    expect(out).toContain('A gilt. B gilt. C gilt.');
+    expect(out).toMatch(/^A gilt\. .*B gilt\. .*C gilt\. /);
     expect(out).toMatch(/1\. \[awmf\.org\]\([^)]*\)[^\n]*\n2\. \[dgn\.org\]/);
     expect(out).not.toContain('erfunden.de');
     expect(out).toMatch(/1 zitierte Quelle wurde entfernt/);
