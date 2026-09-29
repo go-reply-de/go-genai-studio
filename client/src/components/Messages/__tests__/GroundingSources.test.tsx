@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { ContentTypes } from 'librechat-data-provider';
 import type { SearchResultData, TMessage } from 'librechat-data-provider';
@@ -116,6 +116,26 @@ describe('GroundingSources', () => {
     const hints = screen.getByRole('region', { name: HINTS });
     const sources = screen.getByRole('region', { name: SOURCES });
     expect(hints.compareDocumentPosition(sources) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('shows above the sources only the hints of sections the agent did not place', () => {
+    const placedOne = {
+      ...grounded,
+      content: [
+        toolCall('web_grounding_enterprise'),
+        { ...text, text: 'Bis 4,5 h.\n\n::hinweise{abschnitt=0-1}' },
+      ],
+    } as unknown as TMessage;
+    const sectioned = [
+      { ...hint('Eine zu rasche Senkung ist zu vermeiden.'), section: '0-1' },
+      { ...hint('Unter Insulin droht eine Hypokaliämie.'), section: '0-2' },
+    ];
+
+    render(<GroundingSources message={placedOne} searchResults={results([awmf], sectioned)} />);
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(HINTS) }));
+
+    expect(screen.getByText('Unter Insulin droht eine Hypokaliämie.')).toBeInTheDocument();
+    expect(screen.queryByText('Eine zu rasche Senkung ist zu vermeiden.')).not.toBeInTheDocument();
   });
 
   it('leaves the hints to the marker the agent placed in its answer', () => {

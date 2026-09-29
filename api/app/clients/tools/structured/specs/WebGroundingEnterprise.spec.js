@@ -219,9 +219,16 @@ describe('WebGroundingEnterprise', () => {
       toolWith(stubModel([response]), { sourceDomains: ['awmf.org'] }),
     );
 
-    expect(content).toContain(`${listed} \\ue202turn0search0\n\n::hinweise`);
+    expect(content).toContain(
+      `${listed} \\ue202turn0search0\n\n::hinweise{abschnitt=0-1}\n\n::hinweise\n\nQuellen:`,
+    );
     expect(content).not.toContain(other);
-    expect(artifact.web_search.organic.map((source) => source.title)).toEqual(['awmf.org']);
+    // The blog follows the kept source, marked off the list, so the panel can show it as a chip.
+    expect(artifact.web_search.organic).toEqual([
+      expect.objectContaining({ position: 1, title: 'awmf.org' }),
+      expect.objectContaining({ position: 2, title: 'blog.example', official: false }),
+    ]);
+    expect(artifact.web_search.organic[0]).not.toHaveProperty('official');
     expect(artifact.web_search.hints).toEqual([
       {
         topic: null,
@@ -232,6 +239,7 @@ describe('WebGroundingEnterprise', () => {
             link: 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/blog.example',
           },
         ],
+        section: '0-1',
       },
     ]);
   });

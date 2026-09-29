@@ -276,7 +276,7 @@ describe('splitAnswer', () => {
   };
   const awmf = { domain: 'awmf.org', uri: 'stub-awmf.org', jahr: null, beschreibung: null };
   const blog = { domain: 'blog.example', uri: 'stub-blog.example', jahr: null, beschreibung: null };
-  const split = (text, supports) =>
+  const placed = (text, supports) =>
     splitAnswer({
       text,
       supports,
@@ -285,6 +285,13 @@ describe('splitAnswer', () => {
       extras: [blog],
       numbering: new Map(),
     });
+  // Most tests check what goes where; where the hint blocks sit has tests of its own.
+  const unplaced = ({ body, hints, unlisted }) => ({
+    body: body.replace(/\n*^ *::hinweise\{[^}]*\}$/gm, ''),
+    hints: hints.map(({ section: _section, lead: _lead, ...hint }) => hint),
+    unlisted,
+  });
+  const split = (text, supports) => unplaced(placed(text, supports));
 
   test('keeps a sentence an official source mostly covers and hands the rest to the hints', () => {
     const text = 'Feste Nahrung bis 6 h vorher. Laut Blog auch Kaugummi erlaubt.';
@@ -458,6 +465,34 @@ describe('splitAnswer', () => {
     ]);
   });
 
+  test('nests the sub-points of an unbacked item under it', () => {
+    const lead = 'Kontrastmittel werden nach ihrer Stabilität in drei Gruppen eingeteilt:';
+    const text = [
+      lead,
+      '- **Hohes Risiko:** Gadodiamid und Gadoversetamid.',
+      '  - **Empfehlung:** Die Zulassung ist ausgesetzt.',
+      '- **Mittleres Risiko:** Gadobensäure.',
+      '  - **Empfehlung:** Nur für die Leber zugelassen.',
+    ].join('\n');
+
+    const { hints } = split(text, [support(text, lead, [0])]);
+
+    expect(hints).toEqual([
+      {
+        topic: lead.replace(/:$/, ''),
+        text: 'Hohes Risiko: Gadodiamid und Gadoversetamid.',
+        sources: [],
+        items: [{ text: 'Empfehlung: Die Zulassung ist ausgesetzt.', sources: [] }],
+      },
+      {
+        topic: lead.replace(/:$/, ''),
+        text: 'Mittleres Risiko: Gadobensäure.',
+        sources: [],
+        items: [{ text: 'Empfehlung: Nur für die Leber zugelassen.', sources: [] }],
+      },
+    ]);
+  });
+
   test('keeps the label of a list item on each of its sentences', () => {
     const text =
       '- **Bei Sepsis ohne Schock:** Zunächst weitere Diagnostik. Bleibt der Verdacht, Antibiotika binnen drei Stunden.';
@@ -547,6 +582,127 @@ describe('splitAnswer', () => {
     expect(split(text, []).hints.map((hint) => hint.text)).toEqual([text]);
   });
 
+  test('leaves out a sentence that only introduces what is elsewhere and has no source', () => {
+    const text = [
+      'Die Leitlinie nennt für die Akuttherapie die folgenden zentralen Säulen:',
+      '### Insulin',
+      '- Die Blutglukose soll langsam sinken.',
+    ].join('\n');
+
+    expect(split(text, [support(text, 'Die Blutglukose soll langsam sinken.', [0])]).hints).toEqual(
+      [],
+    );
+  });
+
+  test('does not split at e. V. either', () => {
+    const text = 'Herausgeber ist die Deutsche Gesellschaft für Geriatrie e. V. in Köln.';
+
+    expect(split(text, []).hints.map((hint) => hint.text)).toEqual([text]);
+  });
+
+  test('sets each hint block under the backed part of its own list item', () => {
+    const text = [
+      'Die Behandlung stützt sich auf folgende Kernprinzipien:',
+      '- **Rehydrierung:**',
+      '  - Initialtherapie mit einem Liter.',
+      '  - Eine zu rasche Senkung ist zu vermeiden.',
+      '- **Kalium:**',
+      '  - Kalium früh ersetzen.',
+      '  - Unter Insulin droht eine Hypokaliämie.',
+    ].join('\n');
+
+    const { body, hints } = placed(text, [
+      support(text, 'Initialtherapie mit einem Liter.', [0]),
+      support(text, 'Eine zu rasche Senkung ist zu vermeiden.', [1]),
+      support(text, 'Kalium früh ersetzen.', [0]),
+    ]);
+
+    expect(body).toBe(
+      [
+        'Die Behandlung stützt sich auf folgende Kernprinzipien:',
+        '- Rehydrierung:',
+        '  - Initialtherapie mit einem Liter. \\ue202turn0search0',
+        '',
+        '  ::hinweise{abschnitt=0-1}',
+        '- Kalium:',
+        '  - Kalium früh ersetzen. \\ue202turn0search0',
+        '',
+        '  ::hinweise{abschnitt=0-2}',
+      ].join('\n'),
+    );
+    expect(hints.map(({ text: t, section, lead }) => [t, section, lead])).toEqual([
+      ['Eine zu rasche Senkung ist zu vermeiden.', '0-1', undefined],
+      ['Unter Insulin droht eine Hypokaliämie.', '0-2', undefined],
+    ]);
+  });
+
+  test('sets the block of an item with nothing backed where the item stood, named by it', () => {
+    const text = [
+      '- **Rehydrierung:**',
+      '  - Initialtherapie mit einem Liter.',
+      '- **Bicarbonat:**',
+      '  - Nur bei einem pH unter sieben.',
+      '- **Kalium:**',
+      '  - Kalium früh ersetzen.',
+    ].join('\n');
+
+    const { body, hints } = placed(text, [
+      support(text, 'Initialtherapie mit einem Liter.', [0]),
+      support(text, 'Kalium früh ersetzen.', [0]),
+    ]);
+
+    expect(body).toBe(
+      [
+        '- Rehydrierung:',
+        '  - Initialtherapie mit einem Liter. \\ue202turn0search0',
+        '',
+        '::hinweise{abschnitt=0-1}',
+        '- Kalium:',
+        '  - Kalium früh ersetzen. \\ue202turn0search0',
+      ].join('\n'),
+    );
+    expect(hints.map(({ section, lead }) => [section, lead])).toEqual([['0-1', 'Bicarbonat']]);
+  });
+
+  test('gathers the hints of flat items under one heading into one block', () => {
+    const text = [
+      '### Nystagmus',
+      '- **Durchführung:** Blick geradeaus und zur Seite.',
+      '- **Peripher:** Schlägt in eine Richtung.',
+      '- **Zentral:** Wechselt die Richtung.',
+      '### Skew',
+      '- **Peripher:** Keine Fehlstellung.',
+    ].join('\n');
+
+    const { body, hints } = placed(text, [
+      support(text, 'Schlägt in eine Richtung.', [0]),
+      support(text, 'Keine Fehlstellung.', [0]),
+    ]);
+
+    expect(body).toBe(
+      [
+        '### Nystagmus',
+        '- Peripher: Schlägt in eine Richtung. \\ue202turn0search0',
+        '',
+        '::hinweise{abschnitt=0-1}',
+        '',
+        '### Skew',
+        '- Peripher: Keine Fehlstellung. \\ue202turn0search0',
+      ].join('\n'),
+    );
+    expect(hints.map((hint) => hint.section)).toEqual(['0-1', '0-1']);
+  });
+
+  test('puts the block first when nothing backed comes before its hints', () => {
+    const text = 'Einleitung ohne jeden Beleg.\n\n### Therapie\n- Mittel der Wahl ist Fosfomycin.';
+
+    const { body } = placed(text, [support(text, 'Mittel der Wahl ist Fosfomycin.', [0])]);
+
+    expect(body).toBe(
+      '::hinweise{abschnitt=0-1}\n\n### Therapie\n- Mittel der Wahl ist Fosfomycin. \\ue202turn0search0',
+    );
+  });
+
   test('does not split at abbreviations or ordinals', () => {
     const text = 'Gabe z. B. als Kurzinfusion. Mittel der 1. Wahl ist Fosfomycin.';
 
@@ -612,17 +768,19 @@ describe('splitAnswer', () => {
   test("removes the model's own citation markers from both parts", () => {
     const text = 'Feste Nahrung bis 6 h vorher [1]. Laut Blog auch Kaugummi [2].';
 
-    const { body, hints } = splitAnswer({
-      text,
-      supports: [support(text, 'Feste Nahrung bis 6 h vorher', [0])],
-      chunks: [chunk('awmf.org'), chunk('blog.example')],
-      entries: [awmf],
-      extras: [blog],
-      numbering: new Map([
-        [1, 1],
-        [2, null],
-      ]),
-    });
+    const { body, hints } = unplaced(
+      splitAnswer({
+        text,
+        supports: [support(text, 'Feste Nahrung bis 6 h vorher', [0])],
+        chunks: [chunk('awmf.org'), chunk('blog.example')],
+        entries: [awmf],
+        extras: [blog],
+        numbering: new Map([
+          [1, 1],
+          [2, null],
+        ]),
+      }),
+    );
 
     expect(body).toBe('Feste Nahrung bis 6 h vorher. \\ue202turn0search0');
     expect(hints.map((hint) => hint.text)).toEqual(['Laut Blog auch Kaugummi.']);

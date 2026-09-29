@@ -211,9 +211,13 @@ class WebGroundingEnterprise extends Tool {
                 hasHints: hints.length > 0,
                 unlisted,
             });
-            let organic = toOrganicSources(shown);
-            if (!shown.length && unlisted) {
-                organic = toOrganicSources(extras, { listed: false });
+            // The other sources follow the kept ones, so hints and their chips can point at them.
+            let organic = [
+                ...toOrganicSources(shown),
+                ...toOrganicSources(extras, { listed: false, from: shown.length }),
+            ];
+            if (!shown.length && !unlisted) {
+                organic = [];
             }
             if (!organic.length && !hints.length) {
                 return [answer, undefined];

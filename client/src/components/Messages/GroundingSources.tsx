@@ -2,7 +2,12 @@ import { memo } from 'react';
 import { BookOpen } from 'lucide-react';
 import { ContentTypes } from 'librechat-data-provider';
 import type { SearchResultData, TMessage } from 'librechat-data-provider';
-import { GroundingHints, hasHints, hasHintsMarker } from '~/components/Messages/GroundingHints';
+import {
+  GroundingHints,
+  hasHints,
+  hasHintsMarker,
+  placedSections,
+} from '~/components/Messages/GroundingHints';
 
 const GROUNDING_TOOL = 'web_grounding_enterprise';
 const HEADING = 'Quellen und weiterführende Literatur';
@@ -34,13 +39,11 @@ export function hasGroundingSources(
   );
 }
 
-/** Whether the agent wrote the `::hinweise` line that places the hints panel inside its answer. */
-const placesHints = (content: TMessage['content']) =>
-  (content ?? []).some(
-    (part) =>
-      part?.type === ContentTypes.TEXT &&
-      hasHintsMarker(typeof part.text === 'string' ? part.text : (part.text?.value ?? '')),
-  );
+const textOf = (content: TMessage['content']) =>
+  (content ?? [])
+    .filter((part) => part?.type === ContentTypes.TEXT)
+    .map((part) => (typeof part.text === 'string' ? part.text : (part.text?.value ?? '')))
+    .join('\n');
 
 /** Each official source once, in the order the searches returned them. */
 function listedSources(searchResults?: Record<string, SearchResultData>) {
@@ -70,11 +73,12 @@ function GroundingSources({
   if (isSubmitting || !hasGroundingSources(message.content, searchResults)) {
     return null;
   }
-  // Without the agent's marker the hints still show, just above the sources instead.
-  const hintsHere = !placesHints(message.content) && hasHints(searchResults);
+  // Without the agent's closing marker, the hints it did not place show above the sources instead.
+  const text = textOf(message.content);
+  const hintsHere = !hasHintsMarker(text) && hasHints(searchResults);
   return (
     <>
-      {hintsHere && <GroundingHints searchResults={searchResults} />}
+      {hintsHere && <GroundingHints searchResults={searchResults} placed={placedSections(text)} />}
       <section
         aria-label={HEADING}
         className="mt-6 rounded-xl border border-border-medium bg-surface-secondary p-4"

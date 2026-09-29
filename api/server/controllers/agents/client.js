@@ -82,6 +82,7 @@ const { resolveConfigServers } = require('~/server/services/MCP');
 const { getMCPServerTools } = require('~/server/services/Config');
 const BaseClient = require('~/app/clients/BaseClient');
 const { getMCPManager } = require('~/config');
+const { dropRestartedText } = require('./restartedText');
 const db = require('~/models');
 
 const loadAgent = (params) => loadAgentFn(params, { getAgent: db.getAgent, getMCPServerTools });
@@ -899,7 +900,7 @@ class AgentClient extends BaseClient {
       abortController: opts.abortController,
     });
 
-    const completion = filterMalformedContentParts(this.contentParts);
+    const completion = dropRestartedText(filterMalformedContentParts(this.contentParts));
     const metadata = this.buildResponseMetadata();
     return metadata ? { completion, metadata } : { completion };
   }

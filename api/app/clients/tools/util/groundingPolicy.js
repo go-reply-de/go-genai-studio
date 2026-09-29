@@ -226,7 +226,7 @@ function citationMarkers(raw, bodyEnd, numbering) {
 }
 
 const ABBREVIATION =
-  /(?:^|[\s(])(?:z|u|d|o|s|ca|bzw|ggf|evtl|inkl|vgl|sog|Dr|Prof|Nr|Abb|Tab|max|min|mind|i\.v|p\.o|s\.c|i\.m|z\. ?B|d\. ?h|u\. ?a)$/i;
+  /(?:^|[\s(])(?:z|u|d|o|s|e|ca|bzw|ggf|evtl|inkl|vgl|sog|Dr|Prof|Nr|Abb|Tab|max|min|mind|i\.v|p\.o|s\.c|i\.m|z\. ?B|d\. ?h|u\. ?a)$/i;
 
 /** Sentence offsets within a line: a break is a sentence end followed by a capital, but not after
  * `z. B.`, `ggf.`, `i.v.` and the like, nor after an ordinal such as `1. Wahl`. */
@@ -383,7 +383,7 @@ function outlineStatements(raw, bodyEnd, markers) {
     const whole = plain(contentStart, start + line.length);
     if (isLabel(whole)) {
       if (item) {
-        labels.push({ indent: item[1].length, text: labelOf(whole) });
+        labels.push({ indent: item[1].length, text: labelOf(whole), line: lineIndex });
       } else {
         leadIn = { text: labelOf(whole) };
         leadInUsed = false;
@@ -448,8 +448,9 @@ function attributionsOf({ raw, bodyEnd, supports, chunks, entries, extras }) {
 const OFFICIAL_SHARE = 0.5;
 
 /** Statements along the outline they came from: headings, lead-ins and list labels come along
- * once, and each sentence ends with the anchors `anchorsOf` gives it. */
-function renderOutline(statements, anchorsOf, turn) {
+ * once, and each sentence ends with the anchors `anchorsOf` gives it. `markers` holds lines to
+ * set after a source line, or before everything under -1. */
+function renderOutline(statements, anchorsOf, turn, markers = new Map()) {
   const introduced = new Set(
     statements.flatMap((s) => s.context.filter((c) => c.claim).map((c) => c.line)),
   );
@@ -465,7 +466,8 @@ function renderOutline(statements, anchorsOf, turn) {
   const emitted = new Set();
   let path = [];
   let last = null;
-  for (const st of statements) {
+  (markers.get(-1) ?? []).forEach(push);
+  statements.forEach((st, at) => {
     const same = (a, b) => a && b && a.kind === b.kind && a.text === b.text;
     let common = 0;
     while (common < path.length && same(path[common], st.context[common])) {
@@ -496,7 +498,10 @@ function renderOutline(statements, anchorsOf, turn) {
     path = st.context;
     last = st;
     emitted.add(st.line);
-  }
+    if (statements[at + 1]?.line !== st.line) {
+      (markers.get(st.line) ?? []).forEach(push);
+    }
+  });
   return lines.join('\n').trim();
 }
 
@@ -539,15 +544,10 @@ function splitAnswer({ text, supports, chunks, entries, extras = [], numbering, 
       leadOfficial.set(st.line, st.official);
     }
   }
-  const body = renderOutline(
-    classified.filter((s) => s.official),
-    (st) => [...st.kept],
-    turn,
-  );
-
   const hints = [];
   const placed = [];
-  const hintOfLead = new Map();
+  // The top-level hint that holds each placed line, so what a hint introduces nests under it.
+  const hintOfLine = new Map();
   const shown = (c) => !c.claim || leadOfficial.get(c.line);
   // The labels above a hint, so `Befund` under two different tests stays two topics.
   const topicOf = (st) => {
@@ -563,7 +563,8 @@ function splitAnswer({ text, supports, chunks, entries, extras = [], numbering, 
   };
   for (const st of classified.filter((s) => !s.official && !DOSE.test(s.text))) {
     const sources = st.extra.map((uri) => ({ domain: extraByUri.get(uri).domain, link: uri }));
-    const parent = hintOfLead.get(introducer(st)) ?? null;
+    const owner = st.context.at(-1);
+    const parent = (owner?.line != null && hintOfLine.get(owner.line)) || null;
     const siblings = parent ? parent.items : hints;
     const previous = siblings[siblings.length - 1];
     if (previous && previous.line === st.line) {
@@ -577,16 +578,69 @@ function splitAnswer({ text, supports, chunks, entries, extras = [], numbering, 
       siblings.push(
         parent
           ? { text, sources, line: st.line }
-          : { topic, text, sources, line: st.line, items: [] },
+          : { topic, text, sources, line: st.line, items: [], first: st },
       );
     } else {
       continue;
     }
     placed.push(st);
-    if (st.leads) {
-      hintOfLead.set(st.line, parent ?? hints[hints.length - 1]);
-    }
+    hintOfLine.set(st.line, parent ?? hints[hints.length - 1]);
   }
+
+  // A hint's block goes under the backed part of its section: the list item whose sub-points it
+  // is among, or else its heading. A section with nothing backed gets its block where it stood.
+  const official = classified.filter((s) => s.official);
+  const topLabel = (st) => st.context.find((c) => c.kind === 'label' && c.depth === 0);
+  const headingOf = (st) => st.context.find((c) => c.kind === 'heading')?.text ?? '';
+  const inItem = (st) => topLabel(st)?.line != null;
+  const lastInItem = new Map(official.filter(inItem).map((st) => [topLabel(st).line, st]));
+  const lastUnderHeading = new Map(official.map((st) => [headingOf(st), st]));
+  // "Die Leitlinie nennt die folgenden Säulen:" without a source says nothing on its own.
+  const framing = (hint) =>
+    hint.text.endsWith(':') &&
+    /\bfolgend|\bwie folgt/i.test(hint.text) &&
+    !hint.items.length &&
+    !hint.sources.length;
+  const shownHints = hints.filter((hint) => !framing(hint));
+  const blocks = new Map();
+  const blockAt = new Map();
+  for (const hint of shownHints) {
+    const st = hint.first;
+    const own = inItem(st)
+      ? lastInItem.get(topLabel(st).line)
+      : lastUnderHeading.get(headingOf(st));
+    const anchor = own ?? official.filter((o) => o.line < st.line).at(-1);
+    const at = anchor ? anchor.line : -1;
+    const indent = own && inItem(st) ? 2 : 0;
+    const key = `${at}:${indent}`;
+    if (!blockAt.has(key)) {
+      blockAt.set(key, `${turn}-${blockAt.size + 1}`);
+      const marker = `${' '.repeat(indent)}${HINTS_MARKER}{abschnitt=${blockAt.get(key)}}`;
+      const list = blocks.get(at) ?? [];
+      // The block of a line's own section comes before that of a section with nothing backed.
+      blocks.set(at, indent ? [marker, ...list] : [...list, marker]);
+    }
+    hint.section = blockAt.get(key);
+    // Only what the text above the block does not already say.
+    let shared = 0;
+    while (
+      anchor &&
+      shared < Math.min(anchor.context.length, st.context.length) &&
+      anchor.context[shared].kind === st.context[shared].kind &&
+      anchor.context[shared].text === st.context[shared].text
+    ) {
+      shared += 1;
+    }
+    const sectionLine = own ? topLabel(st)?.line : null;
+    const lead = st.context
+      .slice(shared)
+      .filter((c) => !c.claim && (sectionLine == null || c.line !== sectionLine))
+      .map((c) => c.text)
+      .join(' – ');
+    hint.lead = lead || null;
+  }
+  const body = official.length ? renderOutline(official, (st) => [...st.kept], turn, blocks) : '';
+
   const extraIndex = new Map(extras.map((e, i) => [e.uri, i]));
 
   // A colon only reads right with something after it.
@@ -597,10 +651,12 @@ function splitAnswer({ text, supports, chunks, entries, extras = [], numbering, 
     unlisted: placed.some((st) => st.extra.length)
       ? renderOutline(placed, (st) => st.extra.map((uri) => extraIndex.get(uri)), turn)
       : '',
-    hints: hints.map(({ topic, text, sources, items }) => ({
+    hints: shownHints.map(({ topic, text, sources, items, section, lead }) => ({
       topic,
       text: closed(text, items.length > 0),
       sources,
+      section,
+      ...(lead ? { lead } : {}),
       ...(items.length
         ? {
             items: items.map((item, i) => ({
@@ -622,9 +678,9 @@ function formatEntry(entry) {
 /** The source list as LibreChat citation data: only the domain and link Google returned, so a chip
  * reads `awmf.org` and never carries model-written year or description. A source off the list
  * keeps its chip but stays out of the sources block. */
-function toOrganicSources(entries, { listed = true } = {}) {
+function toOrganicSources(entries, { listed = true, from = 0 } = {}) {
   return entries.map((entry, i) => ({
-    position: i + 1,
+    position: from + i + 1,
     link: entry.uri,
     title: entry.domain,
     attribution: entry.domain,
