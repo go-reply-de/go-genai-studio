@@ -52,6 +52,9 @@ function buildGroundingPrompt(query) {
     'Suche zuerst nach der passenden Leitlinie im AWMF-Leitlinienregister (register.awmf.org)',
     'und nach Veröffentlichungen der AWMF-Fachgesellschaften und stütze die Antwort vorrangig',
     'darauf. Ergänze andere Quellen nur, wo diese nichts dazu sagen.',
+    // Google attaches sources to a "no guideline exists" sentence too, which makes it look backed.
+    'Findest du dort keine passende Leitlinie, schreibe nicht, dass es keine gibt, sondern',
+    'beantworte die Frage mit den gefundenen Quellen.',
     '',
     `Beende die Antwort IMMER mit ${SOURCE_BLOCK_MARKER} und danach einer Zeile pro Quelle,`,
     'Felder durch | getrennt, ohne weitere Zeichen:',

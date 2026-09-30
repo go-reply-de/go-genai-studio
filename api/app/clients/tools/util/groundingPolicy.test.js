@@ -397,4 +397,12 @@ describe('buildGroundingPrompt', () => {
       /AWMF-Leitlinienregister \(register\.awmf\.org\)[\s\S]*AWMF-Fachgesellschaften/,
     );
   });
+
+  test('keeps the search from claiming that no guideline exists', () => {
+    const query = 'Wie behandle ich eine Hyperkaliämie mit EKG-Veränderungen?';
+
+    expect(buildGroundingPrompt(query)).toMatch(
+      /keine passende Leitlinie, schreibe nicht, dass es keine gibt[\s\S]*gefundenen Quellen/,
+    );
+  });
 });
