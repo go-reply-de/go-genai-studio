@@ -236,6 +236,52 @@ describe('anchorClaims', () => {
     expect(body).toBe('Bis 4,5 h nach Symptombeginn. \\ue202turn2search0 Danach nicht.');
   });
 
+  test('keeps bold text intact when the passage ends inside it', () => {
+    const text = '**Schleifendiuretika (bei erhaltener Nierenfunktion):** Furosemid i.v.';
+
+    const body = anchorClaims({
+      text,
+      supports: [supportFor(text, 'Schleifendiuretika (bei erhaltener Nierenfunktion', [0])],
+      chunks: [chunk('akdae.de')],
+      entries: [entry('akdae.de')],
+      numbering: new Map(),
+    });
+
+    expect(body).toBe(
+      '**Schleifendiuretika (bei erhaltener Nierenfunktion):** \\ue202turn0search0 Furosemid i.v.',
+    );
+  });
+
+  test('keeps italic text intact when the passage ends inside it', () => {
+    const text = '*Ziel: Kalium aus dem Körper entfernen.*\n\nEKG überwachen.';
+
+    const body = anchorClaims({
+      text,
+      supports: [supportFor(text, 'Ziel: Kalium aus dem Körper entfernen', [0])],
+      chunks: [chunk('akdae.de')],
+      entries: [entry('akdae.de')],
+      numbering: new Map(),
+    });
+
+    expect(body).toBe(
+      '*Ziel: Kalium aus dem Körper entfernen.* \\ue202turn0search0\n\nEKG überwachen.',
+    );
+  });
+
+  test('leaves the opening marker of the next bold text alone', () => {
+    const text = 'Kalium senken. **Wichtig:** EKG überwachen.';
+
+    const body = anchorClaims({
+      text,
+      supports: [supportFor(text, 'Kalium senken', [0])],
+      chunks: [chunk('akdae.de')],
+      entries: [entry('akdae.de')],
+      numbering: new Map(),
+    });
+
+    expect(body).toBe('Kalium senken. \\ue202turn0search0 **Wichtig:** EKG überwachen.');
+  });
+
   test('gives every attributed sentence its own anchor', () => {
     const text = 'Feste Nahrung bis 6 h vorher. Klare Flüssigkeit bis 2 h vorher.';
 

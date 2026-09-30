@@ -159,6 +159,8 @@ function mergeSources({ sources, chunks, supports }) {
 const CITATION_MARKER = /\s*\[(\d+(?:\s*,\s*\d+)*)\]/g;
 const LEADING_MARKER = /^\s*\[\d+(?:\s*,\s*\d+)*\]/;
 const TRAILING_PUNCTUATION = /[.,;:!?)»"”]/;
+/** A bold or italic marker that closes the passage; an anchor in front of it breaks the emphasis. */
+const CLOSING_EMPHASIS = /^[*_]+(?=\s|$|[.,;:!?)»"”])/;
 
 /** Vertex reports segment offsets as UTF-8 bytes; JS strings index UTF-16 code units. */
 function charIndexAt(text, byteOffset) {
@@ -197,15 +199,19 @@ function mergedEnds(ranges) {
   return ends.map((range) => range.end);
 }
 
-/** An anchor goes after the model's own marker and the sentence's punctuation. */
+/** An anchor goes after the model's own marker, the sentence's punctuation and a closing emphasis. */
 function snapPast(text, position, limit) {
   let at = position;
   for (;;) {
-    const marker = LEADING_MARKER.exec(text.slice(at, limit));
+    const rest = text.slice(at, limit);
+    const marker = LEADING_MARKER.exec(rest);
+    const emphasis = CLOSING_EMPHASIS.exec(rest);
     if (marker) {
       at += marker[0].length;
     } else if (at < limit && TRAILING_PUNCTUATION.test(text[at])) {
       at += 1;
+    } else if (emphasis) {
+      at += emphasis[0].length;
     } else {
       return at;
     }
