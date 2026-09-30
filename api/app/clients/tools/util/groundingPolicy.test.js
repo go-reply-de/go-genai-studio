@@ -5,7 +5,6 @@ const {
   anchorClaims,
   formatAnswer,
   buildGroundingPrompt,
-  hasListedResult,
 } = require('./groundingPolicy');
 
 const chunk = (domain, uri = `stub-${domain}`) => ({ web: { uri, title: domain, domain } });
@@ -15,17 +14,11 @@ describe('parsePolicyConfig', () => {
   test('passes a configured exclusion list through', () => {
     const policy = parsePolicyConfig({ excludeDomains: ['junk.example'] });
 
-    expect(policy).toEqual({ excludeDomains: ['junk.example'], sourceDomains: [] });
+    expect(policy).toEqual({ excludeDomains: ['junk.example'] });
   });
 
-  test('excludes nothing and knows no AWMF societies without a mounted config', () => {
-    expect(parsePolicyConfig(null)).toEqual({ excludeDomains: [], sourceDomains: [] });
-  });
-
-  test('reads the AWMF register and its societies from the source list', () => {
-    const policy = parsePolicyConfig({ sourceDomains: ['awmf.org', 'https://www.DGN.org/'] });
-
-    expect(policy.sourceDomains).toEqual(['awmf.org', 'dgn.org']);
+  test('excludes nothing without a mounted config', () => {
+    expect(parsePolicyConfig(null)).toEqual({ excludeDomains: [] });
   });
 
   test('normalises the configured hosts', () => {
@@ -34,13 +27,14 @@ describe('parsePolicyConfig', () => {
     expect(policy.excludeDomains).toEqual(['junk.example']);
   });
 
-  test('ignores the old tiers of a mounted config', () => {
+  test('ignores the old tiers and source list of a mounted config', () => {
     const policy = parsePolicyConfig({
       tiers: [{ name: 'AWMF', domains: ['awmf.org'] }],
+      sourceDomains: ['awmf.org', 'dgn.org'],
       excludeDomains: ['junk.example'],
     });
 
-    expect(policy).toEqual({ excludeDomains: ['junk.example'], sourceDomains: [] });
+    expect(policy).toEqual({ excludeDomains: ['junk.example'] });
   });
 
   test('rejects an exclusion list that is not a list of domains', () => {
@@ -396,25 +390,11 @@ describe('buildGroundingPrompt', () => {
     expect(buildGroundingPrompt(query)).toContain(query);
   });
 
-  test('points the search at the AWMF register and its societies only when asked to', () => {
+  test('points the search at the AWMF register and its societies first', () => {
     const query = 'Welches Zeitfenster gilt für die Thrombolyse?';
 
-    expect(buildGroundingPrompt(query, { awmfFirst: true })).toMatch(
+    expect(buildGroundingPrompt(query)).toMatch(
       /AWMF-Leitlinienregister \(register\.awmf\.org\)[\s\S]*AWMF-Fachgesellschaften/,
     );
-    expect(buildGroundingPrompt(query)).not.toContain('AWMF-Leitlinienregister');
-  });
-});
-
-describe('hasListedResult', () => {
-  const listed = ['awmf.org', 'dgn.org'];
-
-  test('finds the AWMF register or one of its societies among the results', () => {
-    expect(hasListedResult([chunk('blog.example'), chunk('register.awmf.org')], listed)).toBe(true);
-  });
-
-  test('finds nothing when every result comes from elsewhere', () => {
-    expect(hasListedResult([chunk('blog.example'), chunk('fake-dgn.org')], listed)).toBe(false);
-    expect(hasListedResult([], listed)).toBe(false);
   });
 });

@@ -29,16 +29,15 @@ function domainList(value, field) {
   return value.map(normalizeDomain);
 }
 
-/** Both lists come from the grounding-sources ConfigMap (terraform `grounding_exclude_domains`,
- * `grounding_source_domains`); a malformed one fails loudly, a missing one is empty. The source
- * list only tells whether a search found the AWMF register or its societies; it filters nothing. */
+/** The exclusion list comes from the grounding-sources ConfigMap (terraform
+ * `grounding_exclude_domains`); a malformed one fails loudly, a missing one is empty. */
 function parsePolicyConfig(raw) {
-  const list = (field) => (raw?.[field] === undefined ? [] : domainList(raw[field], field));
-  return { excludeDomains: list('excludeDomains'), sourceDomains: list('sourceDomains') };
+  const excluded = raw?.excludeDomains;
+  return { excludeDomains: excluded === undefined ? [] : domainList(excluded, 'excludeDomains') };
 }
 
-/** `awmfFirst` points the search at the AWMF register and its societies before anything else. */
-function buildGroundingPrompt(query, { awmfFirst = false } = {}) {
+/** Points the web search at the AWMF register and its societies first; other sources fill gaps. */
+function buildGroundingPrompt(query) {
   return [
     'Beantworte die medizinische Frage auf Basis einer Websuche. Stütze die Antwort',
     'ausschließlich auf tatsächlich gefundene Quellen und belege Aussagen im Text mit [n].',
@@ -49,14 +48,10 @@ function buildGroundingPrompt(query, { awmfFirst = false } = {}) {
     'peer-reviewten Fachzeitschriften. Meide Patientenportale, Blogs und kommerzielle Seiten.',
     'Wenn nur schwache Quellen verfügbar sind, antworte trotzdem, weise aber ausdrücklich',
     'darauf hin, dass belastbare Evidenz fehlt.',
-    ...(awmfFirst
-      ? [
-          '',
-          'Suche zuerst nach der passenden Leitlinie im AWMF-Leitlinienregister (register.awmf.org)',
-          'und nach Veröffentlichungen der AWMF-Fachgesellschaften und stütze die Antwort vorrangig',
-          'darauf. Ergänze andere Quellen nur, wo diese nichts dazu sagen.',
-        ]
-      : []),
+    '',
+    'Suche zuerst nach der passenden Leitlinie im AWMF-Leitlinienregister (register.awmf.org)',
+    'und nach Veröffentlichungen der AWMF-Fachgesellschaften und stütze die Antwort vorrangig',
+    'darauf. Ergänze andere Quellen nur, wo diese nichts dazu sagen.',
     '',
     `Beende die Antwort IMMER mit ${SOURCE_BLOCK_MARKER} und danach einer Zeile pro Quelle,`,
     'Felder durch | getrennt, ohne weitere Zeichen:',
@@ -72,11 +67,6 @@ function resultDomains(chunks) {
     normalizeDomain((c.web ?? c.retrievedContext ?? {}).domain),
   );
   return [...new Set(hosts.filter((h) => HOSTNAME.test(h)))];
-}
-
-/** Whether the search returned anything from the AWMF register or its societies. */
-function hasListedResult(chunks, listed) {
-  return resultDomains(chunks).some((domain) => listed.some((l) => domainMatches(domain, l)));
 }
 
 function parseSourceBlock(text) {
@@ -331,7 +321,6 @@ module.exports = {
   parsePolicyConfig,
   buildGroundingPrompt,
   resultDomains,
-  hasListedResult,
   parseSourceBlock,
   mergeSources,
   anchorClaims,

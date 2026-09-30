@@ -9,7 +9,6 @@ const {
     parsePolicyConfig,
     buildGroundingPrompt,
     resultDomains,
-    hasListedResult,
     parseSourceBlock,
     mergeSources,
     anchorClaims,
@@ -51,9 +50,6 @@ function loadPolicy() {
     const policy = parsePolicyConfig(raw);
     if (!policy.excludeDomains.length) {
         warnOnce('web_grounding_enterprise has no exclusion list configured; searching without exclusions.');
-    }
-    if (!policy.sourceDomains.length) {
-        warnOnce('web_grounding_enterprise has no source list configured; any result ends the search.');
     }
     return policy;
 }
@@ -169,24 +165,15 @@ class WebGroundingEnterprise extends Tool {
         }
     }
 
-    /** One search, pointed at the AWMF register and its societies. Only when it brings back
-     * nothing from them does a general search follow; if that finds nothing, the first stands. */
+    /** An empty result leaves nothing to cite, so it earns exactly one more attempt. */
     async _search(query) {
-        const search = async (awmfFirst) => {
-            const request = contentsOf(buildGroundingPrompt(query, { awmfFirst }));
-            return extractGroundingResponse((await this.generativeModel.generateContent(request)).response);
-        };
-        const first = await search(true);
-        const { sourceDomains } = this.policy;
-        const found = sourceDomains.length
-            ? hasListedResult(first.chunks, sourceDomains)
-            : resultDomains(first.chunks).length > 0;
-        if (found) {
+        const request = contentsOf(buildGroundingPrompt(query));
+        const first = extractGroundingResponse((await this.generativeModel.generateContent(request)).response);
+        if (resultDomains(first.chunks).length) {
             return first;
         }
-        logger.info('Web grounding found nothing from the AWMF register or its societies; searching generally.');
-        const general = await search(false);
-        return resultDomains(general.chunks).length || !resultDomains(first.chunks).length ? general : first;
+        logger.info('Web grounding returned no attributable results; retrying once.');
+        return extractGroundingResponse((await this.generativeModel.generateContent(request)).response);
     }
 
     /** The text is what the agent reads; the artifact feeds LibreChat's Sources panel. */

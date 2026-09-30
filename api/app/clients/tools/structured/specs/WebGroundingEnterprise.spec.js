@@ -85,7 +85,7 @@ const QUERY = 'Welches Zeitfenster gilt für die Thrombolyse bei Frau M., 67 Jah
 
 const toolWith = (search, policy = {}) => {
   const tool = new WebGroundingEnterprise({ override: true });
-  tool.policy = { excludeDomains: [], sourceDomains: [], ...policy };
+  tool.policy = { excludeDomains: [], ...policy };
   tool.generativeModel = search;
   return tool;
 };
@@ -166,7 +166,7 @@ describe('WebGroundingEnterprise', () => {
     expect(artifact?.web_search?.organic?.map((source) => source.title)).toEqual(['awmf.org']);
   });
 
-  test('points the first search at the AWMF register and stops there when it finds it', async () => {
+  test('points the search at the AWMF register', async () => {
     const search = stubModel([
       groundedResponse('Bis 4,5 h [1].\n[[QUELLEN]]\n1|awmf.org|2023|S2e', [
         'awmf.org',
@@ -174,13 +174,13 @@ describe('WebGroundingEnterprise', () => {
       ]),
     ]);
 
-    await invokeTool(toolWith(search, { sourceDomains: ['awmf.org', 'dgn.org'] }));
+    await invokeTool(toolWith(search));
 
     expect(search.asked).toHaveLength(1);
     expect(search.asked[0]).toContain('AWMF-Leitlinienregister');
   });
 
-  test('searches generally when the first search finds nothing from the AWMF register or its societies', async () => {
+  test('keeps a result from other sources instead of searching again', async () => {
     const search = stubModel([
       groundedResponse('Ein Blog nennt 6 h [1].\n[[QUELLEN]]\n1|blog.example|-|Blog', [
         'blog.example',
@@ -188,34 +188,15 @@ describe('WebGroundingEnterprise', () => {
       groundedResponse('Bis 4,5 h [1].\n[[QUELLEN]]\n1|nih.gov|2024|Review', ['nih.gov']),
     ]);
 
-    const { content, artifact } = await invokeTool(
-      toolWith(search, { sourceDomains: ['awmf.org'] }),
-    );
+    const { content, artifact } = await invokeTool(toolWith(search));
 
-    expect(search.asked).toHaveLength(2);
-    expect(search.asked[1]).not.toContain('AWMF-Leitlinienregister');
-    expect(content).toContain('Bis 4,5 h.');
-    expect(artifact.web_search.organic.map((source) => source.title)).toEqual(['nih.gov']);
-  });
-
-  test('keeps the first result when the general search finds nothing', async () => {
-    const search = stubModel([
-      groundedResponse('Ein Blog nennt 6 h [1].\n[[QUELLEN]]\n1|blog.example|-|Blog', [
-        'blog.example',
-      ]),
-      emptyResponse('Nichts gefunden.'),
-    ]);
-
-    const { content, artifact } = await invokeTool(
-      toolWith(search, { sourceDomains: ['awmf.org'] }),
-    );
-
+    expect(search.asked).toHaveLength(1);
     expect(content).toContain('Ein Blog nennt 6 h.');
     expect(content).not.toMatch(/WARNUNG/);
     expect(artifact.web_search.organic.map((source) => source.title)).toEqual(['blog.example']);
   });
 
-  test('searches generally when the first search comes back empty', async () => {
+  test('searches once more with the same prompt when the first search comes back empty', async () => {
     const search = stubModel([
       emptyResponse('Aus dem Gedächtnis [1].\n[[QUELLEN]]\n1|dgn.org|2022|Leitlinie'),
       groundedResponse('Bis 4,5 h [1].\n[[QUELLEN]]\n1|awmf.org|2023|S2e', ['awmf.org']),
@@ -225,12 +206,12 @@ describe('WebGroundingEnterprise', () => {
 
     expect(search.asked).toHaveLength(2);
     expect(search.asked[0]).toContain('AWMF-Leitlinienregister');
-    expect(search.asked[1]).not.toContain('AWMF-Leitlinienregister');
+    expect(search.asked[1]).toBe(search.asked[0]);
     expect(out).toContain('Bis 4,5 h.');
     expect(out).not.toMatch(/WARNUNG/);
   });
 
-  test('gives up after the general search and says the answer is unbacked', async () => {
+  test('gives up after the second attempt and says the answer is unbacked', async () => {
     const search = stubModel([
       emptyResponse('Erster Versuch.'),
       emptyResponse('Zweiter Versuch [1].\n[[QUELLEN]]\n1|dgn.org|2022|Leitlinie'),
