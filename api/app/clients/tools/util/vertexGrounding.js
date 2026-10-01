@@ -11,31 +11,33 @@ const MAX_OUTPUT_CHARS = 8000;
  * on which grounding tool produced them.
  */
 function formatGroundingResponse(response) {
-    const candidate = response?.candidates?.[0];
-    if (!candidate) {
-        return 'No grounded response was returned for this query.';
-    }
+  const candidate = response?.candidates?.[0];
+  if (!candidate) {
+    return 'No grounded response was returned for this query.';
+  }
 
-    const text = (candidate.content?.parts ?? [])
-        .map((part) => part.text)
-        .filter(Boolean)
+  const text = (candidate.content?.parts ?? [])
+    .map((part) => part.text)
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+
+  const groundingChunks = candidate.groundingMetadata?.groundingChunks ?? [];
+  const sources = groundingChunks
+    .map((chunk) => chunk.web ?? chunk.retrievedContext)
+    .filter((source) => source?.uri);
+
+  const uniqueSources = [...new Map(sources.map((source) => [source.uri, source])).values()];
+
+  const sourcesBlock = uniqueSources.length
+    ? '\n\nSources:\n' +
+      uniqueSources
+        .map((source, i) => `${i + 1}. ${source.title || source.uri} - ${source.uri}`)
         .join('\n')
-        .trim();
+    : '';
 
-    const groundingChunks = candidate.groundingMetadata?.groundingChunks ?? [];
-    const sources = groundingChunks
-        .map((chunk) => chunk.web ?? chunk.retrievedContext)
-        .filter((source) => source?.uri);
-
-    const uniqueSources = [...new Map(sources.map((source) => [source.uri, source])).values()];
-
-    const sourcesBlock = uniqueSources.length
-        ? '\n\nSources:\n' +
-          uniqueSources.map((source, i) => `${i + 1}. ${source.title || source.uri} - ${source.uri}`).join('\n')
-        : '';
-
-    const result = `${text || 'No answer text was returned for this query.'}${sourcesBlock}`;
-    return result.length > MAX_OUTPUT_CHARS ? `${result.slice(0, MAX_OUTPUT_CHARS)}...` : result;
+  const result = `${text || 'No answer text was returned for this query.'}${sourcesBlock}`;
+  return result.length > MAX_OUTPUT_CHARS ? `${result.slice(0, MAX_OUTPUT_CHARS)}...` : result;
 }
 
 /**
@@ -44,22 +46,22 @@ function formatGroundingResponse(response) {
  * Search tool.
  */
 function extractGroundingResponse(response) {
-    const candidate = response?.candidates?.[0];
-    if (!candidate) {
-        return { text: '', chunks: [], supports: [] };
-    }
+  const candidate = response?.candidates?.[0];
+  if (!candidate) {
+    return { text: '', chunks: [], supports: [] };
+  }
 
-    const text = (candidate.content?.parts ?? [])
-        .map((part) => part.text)
-        .filter(Boolean)
-        .join('\n')
-        .trim();
+  const text = (candidate.content?.parts ?? [])
+    .map((part) => part.text)
+    .filter(Boolean)
+    .join('\n')
+    .trim();
 
-    return {
-        text,
-        chunks: candidate.groundingMetadata?.groundingChunks ?? [],
-        supports: candidate.groundingMetadata?.groundingSupports ?? [],
-    };
+  return {
+    text,
+    chunks: candidate.groundingMetadata?.groundingChunks ?? [],
+    supports: candidate.groundingMetadata?.groundingSupports ?? [],
+  };
 }
 
 module.exports = { formatGroundingResponse, extractGroundingResponse };

@@ -12,147 +12,145 @@ const { formatGroundingResponse } = require('../util/vertexGrounding');
  * used for the main chat Vertex AI client.
  */
 const VERTEX_MULTI_REGION_ENDPOINTS = {
-    eu: 'aiplatform.eu.rep.googleapis.com',
-    us: 'aiplatform.us.rep.googleapis.com',
-    global: 'aiplatform.googleapis.com',
+  eu: 'aiplatform.eu.rep.googleapis.com',
+  us: 'aiplatform.us.rep.googleapis.com',
+  global: 'aiplatform.googleapis.com',
 };
 
 class GoogleVertexAI extends Tool {
+  // Helper function for initializing properties
+  _initializeField(field, envVar, defaultValue) {
+    return field || process.env[envVar] || defaultValue;
+  }
 
-    // Helper function for initializing properties
-    _initializeField(field, envVar, defaultValue) {
-        return field || process.env[envVar] || defaultValue;
+  constructor(fields = {}) {
+    super();
+    this.name = 'vertex_ai_search';
+    this.description =
+      "Use the 'vertex_ai_search' tool to retrieve search results from a Vertex AI Search data store relevant to your input.";
+
+    this.override = fields.override ?? false;
+    this.geminiModel = fields.geminiModel || 'gemini-2.5-flash';
+
+    /** @type {boolean} */
+    if (!this.override && !fields.isAgent) {
+      throw new Error('This tool is only available for agents.');
     }
 
-    constructor(fields = {}) {
-        super();
-        this.name = 'vertex_ai_search';
-        this.description =
-            'Use the \'vertex_ai_search\' tool to retrieve search results from a Vertex AI Search data store relevant to your input.';
-
-        this.override = fields.override ?? false;
-        this.geminiModel = fields.geminiModel || 'gemini-2.5-flash';
-        
-        /** @type {boolean} */
-        if (!this.override && !fields.isAgent) {
-            throw new Error('This tool is only available for agents.');
-        }
-
-        let serviceKey = {};
-        try {
-            const keyPath = process.env.GOOGLE_SERVICE_KEY_FILE || path.join(process.cwd(), 'api', 'data', 'auth.json');
-            serviceKey = require(keyPath);
-        } catch (e) {
-            logger.error("No Service account found.");
-        }
-
-        this.serviceKey =
-            serviceKey && typeof serviceKey === 'string' ? JSON.parse(serviceKey) : (serviceKey ?? {});
-
-        /** @type {string | null | undefined} */
-        this.project_id = this.serviceKey.project_id;
-        this.client_email = this.serviceKey.client_email;
-        this.private_key = this.serviceKey.private_key;
-        this.access_token = null;
-
-
-        // Define schema
-        this.schema = z.object({
-            query: z.string().describe('Search word or phrase to Vertex AI Search'),
-        });
-
-        // Initialize properties using helper function
-        this.projectId = this.project_id
-        this.location = process.env.GOOGLE_LOC
-        this.dataStoreId = this._initializeField(
-            fields.VERTEX_AI_DATASTORE_ID,
-            'VERTEX_AI_DATASTORE_ID',
-        );
-
-        // Check for required fields if not overridden
-        if (!this.override) {
-            if (!this.projectId) {
-                throw new Error('Missing required field: PROJECT_ID.');
-            }
-            if (!this.location) {
-                throw new Error('Missing required field: LOCATION.');
-            }
-            if (!this.dataStoreId) {
-                throw new Error('Missing required field: VERTEX_AI_DATASTORE_ID.');
-            }
-        }
-
-        if (!this.client_email && !this.private_key) {
-            console.warn(
-                'Warning: No Service Account credentials provided.  Ensure the Compute Engine default service account has the Vertex AI User role if running on a Compute Engine instance.',
-            );
-        }
-
-        if (this.override) {
-            return;
-        }
-
-        // Create Vertex AI client
-        try {
-            const authOptions = {};
-            if (this.client_email && this.private_key && this.project_id) {
-                // Use Service Account authentication
-                authOptions.credentials = {
-                    client_email: this.client_email,
-                    private_key: this.private_key,
-                };
-                authOptions.projectId = this.project_id;
-                logger.debug('Using Service Account for authentication.');
-            }
-            // Initialize the Vertex AI client, passing in the authentication options
-            const multiRegionEndpoint = VERTEX_MULTI_REGION_ENDPOINTS[this.location];
-            this.vertexAI = new VertexAI({
-                project: this.projectId,
-                location: this.location,
-                googleAuthOptions: authOptions,
-                ...(multiRegionEndpoint ? { apiEndpoint: multiRegionEndpoint } : {}),
-            });
-
-            const retrievalTool = this.createGroundingTool()
-
-            this.generativeModel = this.vertexAI.preview.getGenerativeModel({
-                model: this.geminiModel,
-                tools: [retrievalTool]
-            });
-
-        } catch (error) {
-            logger.error('Error initializing Vertex AI client:', error);
-            throw new Error(
-                'Failed to initialize Vertex AI client.  Check your project ID, location, and authentication details.',
-            );
-        }
+    let serviceKey = {};
+    try {
+      const keyPath =
+        process.env.GOOGLE_SERVICE_KEY_FILE || path.join(process.cwd(), 'api', 'data', 'auth.json');
+      serviceKey = require(keyPath);
+    } catch {
+      logger.error('No Service account found.');
     }
 
-    createGroundingTool() {
-        return {
-            retrieval: {
-                vertexAiSearch: {
-                    datastore: this.dataStoreId,
-                },
-                disableAttribution: false,
-            },
-        }
+    this.serviceKey =
+      serviceKey && typeof serviceKey === 'string' ? JSON.parse(serviceKey) : (serviceKey ?? {});
+
+    /** @type {string | null | undefined} */
+    this.project_id = this.serviceKey.project_id;
+    this.client_email = this.serviceKey.client_email;
+    this.private_key = this.serviceKey.private_key;
+    this.access_token = null;
+
+    // Define schema
+    this.schema = z.object({
+      query: z.string().describe('Search word or phrase to Vertex AI Search'),
+    });
+
+    // Initialize properties using helper function
+    this.projectId = this.project_id;
+    this.location = process.env.GOOGLE_LOC;
+    this.dataStoreId = this._initializeField(
+      fields.VERTEX_AI_DATASTORE_ID,
+      'VERTEX_AI_DATASTORE_ID',
+    );
+
+    // Check for required fields if not overridden
+    if (!this.override) {
+      if (!this.projectId) {
+        throw new Error('Missing required field: PROJECT_ID.');
+      }
+      if (!this.location) {
+        throw new Error('Missing required field: LOCATION.');
+      }
+      if (!this.dataStoreId) {
+        throw new Error('Missing required field: VERTEX_AI_DATASTORE_ID.');
+      }
     }
 
-    async _call(data) {
-        const { query } = data;
-
-        try {
-            const streamingResult = await this.generativeModel.generateContentStream({
-                contents: [{ role: 'user', parts: [{ text: query }] }]
-            })
-            const aggregatedResponse = await streamingResult.response;
-            return formatGroundingResponse(aggregatedResponse);
-        } catch (error) {
-            logger.error('Vertex AI Search request failed', error);
-            return 'There was an error with Vertex AI Search.';
-        }
+    if (!this.client_email && !this.private_key) {
+      console.warn(
+        'Warning: No Service Account credentials provided.  Ensure the Compute Engine default service account has the Vertex AI User role if running on a Compute Engine instance.',
+      );
     }
+
+    if (this.override) {
+      return;
+    }
+
+    // Create Vertex AI client
+    try {
+      const authOptions = {};
+      if (this.client_email && this.private_key && this.project_id) {
+        // Use Service Account authentication
+        authOptions.credentials = {
+          client_email: this.client_email,
+          private_key: this.private_key,
+        };
+        authOptions.projectId = this.project_id;
+        logger.debug('Using Service Account for authentication.');
+      }
+      // Initialize the Vertex AI client, passing in the authentication options
+      const multiRegionEndpoint = VERTEX_MULTI_REGION_ENDPOINTS[this.location];
+      this.vertexAI = new VertexAI({
+        project: this.projectId,
+        location: this.location,
+        googleAuthOptions: authOptions,
+        ...(multiRegionEndpoint ? { apiEndpoint: multiRegionEndpoint } : {}),
+      });
+
+      const retrievalTool = this.createGroundingTool();
+
+      this.generativeModel = this.vertexAI.preview.getGenerativeModel({
+        model: this.geminiModel,
+        tools: [retrievalTool],
+      });
+    } catch (error) {
+      logger.error('Error initializing Vertex AI client:', error);
+      throw new Error(
+        'Failed to initialize Vertex AI client.  Check your project ID, location, and authentication details.',
+      );
+    }
+  }
+
+  createGroundingTool() {
+    return {
+      retrieval: {
+        vertexAiSearch: {
+          datastore: this.dataStoreId,
+        },
+        disableAttribution: false,
+      },
+    };
+  }
+
+  async _call(data) {
+    const { query } = data;
+
+    try {
+      const streamingResult = await this.generativeModel.generateContentStream({
+        contents: [{ role: 'user', parts: [{ text: query }] }],
+      });
+      const aggregatedResponse = await streamingResult.response;
+      return formatGroundingResponse(aggregatedResponse);
+    } catch (error) {
+      logger.error('Vertex AI Search request failed', error);
+      return 'There was an error with Vertex AI Search.';
+    }
+  }
 }
 
 module.exports = GoogleVertexAI;

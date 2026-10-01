@@ -1,10 +1,10 @@
-import { useGetStartupConfig } from '~/data-provider';
 import React, { useEffect } from 'react';
-import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
+import ReactMarkdown from 'react-markdown';
+import { useGetStartupConfig } from '~/data-provider';
 import { useLocalize } from '~/hooks';
 
-function TermsOfService({ className }: { className?: string }) {
+function TermsOfService() {
   const { data: config } = useGetStartupConfig();
 
   const localize = useLocalize();
@@ -42,7 +42,7 @@ function TermsOfService({ className }: { className?: string }) {
         </main>
 
         <footer className="mt-10 text-center text-sm text-gray-500">
-          <p>&copy; {new Date().getFullYear()} Go Reply. All Rights Reserved.</p>
+          <p>{localize('com_ui_tos_copyright', { 0: new Date().getFullYear() })}</p>
         </footer>
       </div>
     </div>

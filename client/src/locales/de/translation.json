@@ -2125,6 +2125,7 @@
   "com_ui_tools_view_favorites_empty": "Du hast noch keine Favoriten hinzugefügt",
   "com_ui_tools_view_made_by_you": "Von dir erstellt",
   "com_ui_tools_view_mine_empty": "Du hast noch nichts erstellt",
+  "com_ui_tos_copyright": "© {{0}} Go Reply. Alle Rechte vorbehalten.",
   "com_ui_tos_instructions": "Lesen Sie bitte die folgenden Nutzungsbedingungen sorgfältig durch.",
   "com_ui_transferred_to": "Übergeben an",
   "com_ui_travel": "Reisen",
