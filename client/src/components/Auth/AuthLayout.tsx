@@ -3,8 +3,6 @@ import { TStartupConfig } from 'librechat-data-provider';
 import { ErrorMessage } from '~/components/Auth/ErrorMessage';
 import { TranslationKeys, useLocalize } from '~/hooks';
 import SocialLoginRender from './SocialLoginRender';
-import { BlinkAnimation } from './BlinkAnimation';
-import { Banner } from '../Banners';
 import Footer from './Footer';
 
 function AuthLayout({
@@ -22,7 +20,7 @@ function AuthLayout({
   startupConfig: TStartupConfig | null | undefined;
   startupConfigError: unknown | null | undefined;
   pathname: string;
-  error: string | null;
+  error: TranslationKeys | null;
 }) {
   const localize = useLocalize();
   const Description = () => (
@@ -66,15 +64,14 @@ function AuthLayout({
 
   return (
     <div className="parent relative flex min-h-screen w-screen flex-col px-2 pt-2">
-      <div className="w-full flex-wrap px-2 pb-20 pt-2 md:px-20  md:pb-20 md:pt-16 lg:px-32 lg:pb-20 lg:pt-16">
+      <div className="absolute bottom-0 left-0 md:m-4">
+        <ThemeSelector />
+      </div>
+      <div className="w-full flex-wrap px-2 pb-20 pt-2 md:px-20 md:pb-20 md:pt-16 lg:px-32 lg:pb-20 lg:pt-16">
         <nav className="flex justify-between py-3">
           <div className="flex flex-wrap items-center gap-6">
             <a href="/">
-              <img
-                src="/assets/main_logo.png"
-                className="h-20 w-full object-contain"
-                alt="Logo"
-              />
+              <img src="/assets/main_logo.png" className="h-20 w-full object-contain" alt="Logo" />
             </a>
             <div className="rounded-full bg-blue-400 px-3 py-0.5 font-medium text-white dark:bg-blue-500">
               {localize('com_header_description')}
@@ -92,6 +89,7 @@ function AuthLayout({
               </h1>
             )}
             <Description />
+            <DisplayError />
             {children}
             <div className="mt-12">
               {!pathname.includes('2fa') &&
@@ -102,6 +100,7 @@ function AuthLayout({
           </div>
         </div>
       </div>
+      <Footer startupConfig={startupConfig} />
     </div>
   );
 }
