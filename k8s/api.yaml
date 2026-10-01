@@ -297,6 +297,11 @@ spec:
                 secretKeyRef:
                   key: JWT_SECRET
                   name: librechat-credentials-env
+            - name: LANGFUSE_TRACING_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  key: LANGFUSE_TRACING_ENABLED
+                  name: env
             - name: LDAP_BIND_CREDENTIALS
               valueFrom:
                 configMapKeyRef:
