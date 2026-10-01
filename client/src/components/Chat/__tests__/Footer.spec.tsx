@@ -23,10 +23,10 @@ jest.mock('~/hooks', () => ({
 }));
 
 describe('Footer', () => {
-  test('opens the default LibreChat site link in a new tab', () => {
+  test('opens the default product site link in a new tab', () => {
     render(<Footer startupConfig={null} />);
-    const link = screen.getByRole('link', { name: /LibreChat/ });
-    expect(link).toHaveAttribute('href', 'https://librechat.ai');
+    const link = screen.getByRole('link', { name: /Go GenAI Studio/ });
+    expect(link).toHaveAttribute('href', 'https://www.reply.com/go-reply/en/');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
