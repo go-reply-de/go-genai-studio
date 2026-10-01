@@ -9,6 +9,7 @@ import {
   STANDALONE_PATTERN,
   INVALID_CITATION_REGEX,
 } from '~/utils/citations';
+import { asAnchors } from '~/components/Messages/groundingAnchors';
 
 type Source = {
   link: string;
@@ -62,6 +63,7 @@ export default function useCopyToClipboard({
           return acc;
         }, '');
       }
+      messageText = asAnchors(messageText);
 
       // Early return if no search data
       if (!searchResults || Object.keys(searchResults).length === 0) {

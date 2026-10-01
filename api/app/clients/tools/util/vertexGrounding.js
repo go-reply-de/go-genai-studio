@@ -38,4 +38,28 @@ function formatGroundingResponse(response) {
     return result.length > MAX_OUTPUT_CHARS ? `${result.slice(0, MAX_OUTPUT_CHARS)}...` : result;
 }
 
-module.exports = { formatGroundingResponse };
+/**
+ * Splits a grounding response into the three parts the source policy needs.
+ * Separate from `formatGroundingResponse`, which stays as-is for the Vertex AI
+ * Search tool.
+ */
+function extractGroundingResponse(response) {
+    const candidate = response?.candidates?.[0];
+    if (!candidate) {
+        return { text: '', chunks: [], supports: [] };
+    }
+
+    const text = (candidate.content?.parts ?? [])
+        .map((part) => part.text)
+        .filter(Boolean)
+        .join('\n')
+        .trim();
+
+    return {
+        text,
+        chunks: candidate.groundingMetadata?.groundingChunks ?? [],
+        supports: candidate.groundingMetadata?.groundingSupports ?? [],
+    };
+}
+
+module.exports = { formatGroundingResponse, extractGroundingResponse };

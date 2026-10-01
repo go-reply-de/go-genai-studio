@@ -6,6 +6,7 @@ import type { TMessageProps, TMessageIcon, TMessageChatContext } from '~/common'
 import { useAttachments, useLocalize, useMessageActions, useContentMetadata } from '~/hooks';
 import { cn, getHeaderPrefixForScreenReader, getMessageAriaLabel } from '~/utils';
 import MessageTimestamp from '~/components/Chat/Messages/ui/MessageTimestamp';
+import GroundingSources from '~/components/Messages/GroundingSources';
 import ContentParts from '~/components/Chat/Messages/Content/ContentParts';
 import PlaceholderRow from '~/components/Chat/Messages/ui/PlaceholderRow';
 import SiblingSwitch from '~/components/Chat/Messages/SiblingSwitch';
@@ -230,6 +231,11 @@ const ContentRender = memo(function ContentRender({
               createdAt={msg.createdAt ?? msg.clientTimestamp}
               conversationId={conversation?.conversationId}
               content={msg.content as Array<TMessageContentParts | undefined>}
+            />
+            <GroundingSources
+              message={msg}
+              searchResults={searchResults}
+              isSubmitting={isSubmitting}
             />
           </div>
           {hasNoChildren && isSubmitting ? (

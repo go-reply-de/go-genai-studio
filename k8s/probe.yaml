@@ -1,0 +1,69 @@
+# In-cluster availability probe. Stands in for the Cloud Monitoring uptime
+# check, which org policy blocks in the sovereign projects: an uptime check
+# carries no location field, so constraints/gcp.resourceLocations rejects the
+# API outright rather than failing a region test.
+#
+# Deliberately NOT through the load balancer. Hitting api-service directly
+# bypasses IAP, so a green result means LibreChat answered rather than the
+# login redirect answering - and it writes no URLs, client IPs or query
+# strings into Cloud Logging, which is what kept LB request logging off.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: api-probe
+  name: api-probe
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-probe
+  template:
+    metadata:
+      labels:
+        app: api-probe
+    spec:
+      containers:
+        - name: probe
+          image: curlimages/curl:8.11.1
+          command: ["/bin/sh", "-c"]
+          args:
+            # One JSON object per line: GKE's logging agent parses container
+            # stdout into jsonPayload and honours "severity", so the alert is a
+            # log-based metric and nothing leaves the cluster to produce it.
+            - |
+              while true; do
+                # No "|| echo 000": curl already prints 000 on a connection
+                # failure, so the fallback would concatenate into 000000.
+                CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time "$TIMEOUT" "$TARGET")
+                [ -n "$CODE" ] || CODE=000
+                if [ "$CODE" = "200" ]; then
+                  printf '{"severity":"INFO","probe":"api","ok":true,"status":"%s"}\n' "$CODE"
+                else
+                  printf '{"severity":"ERROR","probe":"api","ok":false,"status":"%s"}\n' "$CODE"
+                fi
+                sleep "$INTERVAL"
+              done
+          env:
+            # api-service, not api-service-gw: it exists in every environment,
+            # where the Gateway service only exists where the regional LB is on.
+            #
+            # /api/banner, not /login: optionalJwtAuth so it answers without a
+            # session, it reads the Banner collection so a 200 means Mongo is
+            # reachable too, and it returns 500 when that read throws. /login is
+            # the SPA shell and returns 200 whatever state the backend is in.
+            - name: TARGET
+              value: "http://api-service/api/banner"
+            - name: INTERVAL
+              value: "###_PROBE_INTERVAL###"
+            - name: TIMEOUT
+              value: "###_PROBE_TIMEOUT###"
+          resources:
+            # Autopilot's floor for a regular pod - asking for less is rounded
+            # up to this anyway, so it is stated rather than discovered.
+            requests:
+              cpu: 250m
+              memory: 512Mi
+      restartPolicy: Always

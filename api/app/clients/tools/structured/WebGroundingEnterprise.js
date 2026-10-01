@@ -2,8 +2,19 @@ const path = require('path');
 const { z } = require('zod');
 const { Tool } = require('@librechat/agents/langchain/tools');
 const { VertexAI } = require('@google-cloud/vertexai');
+const { Tools } = require('librechat-data-provider');
 const { logger } = require('@librechat/data-schemas');
-const { formatGroundingResponse } = require('../util/vertexGrounding');
+const { extractGroundingResponse } = require('../util/vertexGrounding');
+const {
+    parsePolicyConfig,
+    buildGroundingPrompt,
+    resultDomains,
+    parseSourceBlock,
+    mergeSources,
+    anchorClaims,
+    formatAnswer,
+    toOrganicSources,
+} = require('../util/groundingPolicy');
 
 /**
  * Vertex AI multi-region location values (e.g. `eu`, `us`) are not valid
@@ -17,6 +28,36 @@ const VERTEX_MULTI_REGION_ENDPOINTS = {
     global: 'aiplatform.googleapis.com',
 };
 
+const warned = new Set();
+function warnOnce(message) {
+    if (!warned.has(message)) {
+        warned.add(message);
+        logger.warn(message);
+    }
+}
+
+/** Mounted next to manifest.json from the grounding-sources ConfigMap. */
+function loadPolicy() {
+    const configPath =
+        process.env.WEB_GROUNDING_SOURCES_FILE ||
+        path.join(__dirname, '..', 'grounding-sources.json');
+    let raw = null;
+    try {
+        raw = require(configPath);
+    } catch (e) {
+        logger.debug('No grounding source config mounted.');
+    }
+    const policy = parsePolicyConfig(raw);
+    if (!policy.excludeDomains.length) {
+        warnOnce('web_grounding_enterprise has no exclusion list configured; searching without exclusions.');
+    }
+    return policy;
+}
+
+function contentsOf(text) {
+    return { contents: [{ role: 'user', parts: [{ text }] }] };
+}
+
 class WebGroundingEnterprise extends Tool {
 
     // Helper function for initializing properties
@@ -28,11 +69,17 @@ class WebGroundingEnterprise extends Tool {
         super();
         this.name = 'web_grounding_enterprise';
         this.description =
-            'Use the GDPR-compliant \'web_grounding_enterprise\' tool to retrieve search results from the web.';
+            'GDPR-compliant web search for medical information that looks in the AWMF guideline register ' +
+            'and the AWMF societies first. Use it only when you do not know the topic well enough ' +
+            'or the user asks for a web search.';
+        this.responseFormat = 'content_and_artifact';
 
         /* Used to initialize the Tool without necessary variables. */
         this.override = fields.override ?? false;
-        this.geminiModel = fields.geminiModel || 'gemini-2.5-flash';
+        this.policy = loadPolicy();
+        this.geminiModel = process.env.WEB_GROUNDING_MODEL || fields.geminiModel || 'gemini-2.5-flash';
+        /** Thinking past LOW makes Gemini Flash search in rounds and return no attributable chunks. */
+        this.thinkingLevel = process.env.WEB_GROUNDING_THINKING_LEVEL;
 
         let serviceKey = {};
         try {
@@ -104,10 +151,10 @@ class WebGroundingEnterprise extends Tool {
 
             this.generativeModel = this.vertexAI.preview.getGenerativeModel({
                 model: this.geminiModel,
-                tools: [{
-                    "enterpriseWebSearch": {
-                    }
-                }]
+                tools: [{ enterpriseWebSearch: { excludeDomains: this.policy.excludeDomains } }],
+                ...(this.thinkingLevel
+                    ? { generationConfig: { thinkingConfig: { thinkingLevel: this.thinkingLevel } } }
+                    : {}),
             });
 
         } catch (error) {
@@ -118,18 +165,40 @@ class WebGroundingEnterprise extends Tool {
         }
     }
 
-    async _call(data) {
+    /** An empty result leaves nothing to cite, so it earns exactly one more attempt. */
+    async _search(query) {
+        const request = contentsOf(buildGroundingPrompt(query));
+        const first = extractGroundingResponse((await this.generativeModel.generateContent(request)).response);
+        if (resultDomains(first.chunks).length) {
+            return first;
+        }
+        logger.info('Web grounding returned no attributable results; retrying once.');
+        return extractGroundingResponse((await this.generativeModel.generateContent(request)).response);
+    }
+
+    /** The text is what the agent reads; the artifact feeds LibreChat's Sources panel. */
+    async _call(data, _runManager, config) {
         const { query } = data;
 
         try {
-            const streamingResult = await this.generativeModel.generateContentStream({
-                contents: [{ role: 'user', parts: [{ text: query }] }]
-            })
-            const aggregatedResponse = await streamingResult.response;
-            return formatGroundingResponse(aggregatedResponse);
+            const { text, chunks, supports } = await this._search(query);
+            const { sources } = parseSourceBlock(text);
+            const { entries, dropped, numbering } = mergeSources({ sources, chunks, supports });
+            const turn = config?.toolCall?.turn ?? 0;
+
+            const answer = formatAnswer({
+                body: anchorClaims({ text, supports, chunks, entries, numbering, turn }),
+                entries,
+                dropped,
+                grounded: resultDomains(chunks).length > 0,
+            });
+            if (!entries.length) {
+                return [answer, undefined];
+            }
+            return [answer, { [Tools.web_search]: { turn, organic: toOrganicSources(entries) } }];
         } catch (error) {
             logger.error('Web Grounding for Enterprise request failed', error);
-            return 'There was an error with the Web Grounding for Enterprise Search.';
+            return ['There was an error with the Web Grounding for Enterprise Search.', undefined];
         }
     }
 }

@@ -13,6 +13,7 @@ import {
 } from '~/components/MCPUIResource';
 import { Citation, CompositeCitation, HighlightedText } from '~/components/Web/Citation';
 import { Artifact, artifactPlugin } from '~/components/Artifacts/Artifact';
+import { groundingAnchorsPlugin } from '~/components/Messages/groundingAnchors';
 import { code, a, p, img, table } from './MarkdownComponents';
 import { langSubset, remarkApproxTilde } from '~/utils';
 import { unicodeCitation } from '~/components/Web';
@@ -42,6 +43,7 @@ export const getRemarkPlugins = (): PluggableList => {
       remarkGfm,
       remarkDirective,
       artifactPlugin,
+      groundingAnchorsPlugin,
       [remarkMath, { singleDollarTextMath: false }],
       unicodeCitation,
       mcpUIResourcePlugin,
