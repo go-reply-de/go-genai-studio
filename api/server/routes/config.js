@@ -1,16 +1,24 @@
 const express = require('express');
 const {
   isEnabled,
+  isLangfuseConnectionAvailable,
+  isLangfuseFanoutEnabled,
   getBalanceConfig,
   getCloudFrontConfig,
+  getAppConfigOptionsFromUser,
   resolveBuildInfo,
   resolveTitleTiming,
   sanitizeModelSpecs,
+  excludeHiddenModelSpecs,
   isFileSnapshotEnabled,
+  getEndpointsDropParamsMap,
+  resolveCodeEnvironmentDecisionVersion,
+  resolveCodeEnvironmentMoveCapabilities,
+  resolveCodeEnvironmentTransitionVersion,
 } = require('@librechat/api');
 const { EModelEndpoint, defaultSocialLogins } = require('librechat-data-provider');
 const { logger, getTenantId, SystemCapabilities } = require('@librechat/data-schemas');
-const { hasCapability } = require('~/server/middleware/roles/capabilities');
+const { hasCapability, hasConfigCapability } = require('~/server/middleware/roles/capabilities');
 const { getLdapConfig } = require('~/server/services/Config/ldap');
 const { getRumConfig } = require('~/server/services/Config/rum');
 const { getAppConfig } = require('~/server/services/Config/app');
@@ -243,14 +251,43 @@ router.get('/', async function (req, res) {
       return res.status(200).send(payload);
     }
 
-    const appConfig = await getAppConfig({
-      role: req.user.role,
-      userId: req.user.id,
-      tenantId: req.user.tenantId || getTenantId(),
-    });
+    const appConfig = await getAppConfig(getAppConfigOptionsFromUser(req.user));
+    const codeEnvironmentDecisionVersion = resolveCodeEnvironmentDecisionVersion(
+      process.env.CODE_ENVIRONMENT_DECISION_VERSION,
+    );
+    const codeEnvironmentMoveCapabilities = resolveCodeEnvironmentMoveCapabilities(appConfig);
+    const codeEnvironmentTransitionVersion = resolveCodeEnvironmentTransitionVersion(appConfig);
+
+    const endpointsDropParamsMap = getEndpointsDropParamsMap(appConfig?.endpoints);
 
     const balanceConfig = getBalanceConfig(appConfig);
     const cloudFront = buildCloudFrontStartupConfig();
+    const langfuseFanoutEnabled = isLangfuseFanoutEnabled();
+    const langfuseConnectionAvailable = isLangfuseConnectionAvailable();
+    let langfuseConnectionAccess = false;
+
+    if (langfuseConnectionAvailable) {
+      try {
+        const userId = req.user.id ?? req.user._id?.toString();
+        if (userId) {
+          const capabilityUser = {
+            id: userId,
+            role: req.user.role ?? '',
+            tenantId: req.user.tenantId,
+            idOnTheSource: req.user.idOnTheSource ?? null,
+          };
+          const hasAdminAccess = await hasCapability(
+            capabilityUser,
+            SystemCapabilities.ACCESS_ADMIN,
+          );
+          if (hasAdminAccess) {
+            langfuseConnectionAccess = await hasConfigCapability(capabilityUser, 'langfuse');
+          }
+        }
+      } catch (err) {
+        logger.warn(`[config] Langfuse capability check failed: ${err.message}`);
+      }
+    }
 
     /** @type {TStartupConfig} */
     const payload = {
@@ -265,7 +302,7 @@ router.get('/', async function (req, res) {
         endpoint: EModelEndpoint.agents,
       }),
       turnstile: appConfig?.turnstileConfig,
-      modelSpecs: sanitizeModelSpecs(appConfig?.modelSpecs),
+      modelSpecs: sanitizeModelSpecs(excludeHiddenModelSpecs(appConfig?.modelSpecs)),
       balance: balanceConfig,
       bundlerURL: process.env.SANDPACK_BUNDLER_URL,
       staticBundlerURL: process.env.SANDPACK_STATIC_BUNDLER_URL,
@@ -276,8 +313,17 @@ router.get('/', async function (req, res) {
       conversationImportMaxFileSize: process.env.CONVERSATION_IMPORT_MAX_FILE_SIZE_BYTES
         ? parseInt(process.env.CONVERSATION_IMPORT_MAX_FILE_SIZE_BYTES, 10)
         : 0,
+      langfuseFanoutEnabled,
+      langfuseConnectionAccess,
+      insightsEnabled: isEnabled(process.env.ENABLE_INSIGHTS),
+      compactionEnabled: appConfig?.summarization?.enabled !== false,
+      ...(codeEnvironmentDecisionVersion != null ? { codeEnvironmentDecisionVersion } : {}),
+      ...codeEnvironmentMoveCapabilities,
+      ...(codeEnvironmentTransitionVersion != null ? { codeEnvironmentTransitionVersion } : {}),
       ...(cloudFront ? { cloudFront } : {}),
       ...(rum ? { rum } : {}),
+      fileUploadSseEnabled: isEnabled(process.env.FILE_UPLOAD_SSE_ENABLED),
+      endpointsDropParamsMap: endpointsDropParamsMap,
     };
 
     const webSearch = buildWebSearchConfig(appConfig);
@@ -290,15 +336,19 @@ router.get('/', async function (req, res) {
       payload.buildInfo = buildInfo;
     }
 
-    if (!payload.allowAccountDeletion) {
+    const adminPanelURL = process.env.ADMIN_PANEL_URL;
+    if (adminPanelURL || !payload.allowAccountDeletion) {
       try {
         const userId = req.user.id ?? req.user._id?.toString();
         if (userId) {
-          const canDelete = await hasCapability(
+          const hasAdminAccess = await hasCapability(
             { id: userId, role: req.user.role ?? '', tenantId: req.user.tenantId },
             SystemCapabilities.ACCESS_ADMIN,
           );
-          if (canDelete) {
+          if (hasAdminAccess && adminPanelURL) {
+            payload.adminPanelURL = adminPanelURL;
+          }
+          if (hasAdminAccess && !payload.allowAccountDeletion) {
             payload.allowAccountDeletion = true;
           }
         }

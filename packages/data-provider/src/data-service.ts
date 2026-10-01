@@ -1,10 +1,21 @@
 import type { AxiosResponse } from 'axios';
-import type { TContextProjectionRequest, TContextUsageEvent } from './types/runs';
+import type {
+  TTracePage,
+  TTracePageParams,
+  TTraceAvailability,
+  TTraceRecordParams,
+  TTraceRecordDetail,
+} from './types/traces';
+import type { TInsightsAccessResponse, TInsightsParams, TInsightsResponse } from './types/insights';
 import type { TFileConfig } from './file-config';
+import type * as tl from './types/tools';
 import type * as t from './types';
 import * as permissions from './accessPermissions';
 import * as endpoints from './api-endpoints';
+import { uploadEventStream } from './upload';
 import * as mcp from './types/mcpServers';
+import * as qt from './types/queuedTurns';
+import * as sch from './types/schedules';
 import * as a from './types/assistants';
 import * as m from './types/mutations';
 import * as ag from './types/agents';
@@ -15,6 +26,71 @@ import * as config from './config';
 import request from './request';
 import * as s from './schemas';
 import * as r from './roles';
+
+export function getInsights(params: TInsightsParams = {}): Promise<TInsightsResponse> {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (Array.isArray(value)) {
+      value.forEach((item) => query.append(key, String(item)));
+    } else if (value !== undefined && value !== null && value !== '') {
+      query.set(key, String(value));
+    }
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return request.get(`${endpoints.insights()}${suffix}`);
+}
+
+export function getInsightsAccess(): Promise<TInsightsAccessResponse> {
+  return request.get(endpoints.insightsAccess());
+}
+
+export function getConversationTraceAvailability(
+  conversationId: string,
+): Promise<TTraceAvailability> {
+  return request.get(endpoints.conversationTraceAvailability(conversationId));
+}
+
+export function getConversationTraceRecords(
+  { conversationId, cursor }: TTracePageParams,
+  signal?: AbortSignal,
+): Promise<TTracePage> {
+  return request.get(
+    endpoints.conversationTraceRecords(conversationId, cursor),
+    signal ? { signal } : undefined,
+  );
+}
+
+export function getConversationTraceRecord(
+  { conversationId, recordId, messageId, sourceId }: TTraceRecordParams,
+  signal?: AbortSignal,
+): Promise<TTraceRecordDetail> {
+  return request.get(
+    endpoints.conversationTraceRecord(conversationId, recordId, messageId, sourceId),
+    signal ? { signal } : undefined,
+  );
+}
+
+export function getLangfuseConnection(): Promise<t.TLangfuseConnectionStatus> {
+  return request.get(endpoints.adminLangfuseConnection());
+}
+
+export function updateLangfuseConnection(
+  payload: t.TUpdateLangfuseConnectionRequest,
+): Promise<t.TLangfuseConnectionStatus> {
+  return request.put(endpoints.adminLangfuseConnection(), payload);
+}
+
+export function testLangfuseConnection(
+  payload: t.TLangfuseConnectionTestRequest,
+): Promise<t.TLangfuseConnectionTestResponse> {
+  return request.post(endpoints.adminLangfuseConnectionTest(), payload);
+}
+
+export function getLangfuseSessionLink(
+  conversationId: string,
+): Promise<t.TLangfuseSessionLinkResponse> {
+  return request.get(endpoints.adminLangfuseSessionLink(conversationId));
+}
 
 export function revokeUserKey(name: string): Promise<unknown> {
   return request.delete(endpoints.revokeUserKey(name));
@@ -28,25 +104,78 @@ export function deleteUser(payload?: t.TDeleteUserRequest): Promise<unknown> {
   return request.deleteWithOptions(endpoints.deleteUser(), { data: payload });
 }
 
+export function getCodeEnvironments(): Promise<t.TCodeEnvironmentsResponse> {
+  return request.get(endpoints.codeEnvironments());
+}
+
+export function getCodeEnvironmentStatus(id: string): Promise<t.TCodeEnvironmentStatusResponse> {
+  return request.get(endpoints.codeEnvironmentStatus(id));
+}
+
+export function moveConversationCodeEnvironment({
+  conversationId,
+  from,
+  to,
+}: t.TCodeEnvironmentMoveRequest): Promise<t.TCodeEnvironmentMoveResponse> {
+  return request.patch(endpoints.codeEnvironmentConversationDecision(conversationId), {
+    from,
+    to,
+  });
+}
+
+export function pairCodeEnvironment(payload: {
+  name: string;
+  controlPlaneId: string;
+}): Promise<t.TCodeEnvironmentPairingResponse> {
+  return request.post(endpoints.codeEnvironmentPairings(), payload);
+}
+
+export function deleteCodeEnvironment(
+  id: string,
+): Promise<{ environment: t.TCodeEnvironmentSummary }> {
+  return request.delete(endpoints.codeEnvironmentById(id));
+}
+
+export function updateCodeEnvironmentSettings({
+  id,
+  settings,
+}: {
+  id: string;
+  settings: config.CodeEnvironmentUserSettings;
+}): Promise<{ environment: t.TCodeEnvironmentSummary }> {
+  return request.patch(endpoints.codeEnvironmentSettings(id), { settings });
+}
+
 export function getFavorites(): Promise<q.TUserFavorite[]> {
   return request.get(`${endpoints.apiBaseUrl()}/api/user/settings/favorites`);
 }
 
 export function updateFavorites(favorites: q.TUserFavorite[]): Promise<q.TUserFavorite[]> {
-  return request.post(`${endpoints.apiBaseUrl()}/api/user/settings/favorites`, { favorites });
+  return request.post(`${endpoints.apiBaseUrl()}/api/user/settings/favorites`, {
+    favorites,
+  });
 }
 
-/**
- * Skill favorites (star-a-skill). The backend route is phase 2 — see the
- * original UI PR for the client surface. Until then, these resolve with
- * an empty list so the UI hooks compile and the Star button is a no-op.
- */
-export function getSkillFavorites(): Promise<string[]> {
-  return Promise.resolve([] as string[]);
+/** Combined Pinned-section display order: favorite and pinned-chat entry keys interleaved. */
+export function getPinnedOrder(): Promise<string[]> {
+  return request.get(endpoints.pinnedOrder());
 }
 
-export function updateSkillFavorites(skillFavorites: string[]): Promise<string[]> {
-  return Promise.resolve(skillFavorites);
+export function updatePinnedOrder(pinnedOrder: string[]): Promise<string[]> {
+  return request.post(endpoints.pinnedOrder(), { pinnedOrder });
+}
+
+/** Tool favorites — starred marketplace items (builtins, tools, MCP servers, skills). */
+export function getToolFavorites(): Promise<q.TToolFavorite[]> {
+  return request.get(endpoints.toolFavorites());
+}
+
+export function addToolFavorite(favorite: q.TToolFavorite): Promise<q.TToolFavorite> {
+  return request.put(endpoints.toolFavorite(favorite.itemType, favorite.itemId));
+}
+
+export function removeToolFavorite(favorite: q.TToolFavorite): Promise<{ ok: boolean }> {
+  return request.delete(endpoints.toolFavorite(favorite.itemType, favorite.itemId));
 }
 
 /** Per-user skill active/inactive overrides. */
@@ -96,7 +225,10 @@ export function updateSharedLink(
   targetMessageId?: string,
   snapshotFiles?: boolean,
 ): Promise<t.TSharedLinkResponse> {
-  return request.patch(endpoints.updateSharedLink(shareId), { targetMessageId, snapshotFiles });
+  return request.patch(endpoints.updateSharedLink(shareId), {
+    targetMessageId,
+    snapshotFiles,
+  });
 }
 
 export function deleteSharedLink(shareId: string): Promise<m.TDeleteSharedLinkResponse> {
@@ -148,6 +280,12 @@ export function getSearchEnabled(): Promise<boolean> {
 
 export function getUser(): Promise<t.TUser> {
   return request.get(endpoints.user());
+}
+
+export function updateUserPreferences(
+  preferences: t.TUpdateUserPreferencesRequest,
+): Promise<t.TUpdateUserPreferencesResponse> {
+  return request.patch(endpoints.userPreferences(), preferences);
 }
 
 export function getUserBalance(): Promise<t.TBalanceResponse> {
@@ -205,7 +343,7 @@ export const updateUserPlugins = (payload: t.TUpdateUserPlugins) => {
   return request.post(endpoints.userPlugins(), payload);
 };
 
-export const reinitializeMCPServer = (serverName: string) => {
+export const reinitializeMCPServer = (serverName: string): Promise<mcp.MCPReinitializeResponse> => {
   return request.post(endpoints.mcpReinitialize(serverName));
 };
 
@@ -235,6 +373,10 @@ export function cancelMCPOAuth(serverName: string): Promise<m.CancelMCPOAuthResp
   return request.post(endpoints.cancelMCPOAuth(serverName), {});
 }
 
+export function getMCPOAuthStatus(flowId: string): Promise<mcp.MCPOAuthStatusResponse> {
+  return request.get(endpoints.mcpOAuthStatus(flowId));
+}
+
 /* Config */
 
 export type StartupConfigOptions = {
@@ -257,12 +399,6 @@ export const getAIEndpoints = (): Promise<t.TEndpointsConfig> => {
 
 export const getTokenConfig = (): Promise<t.TTokenConfigMap> => {
   return request.get(endpoints.tokenConfig());
-};
-
-export const getContextProjection = (
-  payload: TContextProjectionRequest,
-): Promise<TContextUsageEvent | null> => {
-  return request.post(endpoints.contextProjection(), payload);
 };
 
 export const getModels = async (): Promise<t.TModelsConfig> => {
@@ -462,14 +598,34 @@ export const getFileConfig = (): Promise<TFileConfig> => {
 export const uploadImage = (
   data: FormData,
   signal?: AbortSignal | null,
+  sseEnabled = false,
 ): Promise<f.TFileUpload> => {
   const requestConfig = signal ? { signal } : undefined;
+  if (sseEnabled) {
+    return uploadEventStream(endpoints.images(), data, signal);
+  }
   return request.postMultiPart(endpoints.images(), data, requestConfig);
 };
 
-export const uploadFile = (data: FormData, signal?: AbortSignal | null): Promise<f.TFileUpload> => {
+export const uploadFile = (
+  data: FormData,
+  signal?: AbortSignal | null,
+  sseEnabled = false,
+): Promise<f.TFileUpload> => {
   const requestConfig = signal ? { signal } : undefined;
+  if (sseEnabled) {
+    return uploadEventStream(endpoints.files(), data, signal);
+  }
   return request.postMultiPart(endpoints.files(), data, requestConfig);
+};
+
+/**
+ * Marks uploaded files as used (owner-scoped TTL touch) so the upload-window
+ * TTL cannot reap attachments held in a client-side queue during a long run.
+ * Best-effort: callers fire-and-forget — send-time marking is the backstop.
+ */
+export const markFilesUsage = (body: f.TFilesUsageBody): Promise<f.TFilesUsageResponse> => {
+  return request.post(endpoints.fileUsage(), body);
 };
 
 /* actions */
@@ -512,11 +668,11 @@ export const deleteAction = async ({
  * Agents
  */
 
-export const createAgent = ({ ...data }: a.AgentCreateParams): Promise<a.Agent> => {
+export const createAgent = ({ ...data }: ag.AgentCreateParams): Promise<ag.Agent> => {
   return request.post(endpoints.agents({}), data);
 };
 
-export const getAgentById = ({ agent_id }: { agent_id: string }): Promise<a.Agent> => {
+export const getAgentById = ({ agent_id }: { agent_id: string }): Promise<ag.Agent> => {
   return request.get(
     endpoints.agents({
       path: agent_id,
@@ -524,10 +680,18 @@ export const getAgentById = ({ agent_id }: { agent_id: string }): Promise<a.Agen
   );
 };
 
-export const getExpandedAgentById = ({ agent_id }: { agent_id: string }): Promise<a.Agent> => {
+export const getExpandedAgentById = ({ agent_id }: { agent_id: string }): Promise<ag.Agent> => {
   return request.get(
     endpoints.agents({
       path: `${agent_id}/expanded`,
+    }),
+  );
+};
+
+export const getAgentVersions = ({ agent_id }: { agent_id: string }): Promise<ag.Agent[]> => {
+  return request.get(
+    endpoints.agents({
+      path: `${agent_id}/versions`,
     }),
   );
 };
@@ -537,8 +701,8 @@ export const updateAgent = ({
   data,
 }: {
   agent_id: string;
-  data: a.AgentUpdateParams;
-}): Promise<a.Agent> => {
+  data: ag.AgentUpdateParams;
+}): Promise<ag.Agent> => {
   return request.patch(
     endpoints.agents({
       path: agent_id,
@@ -549,7 +713,7 @@ export const updateAgent = ({
 
 export const duplicateAgent = ({
   agent_id,
-}: m.DuplicateAgentBody): Promise<{ agent: a.Agent; actions: ag.Action[] }> => {
+}: m.DuplicateAgentBody): Promise<{ agent: ag.Agent; actions: ag.Action[] }> => {
   return request.post(
     endpoints.agents({
       path: `${agent_id}/duplicate`,
@@ -565,7 +729,7 @@ export const deleteAgent = ({ agent_id }: m.DeleteAgentBody): Promise<void> => {
   );
 };
 
-export const listAgents = (params: a.AgentListParams): Promise<a.AgentListResponse> => {
+export const listAgents = (params: ag.AgentListParams): Promise<ag.AgentListResponse> => {
   return request.get(
     endpoints.agents({
       options: params,
@@ -579,7 +743,7 @@ export const revertAgentVersion = ({
 }: {
   agent_id: string;
   version_index: number;
-}): Promise<a.Agent> => request.post(endpoints.revertAgentVersion(agent_id), { version_index });
+}): Promise<ag.Agent> => request.post(endpoints.revertAgentVersion(agent_id), { version_index });
 
 /* Marketplace */
 
@@ -600,7 +764,7 @@ export const getMarketplaceAgents = (params: {
   limit?: number;
   cursor?: string;
   promoted?: 0 | 1;
-}): Promise<a.AgentListResponse> => {
+}): Promise<ag.AgentListResponse> => {
   return request.get(
     endpoints.agents({
       // path: 'marketplace',
@@ -714,7 +878,7 @@ export const uploadAssistantAvatar = (data: m.AssistantAvatarVariables): Promise
   );
 };
 
-export const uploadAgentAvatar = (data: m.AgentAvatarVariables): Promise<a.Agent> => {
+export const uploadAgentAvatar = (data: m.AgentAvatarVariables): Promise<ag.Agent> => {
   return request.postMultiPart(
     `${endpoints.images()}/agents/${data.agent_id}/avatar`,
     data.formData,
@@ -763,7 +927,7 @@ export const deleteFiles = async (payload: {
   files: f.BatchFile[];
   agent_id?: string;
   assistant_id?: string;
-  tool_resource?: a.EToolResources;
+  tool_resource?: tl.EToolResources;
 }): Promise<f.DeleteFilesResponse> =>
   request.deleteWithOptions(endpoints.files(), {
     data: payload,
@@ -799,8 +963,21 @@ export function forkConversation(payload: t.TForkConvoRequest): Promise<t.TForkC
   return request.post(endpoints.forkConversation(), payload);
 }
 
+export function forkSharedConversation(
+  shareId: string,
+  targetMessageIndex?: number,
+  shareRevision?: string,
+): Promise<t.TForkConvoResponse> {
+  return request.post(endpoints.forkSharedMessages(shareId), {
+    targetMessageIndex,
+    shareRevision,
+  });
+}
+
 export function deleteConversation(payload: t.TDeleteConversationRequest) {
-  return request.deleteWithOptions(endpoints.deleteConversation(), { data: { arg: payload } });
+  return request.deleteWithOptions(endpoints.deleteConversation(), {
+    data: { arg: payload },
+  });
 }
 
 export function clearAllConversations(): Promise<unknown> {
@@ -833,6 +1010,10 @@ export function archiveConversation(
   return request.post(endpoints.archiveConversation(), { arg: payload });
 }
 
+export function archiveAllConversations(): Promise<t.TArchiveAllConversationsResponse> {
+  return request.post(endpoints.archiveAllConversations(), {});
+}
+
 export function listProjects(params?: q.ProjectListParams): Promise<q.ProjectListResponse> {
   return request.get(endpoints.projects(params ?? {}));
 }
@@ -858,7 +1039,9 @@ export function assignConversationToProject(
   payload: t.TAssignConversationToProjectRequest,
 ): Promise<t.TAssignConversationToProjectResponse> {
   const { conversationId, projectId } = payload;
-  return request.put(endpoints.projectConversation(conversationId), { projectId });
+  return request.put(endpoints.projectConversation(conversationId), {
+    projectId,
+  });
 }
 
 export function pinConversation(
@@ -881,7 +1064,9 @@ export function updateMessage(payload: t.TUpdateMessageRequest): Promise<unknown
     throw new Error('conversationId is required');
   }
 
-  return request.put(endpoints.messages({ conversationId, messageId }), { text });
+  return request.put(endpoints.messages({ conversationId, messageId }), {
+    text,
+  });
 }
 
 export function updateMessageContent(payload: t.TUpdateMessageContent): Promise<unknown> {
@@ -890,7 +1075,10 @@ export function updateMessageContent(payload: t.TUpdateMessageContent): Promise<
     throw new Error('conversationId is required');
   }
 
-  return request.put(endpoints.messages({ conversationId, messageId }), { text, index });
+  return request.put(endpoints.messages({ conversationId, messageId }), {
+    text,
+    index,
+  });
 }
 
 export const editArtifact = async ({
@@ -914,6 +1102,42 @@ export function getMessagesByConvoId(conversationId: string): Promise<s.TMessage
     return Promise.resolve([]);
   }
   return request.get(endpoints.messages({ conversationId }));
+}
+
+export function getMessageById(conversationId: string, messageId: string): Promise<s.TMessage[]> {
+  return request.get(endpoints.messages({ conversationId, messageId }));
+}
+
+export function getParentSubagents(parentConversationId: string): Promise<t.ParentSubagentIndex> {
+  return request.get(endpoints.parentSubagents(parentConversationId));
+}
+
+export function getSubagentThread(
+  parentConversationId: string,
+  threadId: string,
+  taskId?: string,
+  cursor?: string,
+): Promise<t.SubagentThreadView> {
+  return request.get(endpoints.subagentThread(parentConversationId, threadId, taskId, cursor));
+}
+
+export function controlSubagentTask(
+  parentConversationId: string,
+  threadId: string,
+  body: t.SubagentControlRequest,
+): Promise<t.SubagentControlResponse> {
+  return request.post(endpoints.subagentControl(parentConversationId, threadId), body);
+}
+
+export function getBackgroundTasks(conversationId: string): Promise<t.BackgroundTaskIndex> {
+  return request.get(endpoints.backgroundTasks(conversationId));
+}
+
+export function cancelBackgroundTasks(
+  conversationId: string,
+  body: t.BackgroundTaskCancelRequest,
+): Promise<t.BackgroundTaskCancelResponse> {
+  return request.post(endpoints.backgroundTasksCancel(conversationId), body);
 }
 
 export function getPrompt(id: string): Promise<{ prompt: t.TPrompt }> {
@@ -993,6 +1217,69 @@ export function listSkills(params?: sk.TSkillListRequest): Promise<sk.TSkillList
   return request.get(endpoints.listSkillsWithFilters(params ?? {}));
 }
 
+export function getSchedules(): Promise<sch.TSchedulesResponse> {
+  return request.get(endpoints.schedules());
+}
+
+export async function enqueueAgentQueuedTurn(
+  payload: qt.TEnqueueAgentQueuedTurnRequest,
+): Promise<qt.TEnqueueAgentQueuedTurnResponse> {
+  if (payload.codeApprovalMode == null) {
+    return request.post(endpoints.agentQueuedTurns(), payload);
+  }
+  const unsupported = () =>
+    Object.assign(new Error('Queued approval snapshots require protocol v2'), {
+      response: { status: 409, data: { code: 'QUEUED_TURN_PROTOCOL_REQUIRED' } },
+    });
+  try {
+    // The versioned URL is the capability gate. Do not preflight with a list:
+    // retries must reach receipt lookup even when mutable access has changed.
+    return await request.post(endpoints.agentQueuedTurns(2), payload);
+  } catch (error) {
+    const response = (error as { response?: { status?: number; data?: { code?: unknown } } })
+      ?.response;
+    const status = response?.status;
+    // Structured origin responses (notably priority fallback) are authoritative.
+    if ((status === 404 || status === 501) && typeof response?.data?.code !== 'string') {
+      throw unsupported();
+    }
+    throw error;
+  }
+}
+
+export function listAgentQueuedTurns(
+  conversationId: string,
+  clientRequestIds?: string[],
+): Promise<qt.TListAgentQueuedTurnsResponse> {
+  return request.get(endpoints.agentQueuedTurnsByConversation(conversationId, clientRequestIds));
+}
+
+export function cancelAgentQueuedTurn(
+  queuedTurnId: string,
+): Promise<qt.TCancelAgentQueuedTurnResponse> {
+  return request.delete(endpoints.agentQueuedTurn(queuedTurnId));
+}
+
+export function getSchedule(id: string): Promise<sch.TSchedule> {
+  return request.get(endpoints.schedule(id));
+}
+
+export function createSchedule(payload: sch.TCreateSchedule): Promise<sch.TSchedule> {
+  return request.post(endpoints.schedules(), payload);
+}
+
+export function updateSchedule(id: string, payload: sch.TUpdateSchedule): Promise<sch.TSchedule> {
+  return request.patch(endpoints.schedule(id), payload);
+}
+
+export function deleteSchedule(id: string): Promise<{ id: string }> {
+  return request.delete(endpoints.schedule(id));
+}
+
+export function runScheduleNow(id: string): Promise<sch.TScheduleRunNowResponse> {
+  return request.post(endpoints.runSchedule(id), {});
+}
+
 export function getSkill(id: string): Promise<sk.TSkill> {
   return request.get(endpoints.getSkill(id));
 }
@@ -1017,6 +1304,12 @@ export function listSkillFiles(skillId: string): Promise<sk.TListSkillFilesRespo
 }
 
 export function uploadSkillFile(skillId: string, formData: FormData): Promise<sk.TSkillFile> {
+  const relativePath = formData.get('relativePath');
+  // Conditional edits use a new route: older servers must reject the request,
+  // not silently ignore expectedFileId and perform an unconditional replacement.
+  if (formData.has('expectedFileId') && typeof relativePath === 'string') {
+    return request.postMultiPart(endpoints.skillFile(skillId, relativePath), formData);
+  }
   return request.postMultiPart(endpoints.skillFiles(skillId), formData);
 }
 
@@ -1299,16 +1592,36 @@ export const getMemories = (): Promise<q.MemoriesResponse> => {
   return request.get(endpoints.memories());
 };
 
-export const deleteMemory = (key: string): Promise<void> => {
-  return request.delete(endpoints.memory(key));
+export const deleteMemory = (key: string, agentId?: string): Promise<q.DeleteMemoryResponse> => {
+  return request.delete(endpoints.memory(key, agentId));
+};
+
+export const deleteMemoryById = (id: string, agentId?: string): Promise<q.DeleteMemoryResponse> => {
+  return request.delete(endpoints.memoryById(id, agentId));
 };
 
 export const updateMemory = (
   key: string,
   value: string,
   originalKey?: string,
-): Promise<q.TUserMemory> => {
-  return request.patch(endpoints.memory(originalKey || key), { key, value });
+  agentId?: string,
+): Promise<q.UpdateMemoryResponse> => {
+  return request.patch(endpoints.memory(originalKey || key, agentId), {
+    key,
+    value,
+  });
+};
+
+export const updateMemoryById = (
+  id: string,
+  value: string,
+  key?: string,
+  agentId?: string,
+): Promise<q.UpdateMemoryResponse> => {
+  return request.patch(endpoints.memoryById(id, agentId), {
+    value,
+    ...(key ? { key } : {}),
+  });
 };
 
 export const updateMemoryPreferences = (preferences: {
@@ -1320,6 +1633,7 @@ export const updateMemoryPreferences = (preferences: {
 export const createMemory = (data: {
   key: string;
   value: string;
+  agentId?: string;
 }): Promise<{ created: boolean; memory: q.TUserMemory }> => {
   return request.post(endpoints.memories(), data);
 };

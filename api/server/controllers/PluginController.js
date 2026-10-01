@@ -22,6 +22,11 @@ const getAvailablePluginsController = async (req, res) => {
     /** includedTools takes precedence — filteredTools ignored when both are set. */
     const plugins = [];
     for (const plugin of uniquePlugins) {
+      /** Agents-runtime-only tools (e.g. ask_user_question) never work on the
+       *  legacy plugins endpoint — no run to pause, no resume surface. */
+      if (plugin.agentsOnly === true) {
+        continue;
+      }
       if (includeSet.size > 0) {
         if (!includeSet.has(plugin.pluginKey)) {
           continue;
@@ -66,8 +71,21 @@ const getAvailableTools = async (req, res) => {
     const toolDefKeysList = toolDefinitions ? Object.keys(toolDefinitions) : null;
     const toolDefKeys = toolDefKeysList ? new Set(toolDefKeysList) : null;
 
+    /**
+     * `getAvailableTools` serves BOTH tool dialogs — /api/agents/tools and
+     * /api/assistants/tools. Tools flagged `agentsOnly` in the manifest (e.g.
+     * ask_user_question, which pauses an agents run via a LangGraph interrupt)
+     * cannot work on the assistants runtime: it executes tools directly with no
+     * run to pause and no resume surface, so attaching one there guarantees a
+     * permanent tool error. Scope them out of the assistants listing by route.
+     */
+    const isAssistantsRoute = req.baseUrl?.includes('/assistants') === true;
+
     const toolsOutput = [];
     for (const plugin of uniquePlugins) {
+      if (plugin.agentsOnly === true && isAssistantsRoute) {
+        continue;
+      }
       const isToolDefined = toolDefKeys?.has(plugin.pluginKey) === true;
       const isToolkit =
         plugin.toolkit === true &&
@@ -89,58 +107,6 @@ const getAvailableTools = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
-/**
- * Converts MCP function format tools to plugin format
- * @param {Object} functionTools - Object with function format tools
- * @param {Object} customConfig - Custom configuration for MCP servers
- * @returns {Array} Array of plugin objects
- */
-function convertMCPToolsToPlugins(functionTools, customConfig) {
-  const plugins = [];
-
-  for (const [toolKey, toolData] of Object.entries(functionTools)) {
-    if (!toolData.function || !toolKey.includes(Constants.mcp_delimiter)) {
-      continue;
-    }
-
-    const functionData = toolData.function;
-    const parts = toolKey.split(Constants.mcp_delimiter);
-    const serverName = parts[parts.length - 1];
-
-    const serverConfig = customConfig?.mcpServers?.[serverName];
-
-    const plugin = {
-      name: parts[0], // Use the tool name without server suffix
-      pluginKey: toolKey,
-      description: functionData.description || '',
-      authenticated: true,
-      icon: serverConfig?.iconPath,
-    };
-
-    // Build authConfig for MCP tools
-    if (!serverConfig?.customUserVars) {
-      plugin.authConfig = [];
-      plugins.push(plugin);
-      continue;
-    }
-
-    const customVarKeys = Object.keys(serverConfig.customUserVars);
-    if (customVarKeys.length === 0) {
-      plugin.authConfig = [];
-    } else {
-      plugin.authConfig = Object.entries(serverConfig.customUserVars).map(([key, value]) => ({
-        authField: key,
-        label: value.title || key,
-        description: value.description || '',
-      }));
-    }
-
-    plugins.push(plugin);
-  }
-
-  return plugins;
-}
 
 module.exports = {
   getAvailableTools,

@@ -34,7 +34,9 @@ const fileSnapshotSchema = new Schema<SharedFileSnapshot>(
     width: { type: Number },
     height: { type: Number },
     model: { type: String },
+    llmDeliveryPath: { type: String, enum: ['provider', 'text', 'none'] },
     previewRevision: { type: String },
+    sourceDispatchedAt: { type: Number },
     tenantId: { type: String },
   },
   { _id: false },
@@ -84,5 +86,6 @@ const shareSchema: Schema<ISharedLink> = new Schema(
 
 shareSchema.index({ expiredAt: 1 }, { expireAfterSeconds: 0 });
 shareSchema.index({ conversationId: 1, user: 1, targetMessageId: 1, tenantId: 1 });
+shareSchema.index({ updatedAt: -1 });
 
 export default shareSchema;

@@ -4,6 +4,8 @@ const request = require('supertest');
 const mockForceRefreshCloudFrontAuthCookies = jest.fn();
 
 jest.mock('@librechat/api', () => ({
+  limiterCache: jest.fn(),
+  createTwoFactorManagementLimiter: jest.fn(() => (req, res, next) => next()),
   createSetBalanceConfig: jest.fn(() => (req, res, next) => next()),
   forceRefreshCloudFrontAuthCookies: (...args) => mockForceRefreshCloudFrontAuthCookies(...args),
 }));
@@ -49,16 +51,19 @@ jest.mock('~/server/middleware', () => {
   const pass = (req, res, next) => next();
   return {
     logHeaders: pass,
+    requireSameOrigin: pass,
     loginLimiter: pass,
     setTwoFactorTempUser: pass,
     twoFactorTempLimiter: pass,
     checkBan: pass,
+    validateEmailLogin: pass,
     requireLocalAuth: pass,
     requireLdapAuth: pass,
     registerLimiter: pass,
     checkInviteUser: pass,
     validateRegistration: pass,
     resetPasswordLimiter: pass,
+    resetPasswordSubmissionLimiter: pass,
     validatePasswordReset: pass,
     requireJwtAuth: jest.fn((req, res, next) => {
       if (req.headers.authorization !== 'Bearer ok') {

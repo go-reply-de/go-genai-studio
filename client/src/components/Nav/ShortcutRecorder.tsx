@@ -167,9 +167,9 @@ export function RecorderPill({
     state;
   let stateBorder = 'border-border-medium';
   if (hasConflict) {
-    stateBorder = 'border-amber-500/60';
+    stateBorder = 'border-status-warning-border';
   } else if (showInvalid) {
-    stateBorder = 'animate-shortcut-shake border-red-500/60';
+    stateBorder = 'animate-shortcut-shake border-border-destructive';
   }
   return (
     <div
@@ -183,7 +183,7 @@ export function RecorderPill({
       onKeyUp={onKeyUp}
       className={cn(
         'flex h-[30px] items-center gap-1.5 rounded-md border bg-surface-primary px-2 outline-none transition-colors',
-        'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-surface-primary-alt',
+        'focus-visible:ring-2 focus-visible:ring-text-primary focus-visible:ring-offset-1 focus-visible:ring-offset-surface-primary-alt',
         stateBorder,
       )}
     >
@@ -247,7 +247,7 @@ export function RecorderInfo({
       <span
         className={cn(
           'text-[11.5px]',
-          showInvalid ? 'text-red-600 dark:text-red-400' : 'text-text-secondary',
+          showInvalid ? 'text-text-destructive' : 'text-text-secondary',
         )}
       >
         {showInvalid

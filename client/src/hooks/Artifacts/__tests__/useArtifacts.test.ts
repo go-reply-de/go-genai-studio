@@ -1,5 +1,5 @@
-import { renderHook, act } from '@testing-library/react';
 import { Constants } from 'librechat-data-provider';
+import { renderHook, act } from '@testing-library/react';
 import type { Artifact } from '~/common';
 
 /** Mock dependencies */
@@ -174,6 +174,73 @@ describe('useArtifacts', () => {
 
       /** Should switch to preview when enclosed detected */
       expect(result.current.activeTab).toBe('preview');
+    });
+
+    it('should switch to preview when enclosed artifact uses a longer code fence', () => {
+      (useRecoilValue as jest.Mock).mockReturnValue({});
+      (useRecoilState as jest.Mock).mockReturnValue([null, mockSetCurrentArtifactId]);
+
+      const { result, rerender } = renderHook(() => useArtifacts());
+
+      act(() => {
+        result.current.setActiveTab('code');
+      });
+
+      expect(result.current.activeTab).toBe('code');
+
+      (useArtifactsContext as jest.Mock).mockReturnValue({
+        ...defaultContext,
+        isSubmitting: true,
+        latestMessageText: [
+          ':::artifact{title="Git" type="text/markdown"}',
+          '````markdown',
+          '# Title',
+          '```bash',
+          'echo one',
+          '```',
+          '````',
+          ':::',
+        ].join('\n'),
+      });
+
+      rerender();
+
+      expect(result.current.activeTab).toBe('preview');
+    });
+
+    it('should not switch to preview when an inner marker appears before the longer fence closes', () => {
+      (useRecoilValue as jest.Mock).mockReturnValue({});
+      (useRecoilState as jest.Mock).mockReturnValue([null, mockSetCurrentArtifactId]);
+
+      const { result, rerender } = renderHook(() => useArtifacts());
+
+      act(() => {
+        result.current.setActiveTab('code');
+      });
+
+      expect(result.current.activeTab).toBe('code');
+
+      (useArtifactsContext as jest.Mock).mockReturnValue({
+        ...defaultContext,
+        isSubmitting: true,
+        latestMessageText: [
+          ':::artifact{title="Git" type="text/markdown"}',
+          '````markdown',
+          '# Title',
+          '```bash',
+          'echo one',
+          '```',
+          ':::',
+        ].join('\n'),
+      });
+
+      rerender();
+
+      expect(result.current.activeTab).toBe('code');
+      expect(logger.log).not.toHaveBeenCalledWith(
+        'artifacts',
+        expect.stringContaining('Enclosed artifact'),
+      );
     });
 
     it('should not switch to preview if artifact is not enclosed', () => {
@@ -437,6 +504,34 @@ describe('useArtifacts', () => {
       rerender();
 
       expect(mockSetCurrentArtifactId).toHaveBeenCalledWith('artifact-2');
+    });
+
+    it('does not select a historical sibling artifact when regeneration begins', () => {
+      const selected = createArtifact({
+        id: 'selected',
+        messageId: 'original-response',
+        lastUpdateTime: 1000,
+      });
+      const historical = createArtifact({
+        id: 'historical',
+        messageId: 'previous-sibling',
+        lastUpdateTime: 2000,
+        content: 'old preview',
+      });
+      (useRecoilValue as jest.Mock).mockReturnValue({ selected });
+      (useRecoilState as jest.Mock).mockReturnValue(['selected', mockSetCurrentArtifactId]);
+      const { rerender } = renderHook(() => useArtifacts());
+      mockSetCurrentArtifactId.mockClear();
+
+      (useArtifactsContext as jest.Mock).mockReturnValue({
+        ...defaultContext,
+        isSubmitting: true,
+        latestMessageId: 'original-response_',
+      });
+      (useRecoilValue as jest.Mock).mockReturnValue({ selected, historical });
+      rerender();
+
+      expect(mockSetCurrentArtifactId).not.toHaveBeenCalled();
     });
 
     it('should not advance to a new CODE artifact during streaming', () => {

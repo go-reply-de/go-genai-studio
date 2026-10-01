@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useState, useCallback } from 'react';
-import { Eye, EyeOff, Copy, Check } from 'lucide-react';
+import { Eye, EyeOff, Copy, Check } from 'lucide';
+import { MorphIcon } from './MorphIcon';
 import { cn } from '~/utils';
 
 export interface SecretInputProps
@@ -80,7 +81,7 @@ const SecretInput: React.ForwardRefExoticComponent<
           id={id}
           type={isVisible ? 'text' : 'password'}
           className={cn(
-            'flex h-10 w-full rounded-lg border border-border-light bg-transparent py-2 pl-3 text-sm transition-colors placeholder:text-muted-foreground hover:border-border-medium focus-visible:border-border-heavy focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
+            'flex h-10 w-full rounded-lg border border-border-light bg-transparent py-2 pl-3 text-sm placeholder:text-text-secondary focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50',
             className ?? '',
             copyButton != null || showCopy ? 'pr-20' : 'pr-11',
           )}
@@ -119,7 +120,7 @@ const SecretInput: React.ForwardRefExoticComponent<
               )}
               aria-label={isCopied ? 'Copied' : 'Copy to clipboard'}
             >
-              {isCopied ? <Check className="size-4" /> : <Copy className="size-4" />}
+              <MorphIcon icon={isCopied ? Check : Copy} className="size-4" />
             </button>
           )}
           <button
@@ -135,7 +136,7 @@ const SecretInput: React.ForwardRefExoticComponent<
             )}
             aria-label={isVisible ? 'Hide secret' : 'Show secret'}
           >
-            {isVisible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            <MorphIcon icon={isVisible ? EyeOff : Eye} className="size-4" />
           </button>
         </div>
       </div>
