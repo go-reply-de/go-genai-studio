@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import type { TStartupConfig } from 'librechat-data-provider';
 import { installFaviconFallback } from '~/utils/faviconPlaceholder';
+import { installSpeechToTextLock } from '~/utils/speechToTextLock';
 import { installLocalVoiceGuard } from '~/utils/speechGuard';
 import useLocalSpeechOnly from './useLocalSpeechOnly';
 
@@ -22,6 +23,13 @@ export default function useHardening(startupConfig?: TStartupConfig) {
       return;
     }
     return installLocalVoiceGuard(window.speechSynthesis);
+  }, [speechLocalOnly]);
+
+  useEffect(() => {
+    if (!speechLocalOnly) {
+      return;
+    }
+    return installSpeechToTextLock(document);
   }, [speechLocalOnly]);
 
   useEffect(() => {
