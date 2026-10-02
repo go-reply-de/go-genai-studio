@@ -65,6 +65,11 @@ spec:
                 configMapKeyRef:
                   key: ALLOW_REGISTRATION
                   name: env
+            - name: ALLOW_SHARED_LINKS
+              valueFrom:
+                configMapKeyRef:
+                  key: ALLOW_SHARED_LINKS
+                  name: env
             - name: ALLOW_SOCIAL_LOGIN
               valueFrom:
                 configMapKeyRef:
@@ -234,6 +239,21 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   key: EMAIL_USERNAME
+                  name: env
+            - name: ENABLE_INSIGHTS
+              valueFrom:
+                configMapKeyRef:
+                  key: ENABLE_INSIGHTS
+                  name: env
+            - name: FILE_RETENTION_SWEEP_INTERVAL_MS
+              valueFrom:
+                configMapKeyRef:
+                  key: FILE_RETENTION_SWEEP_INTERVAL_MS
+                  name: env
+            - name: FILE_RETENTION_SWEEP_MAX_ATTEMPTS
+              valueFrom:
+                configMapKeyRef:
+                  key: FILE_RETENTION_SWEEP_MAX_ATTEMPTS
                   name: env
             - name: GCP_LOGGING
               value: "true"
@@ -511,6 +531,26 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   key: RETENTION_WEEKLY_RESET_TZ
+                  name: env
+            - name: ROLE_PERMISSION_CAPS
+              valueFrom:
+                configMapKeyRef:
+                  key: ROLE_PERMISSION_CAPS
+                  name: env
+            - name: SCHEDULES_DISABLED
+              valueFrom:
+                configMapKeyRef:
+                  key: SCHEDULES_DISABLED
+                  name: env
+            - name: SPEECH_LOCAL_ONLY
+              valueFrom:
+                configMapKeyRef:
+                  key: SPEECH_LOCAL_ONLY
+                  name: env
+            - name: STRICT_BROWSER_EGRESS
+              valueFrom:
+                configMapKeyRef:
+                  key: STRICT_BROWSER_EGRESS
                   name: env
             - name: SD_WEBUI_URL
               valueFrom:
