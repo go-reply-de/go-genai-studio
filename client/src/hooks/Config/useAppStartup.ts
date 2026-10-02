@@ -14,6 +14,7 @@ import { cleanupTimestampedStorage } from '~/utils/timestamps';
 import useSpeechSettingsInit from './useSpeechSettingsInit';
 import { useHasAccess, useCatalogReady } from '~/hooks';
 import { useMCPServersQuery } from '~/data-provider';
+import useHardening from './useHardening';
 import store from '~/store';
 
 export default function useAppStartup({
@@ -30,6 +31,7 @@ export default function useAppStartup({
   });
 
   useSpeechSettingsInit(!!user);
+  useHardening(startupConfig);
   /** Server metadata may warm after first paint because it powers lightweight
    * navigation affordances. Tool discovery stays owned by visible MCP consumers. */
   const mcpServersReady = useCatalogReady('mcpServers');

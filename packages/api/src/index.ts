@@ -110,6 +110,7 @@ export * from './insights';
 export * from './cache';
 /* Cluster */
 export * from './cluster';
+export * from './hardening';
 /* Shared Links */
 export * from './shared-links/access';
 export * from './shared-links/service';

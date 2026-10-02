@@ -21,6 +21,9 @@ const DB_SETUP_TIMEOUT_MS = 60_000;
 const WEEK_MS = 7 * 24 * 60 * 60_000;
 const BERLIN = 'Europe/Berlin';
 const originalEnv = { ...process.env };
+/* The plugin only shapes schemas built while the reset is configured. */
+process.env.RETENTION_WEEKLY_RESET = 'SUN 23:00';
+process.env.RETENTION_WEEKLY_RESET_TZ = BERLIN;
 
 let mongoServer: MongoMemoryServer;
 let Turn: Model<IAgentQueuedTurnDocument>;

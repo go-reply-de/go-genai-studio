@@ -79,6 +79,7 @@ const { initializeScheduleEngine, recordExpiredScheduleApproval } = require('./s
 const { jwtLogin, ldapLogin, passportLogin } = require('~/strategies');
 const { startExpiredFileSweep } = require('./services/Files/process');
 const { startMeiliRetentionSweep } = require('./services/Search/meiliRetentionSweep');
+const { startHardening } = require('@librechat/api');
 const { checkMigrations } = require('./services/start/migration');
 const optionalJwtAuth = require('./middleware/optionalJwtAuth');
 const initializeMCPs = require('./services/initializeMCPs');
@@ -273,6 +274,7 @@ const startServer = async () => {
     await performStartupChecks(appConfig);
     await updateInterfacePermissions({ appConfig, getRoleByName, updateAccessPermissions });
   });
+  await startHardening({ app, appConfig, methods: agentEventMethods });
 
   /* Route modules build their rate limiters as they load, so they load only after the
    * startup checks have applied `rateLimits` from librechat.yaml. */

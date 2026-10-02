@@ -67,6 +67,12 @@ function buildTargets(agentFileIds, boundary) {
     { label: 'conversations', name: 'conversations', filter: { ...needsStamp } },
     { label: 'messages', name: 'messages', filter: { ...needsStamp } },
     { label: 'shared links', name: 'sharedlinks', filter: { ...needsStamp } },
+    { label: 'tool calls', name: 'toolcalls', filter: { ...needsStamp } },
+    { label: 'queued turns', name: 'agentqueuedturns', filter: { ...needsStamp } },
+    /* Dead letters and successful rows alike: both keep the envelope with the prompt. */
+    { label: 'deliveries', name: 'agenttriggerdeliveries', filter: { ...needsStamp } },
+    { label: 'transactions', name: 'transactions', filter: { ...needsStamp } },
+    { label: 'chat projects', name: 'chatprojects', filter: { ...needsStamp } },
     {
       label: 'files',
       name: 'files',

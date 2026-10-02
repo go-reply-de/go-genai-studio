@@ -8,6 +8,17 @@ const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { collectAgentFileIds, buildTargets } = require('../backfill-retention-expiry');
 
+const NON_FILE_TARGETS = [
+  'conversations',
+  'messages',
+  'sharedlinks',
+  'toolcalls',
+  'agentqueuedturns',
+  'agenttriggerdeliveries',
+  'transactions',
+  'chatprojects',
+];
+
 describe('backfill-retention-expiry', () => {
   let mongoServer;
   let db;
@@ -161,7 +172,7 @@ describe('backfill-retention-expiry', () => {
     it('selects rows with no expiry or one past the boundary', async () => {
       const boundary = new Date('2026-09-20T21:00:00.000Z');
       const targets = buildTargets(new Set(), boundary);
-      for (const name of ['conversations', 'messages', 'sharedlinks']) {
+      for (const name of NON_FILE_TARGETS) {
         await db.collection(name).deleteMany({});
         await db
           .collection(name)
@@ -180,6 +191,35 @@ describe('backfill-retention-expiry', () => {
           'past-boundary',
         ]);
       }
+    });
+
+    it('covers every collection that holds conversation content or usage, and nothing else', () => {
+      const names = buildTargets(new Set(), new Date()).map((t) => t.name);
+      expect(names.sort()).toEqual([...NON_FILE_TARGETS, 'files'].sort());
+    });
+
+    it('stamps dead letters and successful deliveries without touching their own expiry', async () => {
+      const boundary = new Date('2026-09-20T21:00:00.000Z');
+      await db.collection('agenttriggerdeliveries').deleteMany({});
+      await db.collection('agenttriggerdeliveries').insertMany([
+        { marker: 'dead-letter', status: 'dead', envelope: { input: 'synthetic' } },
+        {
+          marker: 'succeeded',
+          status: 'succeeded',
+          expiresAt: new Date('2026-12-01T00:00:00.000Z'),
+        },
+      ]);
+      const target = buildTargets(new Set(), boundary).find(
+        (t) => t.name === 'agenttriggerdeliveries',
+      );
+
+      await db.collection(target.name).updateMany(target.filter, { $set: { expiredAt: boundary } });
+
+      const rows = await db.collection('agenttriggerdeliveries').find({}).toArray();
+      expect(rows.map((row) => row.expiredAt)).toEqual([boundary, boundary]);
+      expect(rows.find((row) => row.marker === 'succeeded').expiresAt).toEqual(
+        new Date('2026-12-01T00:00:00.000Z'),
+      );
     });
   });
 });

@@ -37,6 +37,17 @@ function expiryTarget(update: Fields, upsert: boolean): Fields | null {
   return onInsert;
 }
 
+/** Unsetting the expiry would exempt the row from the TTL index, so it is set to the boundary. */
+function replaceUnset(update: Fields, unset: Fields, boundary: Date): void {
+  delete unset.expiredAt;
+  if (Object.keys(unset).length === 0) {
+    delete update.$unset;
+  }
+  const set: Fields = isFields(update.$set) ? update.$set : {};
+  update.$set = set;
+  stamp(set, boundary);
+}
+
 /**
  * A pipeline computes whole rows, so a final stage bounds whatever row it produces.
  * `$addFields` rather than its `$set` alias, which DocumentDB rejects as a stage.
@@ -49,7 +60,14 @@ function stampUpdate(update: unknown, upsert: boolean, reset: WeeklyReset): void
     });
     return;
   }
-  const target = isFields(update) ? expiryTarget(update, upsert) : null;
+  if (!isFields(update)) {
+    return;
+  }
+  if (isFields(update.$unset) && 'expiredAt' in update.$unset) {
+    replaceUnset(update, update.$unset, nextWeeklyReset(reset));
+    return;
+  }
+  const target = expiryTarget(update, upsert);
   if (target != null) {
     stamp(target, nextWeeklyReset(reset));
   }
@@ -67,18 +85,31 @@ function stampBulkWrite(op: AnyBulkWriteOperation, reset: WeeklyReset): void {
   }
 }
 
+/** A schema that already declares `expiredAt` or an index on it keeps its own definition. */
+function declareExpiry(schema: Schema): void {
+  if (schema.path('expiredAt') == null) {
+    schema.add({ expiredAt: { type: Date } });
+  }
+  const indexed = schema
+    .indexes()
+    .some(([fields]) => Object.keys(fields).length === 1 && 'expiredAt' in fields);
+  if (!indexed) {
+    schema.index({ expiredAt: 1 }, { expireAfterSeconds: 0 });
+  }
+}
+
 /**
  * Stamps the RETENTION_WEEKLY_RESET boundary on `expiredAt` for the TTL index on every write
- * that can insert a row, and keeps any write from moving it later. Unset, nothing is stamped.
+ * that can insert a row, and keeps any write from moving it later. Without the reset the schema
+ * is left exactly as defined: no field, no index, no hooks.
  */
 export function applyWeeklyRetention(schema: Schema): void {
-  if (applied.has(schema)) {
+  if (getWeeklyReset() == null || applied.has(schema)) {
     return;
   }
   applied.add(schema);
 
-  schema.add({ expiredAt: { type: Date } });
-  schema.index({ expiredAt: 1 }, { expireAfterSeconds: 0 });
+  declareExpiry(schema);
 
   schema.pre('save', function () {
     const reset = getWeeklyReset();
