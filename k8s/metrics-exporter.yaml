@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: metrics-exporter
-        image: ghcr.io/virtuos/librechat_exporter:2.1.0
+        image: ghcr.io/virtuos/librechat_exporter:2.7.0
         imagePullPolicy: Always
         ports:
         - name: metrics-port
@@ -30,6 +30,17 @@ spec:
               name: env
         - name: LOGGING_LEVEL
           value: "info"
+        # Ratings on; the other groups newer than 2.1.0 stay off.
+        - name: ENABLE_RATING_METRICS
+          value: "true"
+        - name: ENABLE_TOOL_METRICS
+          value: "false"
+        - name: ENABLE_USAGE_WINDOW_METRICS
+          value: "false"
+        - name: ENABLE_BALANCE_METRICS
+          value: "false"
+        - name: ENABLE_FEATURE_METRICS
+          value: "false"
 ---
 apiVersion: v1
 kind: Service
@@ -61,5 +72,24 @@ spec:
       app: metrics-exporter
   endpoints:
   - port: metrics-port
-    interval: 60s 
+    interval: 60s
+    metricRelabeling:
+    # Free text sent as a feedback reason or rating must never become a label.
+    # Paired with __name__ because GMP rejects regexes that match an empty string.
+    - sourceLabels: [__name__, tag]
+      separator: ";"
+      regex: "[a-zA-Z_:][a-zA-Z0-9_:]*;(not_matched|inaccurate|bad_style|missing_image|unjustified_refusal|not_helpful|other|accurate_reliable|creative_solution|clear_well_written|attention_to_detail)?"
+      action: keep
+    - sourceLabels: [__name__, rating]
+      separator: ";"
+      regex: "[a-zA-Z_:][a-zA-Z0-9_:]*;(thumbsUp|thumbsDown)?"
+      action: keep
+    # 5-minute and per-agent rating counts can single out one person.
+    - sourceLabels: [__name__]
+      regex: "librechat_thumbs_(up|down)_5m"
+      action: drop
+    - sourceLabels: [__name__, model]
+      separator: ";"
+      regex: "librechat_(thumbs_(up|down)_per_model|rating_ratio_per_model|model_tag_thumbs_(up|down));agent_.*"
+      action: drop
 
