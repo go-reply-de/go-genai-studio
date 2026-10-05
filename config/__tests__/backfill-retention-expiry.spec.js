@@ -8,6 +8,15 @@ const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { collectAgentFileIds, buildTargets } = require('../backfill-retention-expiry');
 
+const NON_FILE_TARGETS = [
+  'conversations',
+  'messages',
+  'sharedlinks',
+  'toolcalls',
+  'transactions',
+  'chatprojects',
+];
+
 describe('backfill-retention-expiry', () => {
   let mongoServer;
   let db;
@@ -161,7 +170,7 @@ describe('backfill-retention-expiry', () => {
     it('selects rows with no expiry or one past the boundary', async () => {
       const boundary = new Date('2026-09-20T21:00:00.000Z');
       const targets = buildTargets(new Set(), boundary);
-      for (const name of ['conversations', 'messages', 'sharedlinks']) {
+      for (const name of NON_FILE_TARGETS) {
         await db.collection(name).deleteMany({});
         await db
           .collection(name)
@@ -180,6 +189,11 @@ describe('backfill-retention-expiry', () => {
           'past-boundary',
         ]);
       }
+    });
+
+    it('covers every collection that holds conversation content or usage, and nothing else', () => {
+      const names = buildTargets(new Set(), new Date()).map((t) => t.name);
+      expect(names.sort()).toEqual([...NON_FILE_TARGETS, 'files'].sort());
     });
   });
 });

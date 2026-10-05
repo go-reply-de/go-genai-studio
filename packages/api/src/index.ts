@@ -65,6 +65,7 @@ export * from './web';
 export * from './langfuse';
 /* Cache */
 export * from './cache';
+export * from './hardening';
 /* Shared Links */
 export * from './shared-links/access';
 export * from './shared-links/service';
