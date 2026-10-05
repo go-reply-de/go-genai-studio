@@ -41,6 +41,7 @@ const createValidateImageRequest = require('./middleware/validateImageRequest');
 const { startExpiredFileSweep } = require('./services/Files/process');
 const { startMeiliRetentionSweep } = require('./services/Search/meiliRetentionSweep');
 const { createAdminRequestAudit } = require('./services/AuditLog/adminRequestAudit');
+const { startAuditExport } = require('./services/AuditLog/auditExport');
 const { initializeGitHubSkillSync } = require('./services/Skills/sync');
 const { jwtLogin, ldapLogin, passportLogin } = require('~/strategies');
 const { checkMigrations } = require('./services/start/migration');
@@ -127,6 +128,7 @@ const startServer = async () => {
   initializeGitHubSkillSync(appConfig);
   startExpiredFileSweep({ appConfig, loadAppConfig: getAppConfig });
   startMeiliRetentionSweep();
+  startAuditExport();
   await runAsSystem(async () => {
     await performStartupChecks(appConfig);
     await updateInterfacePermissions({ appConfig, getRoleByName, updateAccessPermissions });

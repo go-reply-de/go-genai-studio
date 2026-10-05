@@ -1,8 +1,10 @@
-const { isEnabled } = require('@librechat/api');
+const crypto = require('crypto');
 const { logger } = require('@librechat/data-schemas');
 const { SystemRoles } = require('librechat-data-provider');
+const defaultStore = require('./adminAuditStore');
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const LOCAL_LOGIN = '/api/admin/login/local';
 /** Login, SSO and token routes: their bodies and queries carry credentials. */
 const AUTH_PATH = /^\/api\/admin\/(login|oauth)\//;
 /** Where an admin panel SSO login completes. */
@@ -129,70 +131,109 @@ function actorOf(user, outcome) {
   return actor;
 }
 
+/** Recording runs only while an export target is configured and its retention period lasts. */
+function isRecording(bucket, retainUntil, now) {
+  const until = Date.parse(retainUntil ?? '');
+  return Boolean(bucket) && Number.isFinite(until) && now < until;
+}
+
 /**
- * Prints one JSON line per admin change request on the routes it is mounted on, whatever its
- * outcome, for the log sink to route off-cluster. Inert unless AUDIT_LOG_STDOUT is set.
+ * Records every admin change request on the routes it is mounted on in MongoDB before the request
+ * runs, and refuses the request when that write fails, so no admin change happens unrecorded.
+ * The export job ships the records to the locked audit bucket. Inert unless AUDIT_EXPORT_BUCKET
+ * is set; ADMIN_LOCAL_LOGIN=false additionally refuses the admin panel's password login.
  */
 function createAdminRequestAudit({
-  enabled = isEnabled(process.env.AUDIT_LOG_STDOUT),
-  write = (line) => process.stdout.write(line),
+  bucket = process.env.AUDIT_EXPORT_BUCKET,
+  retainUntil = process.env.AUDIT_EXPORT_RETAIN_UNTIL,
+  localLoginAllowed = process.env.ADMIN_LOCAL_LOGIN?.toLowerCase() !== 'false',
+  store = defaultStore,
+  now = () => Date.now(),
 } = {}) {
-  return function adminRequestAudit(req, res, next) {
+  return async function adminRequestAudit(req, res, next) {
     const path = normalizePath(req.originalUrl);
-    if (!enabled || !shouldRecord(req.method, path)) {
+    const blocked = !localLoginAllowed && req.method === 'POST' && path === LOCAL_LOGIN;
+    const recording = isRecording(bucket, retainUntil, now());
+    if (!blocked && (!recording || !shouldRecord(req.method, path))) {
       return next();
     }
+    const refuseLocalLogin = () =>
+      res
+        .status(403)
+        .json({ error: 'Password login is disabled for the admin panel. Sign in with SSO.' });
+    if (!recording) {
+      return refuseLocalLogin();
+    }
 
-    const startedAt = new Date();
+    const startedAt = new Date(now());
     const isAuth = AUTH_PATH.test(path);
-    const query = isAuth ? undefined : capture(req.query);
-    const body = isAuth ? undefined : capture(req.body);
-    let printed = false;
+    const urlPath = req.originalUrl.split('?')[0];
+    const id = crypto.randomUUID();
+    let seq;
+    try {
+      seq = await store.nextSeq();
+      await store.recordStart({
+        _id: id,
+        seq,
+        schemaVersion: 2,
+        outcome: 'pending',
+        method: req.method,
+        path: urlPath,
+        query: isAuth ? undefined : capture(req.query),
+        body: isAuth ? undefined : capture(req.body),
+        context: {
+          ip: req.ip,
+          userAgent: req.get('user-agent'),
+          requestId: req.get('x-request-id') ?? req.get('x-correlation-id'),
+        },
+        createdAt: startedAt,
+      });
+    } catch (error) {
+      const unused = seq == null ? '' : ` (sequence number ${seq} stays unused)`;
+      logger.error(
+        `[adminRequestAudit] could not record an admin request, refusing it${unused}`,
+        error,
+      );
+      return res
+        .status(503)
+        .json({ error: 'The audit log is unavailable. The request was not run.' });
+    }
 
-    const print = (finished) => {
-      if (printed) {
+    let completed = false;
+    const complete = (finished) => {
+      if (completed) {
         return;
       }
-      printed = true;
-      try {
-        const outcome = outcomeOf(res.statusCode, finished, LOGIN_CALLBACK.test(path), req.user);
-        const urlPath = req.originalUrl.split('?')[0];
-        const route = routeOf(req, urlPath);
-        const entry = {
-          schemaVersion: 1,
+      completed = true;
+      const outcome = outcomeOf(res.statusCode, finished, LOGIN_CALLBACK.test(path), req.user);
+      store
+        .recordEnd(id, {
           outcome,
-          status: finished ? res.statusCode : undefined,
-          method: req.method,
-          route,
-          path: urlPath,
-          params: isAuth || !req.params || !Object.keys(req.params).length ? undefined : req.params,
-          query,
-          body,
+          status: finished ? res.statusCode : null,
+          route: routeOf(req, urlPath) ?? null,
+          params:
+            isAuth || !req.params || !Object.keys(req.params).length ? null : { ...req.params },
           actor: actorOf(req.user, outcome),
-          tenantId: req.user?.tenantId,
-          context: {
-            ip: req.ip,
-            userAgent: req.get('user-agent'),
-            requestId: req.get('x-request-id') ?? req.get('x-correlation-id'),
-          },
-          startedAt: startedAt.toISOString(),
-          durationMs: Date.now() - startedAt.getTime(),
-        };
-        const line = {
-          severity: outcome === 'success' ? 'NOTICE' : 'WARNING',
-          message: `admin ${req.method} ${route ?? entry.path} ${entry.status ?? outcome}`,
-          adminRequest: entry,
-        };
-        write(`${JSON.stringify(line)}\n`);
-      } catch (error) {
-        logger.error('[adminRequestAudit] failed to print admin request', error);
-      }
+          tenantId: req.user?.tenantId ?? null,
+          reason: blocked ? 'password login disabled' : null,
+          completedAt: new Date(now()),
+          durationMs: now() - startedAt.getTime(),
+        })
+        .catch((error) =>
+          logger.error(
+            `[adminRequestAudit] could not store the outcome of admin request ${seq}`,
+            error,
+          ),
+        );
     };
+    res.once('finish', () => complete(true));
+    res.once('close', () => complete(res.writableFinished));
 
-    res.once('finish', () => print(true));
-    res.once('close', () => print(res.writableFinished));
+    if (blocked) {
+      return refuseLocalLogin();
+    }
     next();
   };
 }
 
-module.exports = { createAdminRequestAudit };
+module.exports = { createAdminRequestAudit, isRecording };
