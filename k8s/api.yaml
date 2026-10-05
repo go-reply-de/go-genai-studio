@@ -85,6 +85,11 @@ spec:
                 configMapKeyRef:
                   key: AUDIT_LOG_FAIL_CLOSED
                   name: env
+            - name: AUDIT_LOG_STDOUT
+              valueFrom:
+                configMapKeyRef:
+                  key: AUDIT_LOG_STDOUT
+                  name: env
             - name: APP_TITLE
               valueFrom:
                 configMapKeyRef:

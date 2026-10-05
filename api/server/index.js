@@ -40,6 +40,7 @@ const { capabilityContextMiddleware } = require('./middleware/roles/capabilities
 const createValidateImageRequest = require('./middleware/validateImageRequest');
 const { startExpiredFileSweep } = require('./services/Files/process');
 const { startMeiliRetentionSweep } = require('./services/Search/meiliRetentionSweep');
+const { createAdminRequestAudit } = require('./services/AuditLog/adminRequestAudit');
 const { initializeGitHubSkillSync } = require('./services/Skills/sync');
 const { jwtLogin, ldapLogin, passportLogin } = require('~/strategies');
 const { checkMigrations } = require('./services/start/migration');
@@ -232,6 +233,7 @@ const startServer = async () => {
 
   /* Per-request capability cache — must be registered before any route that calls hasCapability */
   app.use(capabilityContextMiddleware);
+  app.use(['/api/admin', '/api/roles'], createAdminRequestAudit());
 
   /* Pre-auth tenant context for unauthenticated routes that need tenant scoping.
    * The reverse proxy / auth gateway sets `X-Tenant-Id` header for multi-tenant deployments. */
