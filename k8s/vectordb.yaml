@@ -34,7 +34,7 @@ spec:
                 secretKeyRef:
                   key: POSTGRES_PASSWORD
                   name: librechat-credentials-env
-          image: ankane/pgvector:latest
+          image: "###_VECTORDB_IMAGE###"
           name: vectordb-###ENVIRONMENT###
           resources:
             # Driven by k8s/profiles/*.env
