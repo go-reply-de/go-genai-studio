@@ -85,6 +85,30 @@ spec:
                 configMapKeyRef:
                   key: AUDIT_LOG_FAIL_CLOSED
                   name: env
+            - name: ADMIN_LOCAL_LOGIN
+              valueFrom:
+                configMapKeyRef:
+                  key: ADMIN_LOCAL_LOGIN
+                  name: env
+            # Created by Terraform only where audit logs are exported (setup repo, audit_logs module).
+            - name: AUDIT_EXPORT_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  key: AUDIT_EXPORT_BUCKET
+                  name: audit-export
+                  optional: true
+            - name: AUDIT_EXPORT_RETAIN_UNTIL
+              valueFrom:
+                configMapKeyRef:
+                  key: AUDIT_EXPORT_RETAIN_UNTIL
+                  name: audit-export
+                  optional: true
+            - name: AUDIT_EXPORT_RETENTION_DAYS
+              valueFrom:
+                configMapKeyRef:
+                  key: AUDIT_EXPORT_RETENTION_DAYS
+                  name: audit-export
+                  optional: true
             - name: APP_TITLE
               valueFrom:
                 configMapKeyRef:

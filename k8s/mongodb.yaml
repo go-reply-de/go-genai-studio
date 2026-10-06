@@ -130,8 +130,8 @@ data:
     DB=LibreChat
 
     # A name matching no real collection dumps nothing and still exits 0, so a
-    # typo would ship an empty backup unnoticed. These four are asserted below.
-    REQUIRED="agents auditlogs roles users"
+    # typo would ship an empty backup unnoticed. These three are asserted below.
+    REQUIRED="agents roles users"
 
     # Created only once the corresponding feature is used; absence is normal in
     # a fresh environment and is not an error.
@@ -143,6 +143,10 @@ data:
     # control; this catches an accidental addition to it.
     FORBIDDEN="conversations messages files sharedlinks conversationtags
                memoryentries toolcalls presets sessions tokens transactions"
+
+    # Never backed up either: their records must not outlive their delete date,
+    # and restoring any of them would desynchronise the export to the audit bucket.
+    AUDIT="adminauditevents auditcounters auditexportstate auditlogs"
 
     rm -rf "$DUMP"
     mkdir -p "$DUMP"
@@ -167,7 +171,7 @@ data:
       fi
     done
 
-    for c in $FORBIDDEN; do
+    for c in $FORBIDDEN $AUDIT; do
       if [ -e "$DUMP/$DB/$c.bson.gz" ]; then
         echo "REFUSING: '$c' reached the dump - it must never be backed up" >&2
         rm -rf "$DUMP"
@@ -188,4 +192,12 @@ data:
       exit 0
     fi
 
-    mongorestore --gzip --drop --dir=/dump/mongo
+    # The audit collections from dump-collections.sh, skipped even when an older
+    # export holds them.
+    AUDIT="adminauditevents auditcounters auditexportstate auditlogs"
+    set --
+    for c in $AUDIT; do
+      set -- "$@" "--nsExclude=LibreChat.$c"
+    done
+
+    mongorestore --gzip --drop --dir=/dump/mongo "$@"
