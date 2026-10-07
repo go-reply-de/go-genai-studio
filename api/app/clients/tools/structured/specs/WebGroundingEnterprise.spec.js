@@ -280,6 +280,93 @@ describe('WebGroundingEnterprise', () => {
   });
 });
 
+describe('WebGroundingEnterprise overload retries', () => {
+  /** What the Vertex SDK throws for a 4xx: the status sits on the cause. */
+  const clientError = (status, text) =>
+    Object.assign(new Error(`[VertexAI.ClientError]: got status: ${status} ${text}. {}`), {
+      name: 'ClientError',
+      cause: { code: status },
+    });
+  const overloaded = () => clientError(429, 'Too Many Requests');
+  const answer = () =>
+    groundedResponse('Bis 4,5 h [1].\n[[QUELLEN]]\n1|awmf.org|2023|S2e', ['awmf.org']);
+
+  const retryingTool = (search) => {
+    const tool = toolWith(search);
+    tool.retryOverload = true;
+    return tool;
+  };
+
+  /** Lets fake time run past every backoff wait while the tool works. */
+  const settle = async (tool) => {
+    const pending = invokeTool(tool);
+    await jest.advanceTimersByTimeAsync(60000);
+    return pending;
+  };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('answers from a retry after an overloaded search', async () => {
+    const search = stubModel([overloaded(), answer()]);
+
+    const { content } = await settle(retryingTool(search));
+
+    expect(search.asked).toHaveLength(2);
+    expect(content).toContain('Bis 4,5 h.');
+  });
+
+  test('tells the agent the search is unavailable after three overloaded tries', async () => {
+    const search = stubModel([overloaded(), overloaded(), overloaded(), answer()]);
+
+    const { content, artifact } = await settle(retryingTool(search));
+
+    expect(search.asked).toHaveLength(3);
+    expect(content).toMatch(/Websuche ist gerade nicht verfügbar/);
+    expect(content).toMatch(/keine Aussage als durch eine Suche belegt/);
+    expect(artifact).toBeUndefined();
+  });
+
+  test('does not retry a rejected search', async () => {
+    const search = stubModel([clientError(400, 'Bad Request'), answer()]);
+
+    const { content } = await settle(retryingTool(search));
+
+    expect(search.asked).toHaveLength(1);
+    expect(content).toMatch(/Websuche ist fehlgeschlagen/);
+  });
+
+  test('stops retrying once the search has used its budget', async () => {
+    const search = stubModel([emptyResponse('Erster Versuch.'), overloaded(), answer()]);
+    const { generateContent } = search;
+    search.generateContent = async (request) => {
+      if (search.asked.length === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 19000));
+      }
+      return generateContent(request);
+    };
+
+    const { content } = await settle(retryingTool(search));
+
+    expect(search.asked).toHaveLength(2);
+    expect(content).toMatch(/Websuche ist gerade nicht verfügbar/);
+  });
+
+  test('keeps the single try and the old message without the switch', async () => {
+    const search = stubModel([overloaded(), answer()]);
+
+    const { content } = await settle(toolWith(search));
+
+    expect(search.asked).toHaveLength(1);
+    expect(content).toMatch(/error with the Web Grounding for Enterprise Search/);
+  });
+});
+
 describe('WebGroundingEnterprise client wiring', () => {
   const saved = { ...process.env };
   let dir;
@@ -303,6 +390,7 @@ describe('WebGroundingEnterprise client wiring', () => {
     process.env.WEB_GROUNDING_SOURCES_FILE = policy;
     delete process.env.WEB_GROUNDING_MODEL;
     delete process.env.WEB_GROUNDING_THINKING_LEVEL;
+    delete process.env.VERTEX_RETRY_OVERLOAD;
   });
 
   afterEach(() => {
@@ -321,6 +409,18 @@ describe('WebGroundingEnterprise client wiring', () => {
         tools: [{ enterpriseWebSearch: { excludeDomains: ['junk.example'] } }],
       },
     ]);
+  });
+
+  test('retries overloaded searches only when VERTEX_RETRY_OVERLOAD is set', () => {
+    expect(new WebGroundingEnterprise({ geminiModel: 'gemini-3.8-flash' }).retryOverload).toBe(
+      false,
+    );
+
+    process.env.VERTEX_RETRY_OVERLOAD = 'true';
+
+    expect(new WebGroundingEnterprise({ geminiModel: 'gemini-3.8-flash' }).retryOverload).toBe(
+      true,
+    );
   });
 
   test('lets an explicit model override replace the agent model', () => {
