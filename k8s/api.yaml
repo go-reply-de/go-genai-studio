@@ -27,12 +27,15 @@ spec:
     spec:
       serviceAccountName: k8s-service-account
       initContainers:
+        # New files go in next to the running build's, so its pages keep loading during a
+        # rollout; files that neither this nor the previous build lists are removed.
         - name: copy-assets
           image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
           command: ["/bin/sh", "-c"]
           args:
             - >
               SENTINEL=/default-assets/.assets-version;
+              LISTS=/default-assets/.assets-lists;
               WANT="###API_SHORT_SHA###";
               if [ ! -d /default-assets ]; then
                 echo "Directory /default-assets not found, skipping.";
@@ -40,10 +43,23 @@ spec:
                 echo "Assets already at $WANT - skipping sync.";
               else
                 echo "Syncing assets to $WANT...";
-                find /default-assets -type f -not -name "main_logo.png" -not -name "main_favicon.png" -not -name ".assets-version" -delete &&
-                cp -r -n /app/client/dist/assets/* /default-assets/ &&
+                PREV="$(cat "$SENTINEL" 2>/dev/null)";
+                mkdir -p "$LISTS" &&
+                for entry in /app/client/dist/assets/*; do
+                  name="$(basename "$entry")";
+                  case "$name" in
+                    main_logo.png|main_favicon.png) [ -e "/default-assets/$name" ] || cp "$entry" /default-assets/ ;;
+                    *) cp -r "$entry" /default-assets/ ;;
+                  esac || exit 1;
+                done &&
+                (cd /app/client/dist/assets && find . -type f | sed 's|^\./||') > "$LISTS/$WANT" &&
                 printf '%s' "$WANT" > "$SENTINEL" &&
-                echo "Assets synced.";
+                echo "Assets synced." &&
+                if [ -n "$PREV" ] && [ -s "$LISTS/$PREV" ] && [ -s "$LISTS/$WANT" ]; then
+                  (cd /default-assets && find . -type f ! -path './.assets-lists/*' ! -name main_logo.png ! -name main_favicon.png ! -name .assets-version | sed 's|^\./||') | grep -vxF -f "$LISTS/$WANT" | grep -vxF -f "$LISTS/$PREV" | while IFS= read -r stale; do rm -f "/default-assets/$stale"; done;
+                  ls "$LISTS" | grep -vxF -e "$WANT" -e "$PREV" | while IFS= read -r old; do rm -f "$LISTS/$old"; done;
+                  echo "Removed files only builds before $PREV used.";
+                fi;
               fi
           volumeMounts:
             - name: api-branding
@@ -64,6 +80,11 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   key: ALLOW_REGISTRATION
+                  name: env
+            - name: ALLOW_SHARED_LINKS
+              valueFrom:
+                configMapKeyRef:
+                  key: ALLOW_SHARED_LINKS
                   name: env
             - name: ALLOW_SOCIAL_LOGIN
               valueFrom:
@@ -234,6 +255,11 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   key: EMAIL_USERNAME
+                  name: env
+            - name: FILE_RETENTION_SWEEP_INTERVAL_MS
+              valueFrom:
+                configMapKeyRef:
+                  key: FILE_RETENTION_SWEEP_INTERVAL_MS
                   name: env
             - name: GCP_LOGGING
               value: "true"
@@ -506,6 +532,21 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   key: RETENTION_WEEKLY_RESET_TZ
+                  name: env
+            - name: ROLE_PERMISSION_CAPS
+              valueFrom:
+                configMapKeyRef:
+                  key: ROLE_PERMISSION_CAPS
+                  name: env
+            - name: SPEECH_LOCAL_ONLY
+              valueFrom:
+                configMapKeyRef:
+                  key: SPEECH_LOCAL_ONLY
+                  name: env
+            - name: STRICT_BROWSER_EGRESS
+              valueFrom:
+                configMapKeyRef:
+                  key: STRICT_BROWSER_EGRESS
                   name: env
             - name: SD_WEBUI_URL
               valueFrom:

@@ -13,6 +13,7 @@ import { useMCPToolsQuery, useMCPServersQuery } from '~/data-provider';
 import { cleanupTimestampedStorage } from '~/utils/timestamps';
 import useSpeechSettingsInit from './useSpeechSettingsInit';
 import { useHasAccess } from '~/hooks';
+import useHardening from './useHardening';
 import store from '~/store';
 
 export default function useAppStartup({
@@ -29,6 +30,7 @@ export default function useAppStartup({
   });
 
   useSpeechSettingsInit(!!user);
+  useHardening(startupConfig);
   const { data: loadedServers, isLoading: serversLoading } = useMCPServersQuery({
     enabled: canUseMcp,
   });

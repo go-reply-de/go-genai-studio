@@ -67,6 +67,9 @@ function buildTargets(agentFileIds, boundary) {
     { label: 'conversations', name: 'conversations', filter: { ...needsStamp } },
     { label: 'messages', name: 'messages', filter: { ...needsStamp } },
     { label: 'shared links', name: 'sharedlinks', filter: { ...needsStamp } },
+    { label: 'tool calls', name: 'toolcalls', filter: { ...needsStamp } },
+    { label: 'transactions', name: 'transactions', filter: { ...needsStamp } },
+    { label: 'chat projects', name: 'chatprojects', filter: { ...needsStamp } },
     {
       label: 'files',
       name: 'files',
