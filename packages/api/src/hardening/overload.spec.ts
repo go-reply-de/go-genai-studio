@@ -5,7 +5,6 @@ import {
   withOverloadRetry,
   isRetryableStatus,
   overloadErrorText,
-  vertexRetryOptions,
   retryVertexOverload,
 } from './overload';
 import { getGoogleConfig } from '~/endpoints/google/llm';
@@ -15,8 +14,6 @@ jest.mock('@librechat/data-schemas', () => ({
   logger: { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() },
 }));
 
-const ON: NodeJS.ProcessEnv = { VERTEX_RETRY_OVERLOAD: 'true' };
-const OFF: NodeJS.ProcessEnv = {};
 const OVERLOAD_INFO = 'Der KI-Dienst ist gerade ausgelastet – bitte in einer Minute erneut senden.';
 
 /** How LangChain's Google client reports a refused request. */
@@ -90,30 +87,17 @@ describe('retryVertexOverload', () => {
   });
 });
 
-describe('vertexRetryOptions', () => {
-  it('adds the handler only when VERTEX_RETRY_OVERLOAD is set', () => {
-    expect(vertexRetryOptions(ON)).toEqual({ onFailedAttempt: retryVertexOverload });
-    expect(vertexRetryOptions(OFF)).toEqual({});
-  });
-});
-
-describe('getGoogleConfig with VERTEX_RETRY_OVERLOAD', () => {
-  const originalEnv = process.env;
-  const credentials = {
-    [AuthKeys.GOOGLE_SERVICE_KEY]: {
-      project_id: 'test-project',
-      client_email: 'test@test-project.iam.gserviceaccount.com',
-      private_key: 'test-private-key',
-    },
-  };
+describe('getGoogleConfig overload handler', () => {
   const options = { modelOptions: { model: 'gemini-3.8-flash' } };
 
-  afterEach(() => {
-    process.env = originalEnv;
-  });
-
   it('gives a Vertex config the overload handler next to its two retries', () => {
-    process.env = { ...originalEnv, VERTEX_RETRY_OVERLOAD: 'true' };
+    const credentials = {
+      [AuthKeys.GOOGLE_SERVICE_KEY]: {
+        project_id: 'test-project',
+        client_email: 'test@test-project.iam.gserviceaccount.com',
+        private_key: 'test-private-key',
+      },
+    };
 
     const { provider, llmConfig } = getGoogleConfig(credentials, options);
 
@@ -122,12 +106,13 @@ describe('getGoogleConfig with VERTEX_RETRY_OVERLOAD', () => {
     expect(llmConfig).toHaveProperty('maxRetries', 2);
   });
 
-  it('leaves a Vertex config as LibreChat builds it without the switch', () => {
-    process.env = { ...originalEnv };
-    delete process.env.VERTEX_RETRY_OVERLOAD;
+  it('leaves an API-key Google config to LangChain', () => {
+    const { provider, llmConfig } = getGoogleConfig(
+      { [AuthKeys.GOOGLE_API_KEY]: 'test-api-key' },
+      options,
+    );
 
-    const { llmConfig } = getGoogleConfig(credentials, options);
-
+    expect(provider).toBe(Providers.GOOGLE);
     expect(llmConfig).not.toHaveProperty('onFailedAttempt');
   });
 });
@@ -189,7 +174,7 @@ describe('withOverloadRetry', () => {
 
 describe('overloadErrorText', () => {
   it.each([429, 503])('words a lasting %i as a Google error the client shows as is', (status) => {
-    const text = overloadErrorText(langchainError(status), ON);
+    const text = overloadErrorText(langchainError(status));
 
     expect(JSON.parse(text ?? '{}')).toEqual({
       type: ErrorTypes.GOOGLE_ERROR,
@@ -198,12 +183,8 @@ describe('overloadErrorText', () => {
   });
 
   it('leaves every other error to the upstream message', () => {
-    expect(overloadErrorText(langchainError(400), ON)).toBeUndefined();
-    expect(overloadErrorText(langchainError(500), ON)).toBeUndefined();
-    expect(overloadErrorText(new Error('boom'), ON)).toBeUndefined();
-  });
-
-  it('stays off without the switch', () => {
-    expect(overloadErrorText(langchainError(429), OFF)).toBeUndefined();
+    expect(overloadErrorText(langchainError(400))).toBeUndefined();
+    expect(overloadErrorText(langchainError(500))).toBeUndefined();
+    expect(overloadErrorText(new Error('boom'))).toBeUndefined();
   });
 });

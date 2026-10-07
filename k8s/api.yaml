@@ -548,11 +548,6 @@ spec:
                 configMapKeyRef:
                   key: STRICT_BROWSER_EGRESS
                   name: env
-            - name: VERTEX_RETRY_OVERLOAD
-              valueFrom:
-                configMapKeyRef:
-                  key: VERTEX_RETRY_OVERLOAD
-                  name: env
             - name: SD_WEBUI_URL
               valueFrom:
                 configMapKeyRef:

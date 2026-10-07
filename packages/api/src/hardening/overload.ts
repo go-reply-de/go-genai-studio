@@ -1,7 +1,5 @@
 import { logger } from '@librechat/data-schemas';
 import { ErrorTypes } from 'librechat-data-provider';
-import type { VertexAIClientOptions } from '@librechat/agents';
-import { isEnabled } from '~/utils/common';
 
 /** Where LangChain, fetch and the Vertex SDK put the HTTP status of a failed model call. */
 interface StatusError {
@@ -28,14 +26,6 @@ const OVERLOAD_STATUSES = new Set([429, 503]);
 const OVERLOAD_INFO = 'Der KI-Dienst ist gerade ausgelastet – bitte in einer Minute erneut senden.';
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-/**
- * VERTEX_RETRY_OVERLOAD retries Vertex 408, 429 and 5xx responses in chat and in the grounding
- * tool, and words an overload that outlasts the retries plainly.
- */
-export function isOverloadRetryEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return isEnabled(env.VERTEX_RETRY_OVERLOAD);
-}
 
 function httpStatus(value: string | number | undefined): number | undefined {
   return typeof value === 'number' && value >= 100 && value < 600 ? value : undefined;
@@ -80,13 +70,6 @@ export function retryVertexOverload(error: Error): void {
   }
 }
 
-/** Spread into a Vertex llmConfig; empty unless VERTEX_RETRY_OVERLOAD is set. */
-export function vertexRetryOptions(
-  env: NodeJS.ProcessEnv = process.env,
-): Pick<VertexAIClientOptions, 'onFailedAttempt'> {
-  return isOverloadRetryEnabled(env) ? { onFailedAttempt: retryVertexOverload } : {};
-}
-
 /** Retries a retryable status with jittered exponential backoff: about 2 s, then about 4 s. */
 export async function withOverloadRetry<T>(
   call: () => Promise<T>,
@@ -118,12 +101,9 @@ export async function withOverloadRetry<T>(
  * A Google error part, which the client shows as its `info` text alone, for a call that stayed
  * overloaded after its retries. Undefined for anything else, so the upstream message stands.
  */
-export function overloadErrorText(
-  error: unknown,
-  env: NodeJS.ProcessEnv = process.env,
-): string | undefined {
+export function overloadErrorText(error: unknown): string | undefined {
   const status = errorStatus(error);
-  if (!isOverloadRetryEnabled(env) || status == null || !OVERLOAD_STATUSES.has(status)) {
+  if (status == null || !OVERLOAD_STATUSES.has(status)) {
     return undefined;
   }
   return JSON.stringify({ type: ErrorTypes.GOOGLE_ERROR, info: OVERLOAD_INFO });
