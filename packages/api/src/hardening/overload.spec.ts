@@ -1,13 +1,5 @@
-import { Providers } from '@librechat/agents';
-import { AuthKeys, ErrorTypes } from 'librechat-data-provider';
-import {
-  errorStatus,
-  withOverloadRetry,
-  isRetryableStatus,
-  overloadErrorText,
-  retryVertexOverload,
-} from './overload';
-import { getGoogleConfig } from '~/endpoints/google/llm';
+import { ErrorTypes } from 'librechat-data-provider';
+import { errorStatus, withOverloadRetry, isRetryableStatus, overloadErrorText } from './overload';
 
 jest.mock('@librechat/data-schemas', () => ({
   ...jest.requireActual('@librechat/data-schemas'),
@@ -64,56 +56,6 @@ describe('isRetryableStatus', () => {
 
   it.each([400, 401, 403, 404, undefined])('does not retry %s', (status) => {
     expect(isRetryableStatus(status)).toBe(false);
-  });
-});
-
-describe('retryVertexOverload', () => {
-  it.each([429, 500, 503])('lets LangChain retry a %i', (status) => {
-    expect(() => retryVertexOverload(langchainError(status))).not.toThrow();
-  });
-
-  it('lets LangChain retry a network error without a status', () => {
-    expect(() => retryVertexOverload(new Error('fetch failed'))).not.toThrow();
-  });
-
-  it.each([400, 403, 404])('stops on a %i', (status) => {
-    const error = langchainError(status);
-    expect(() => retryVertexOverload(error)).toThrow(error);
-  });
-
-  it('stops when the request was aborted', () => {
-    const error = Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
-    expect(() => retryVertexOverload(error)).toThrow(error);
-  });
-});
-
-describe('getGoogleConfig overload handler', () => {
-  const options = { modelOptions: { model: 'gemini-3.8-flash' } };
-
-  it('gives a Vertex config the overload handler next to its two retries', () => {
-    const credentials = {
-      [AuthKeys.GOOGLE_SERVICE_KEY]: {
-        project_id: 'test-project',
-        client_email: 'test@test-project.iam.gserviceaccount.com',
-        private_key: 'test-private-key',
-      },
-    };
-
-    const { provider, llmConfig } = getGoogleConfig(credentials, options);
-
-    expect(provider).toBe(Providers.VERTEXAI);
-    expect(llmConfig).toHaveProperty('onFailedAttempt', retryVertexOverload);
-    expect(llmConfig).toHaveProperty('maxRetries', 2);
-  });
-
-  it('leaves an API-key Google config to LangChain', () => {
-    const { provider, llmConfig } = getGoogleConfig(
-      { [AuthKeys.GOOGLE_API_KEY]: 'test-api-key' },
-      options,
-    );
-
-    expect(provider).toBe(Providers.GOOGLE);
-    expect(llmConfig).not.toHaveProperty('onFailedAttempt');
   });
 });
 

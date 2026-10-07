@@ -4,7 +4,6 @@ import { googleSettings, AuthKeys, removeNullishValues } from 'librechat-data-pr
 import type { GoogleClientOptions, VertexAIClientOptions } from '@librechat/agents';
 import type { GoogleAIToolType } from '@librechat/agents/langchain/google-common';
 import type * as t from '~/types';
-import { retryVertexOverload } from '~/hardening/overload';
 import { mergeHeaders } from '~/utils/headers';
 import { isEnabled } from '~/utils';
 
@@ -435,7 +434,6 @@ export function getGoogleConfig(
     );
     const location = process.env.GOOGLE_LOC || 'us-central1';
     (llmConfig as VertexAIClientOptions).location = location;
-    (llmConfig as VertexAIClientOptions).onFailedAttempt = retryVertexOverload;
   } else if (apiKey && provider === Providers.GOOGLE) {
     llmConfig.apiKey = apiKey;
   } else {

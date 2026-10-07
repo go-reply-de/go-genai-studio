@@ -3,8 +3,6 @@ import { ErrorTypes } from 'librechat-data-provider';
 
 /** Where LangChain, fetch and the Vertex SDK put the HTTP status of a failed model call. */
 interface StatusError {
-  name?: string;
-  code?: string | number;
   status?: string | number;
   message?: string;
   response?: { status?: number };
@@ -50,24 +48,6 @@ export function errorStatus(error: unknown): number | undefined {
 /** Google's retry guidance for Vertex: 408, 429 and every 5xx. */
 export function isRetryableStatus(status: number | undefined): boolean {
   return status != null && (RETRYABLE_CLIENT_STATUSES.has(status) || status >= 500);
-}
-
-function isAbort({ name, code, message = '' }: StatusError): boolean {
-  return name === 'AbortError' || code === 'ECONNABORTED' || /^(Cancel|AbortError)/.test(message);
-}
-
-/**
- * LangChain's default handler retries a 429 only when it carries Retry-After. This one retries
- * every retryable status and, like the default, fails at once on aborts and other 4xx.
- */
-export function retryVertexOverload(error: Error): void {
-  const status = errorStatus(error);
-  if (isAbort(error as StatusError) || (status != null && !isRetryableStatus(status))) {
-    throw error;
-  }
-  if (status != null) {
-    logger.warn(`[retryVertexOverload] Vertex answered ${status}`);
-  }
 }
 
 /** Retries a retryable status with jittered exponential backoff: about 2 s, then about 4 s. */
