@@ -4,6 +4,7 @@ const { Tool } = require('@librechat/agents/langchain/tools');
 const { VertexAI } = require('@google-cloud/vertexai');
 const { Tools } = require('librechat-data-provider');
 const { logger } = require('@librechat/data-schemas');
+const { errorStatus, withOverloadRetry, isRetryableStatus } = require('@librechat/api');
 const { extractGroundingResponse } = require('../util/vertexGrounding');
 const {
     parsePolicyConfig,
@@ -27,6 +28,17 @@ const VERTEX_MULTI_REGION_ENDPOINTS = {
     us: 'aiplatform.us.rep.googleapis.com',
     global: 'aiplatform.googleapis.com',
 };
+
+/** Overload retries stop starting once a search has run this long, the retry on an empty result included. */
+const RETRY_BUDGET_MS = 20000;
+
+const SEARCH_UNAVAILABLE =
+    'WARNUNG: Die Websuche ist gerade nicht verfügbar, es liegen keine Suchergebnisse vor. ' +
+    'Sag dem Nutzer, dass die Suche fehlgeschlagen ist und in einer Minute erneut versucht werden kann. ' +
+    'Gib keine Aussage als durch eine Suche belegt aus.';
+const SEARCH_FAILED =
+    'WARNUNG: Die Websuche ist fehlgeschlagen, es liegen keine Suchergebnisse vor. ' +
+    'Sag dem Nutzer, dass die Suche fehlgeschlagen ist. Gib keine Aussage als durch eine Suche belegt aus.';
 
 const warned = new Set();
 function warnOnce(message) {
@@ -165,15 +177,26 @@ class WebGroundingEnterprise extends Tool {
         }
     }
 
+    /** One search call, retried on overload while the search's budget lasts. */
+    _generate(request, deadline) {
+        return withOverloadRetry(() => this.generativeModel.generateContent(request), { deadline });
+    }
+
     /** An empty result leaves nothing to cite, so it earns exactly one more attempt. */
     async _search(query) {
         const request = contentsOf(buildGroundingPrompt(query));
-        const first = extractGroundingResponse((await this.generativeModel.generateContent(request)).response);
+        const deadline = Date.now() + RETRY_BUDGET_MS;
+        const first = extractGroundingResponse((await this._generate(request, deadline)).response);
         if (resultDomains(first.chunks).length) {
             return first;
         }
         logger.info('Web grounding returned no attributable results; retrying once.');
-        return extractGroundingResponse((await this.generativeModel.generateContent(request)).response);
+        return extractGroundingResponse((await this._generate(request, deadline)).response);
+    }
+
+    /** Tells the agent the search did not run, so it says so instead of answering unsourced. */
+    _failure(error) {
+        return isRetryableStatus(errorStatus(error)) ? SEARCH_UNAVAILABLE : SEARCH_FAILED;
     }
 
     /** The text is what the agent reads; the artifact feeds LibreChat's Sources panel. */
@@ -198,7 +221,7 @@ class WebGroundingEnterprise extends Tool {
             return [answer, { [Tools.web_search]: { turn, organic: toOrganicSources(entries) } }];
         } catch (error) {
             logger.error('Web Grounding for Enterprise request failed', error);
-            return ['There was an error with the Web Grounding for Enterprise Search.', undefined];
+            return [this._failure(error), undefined];
         }
     }
 }
