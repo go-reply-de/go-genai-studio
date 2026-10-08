@@ -13,6 +13,11 @@ const MASKS: Array<[RegExp, string]> = [
 
 export type FeedbackTextInput = { rating?: unknown; tag?: unknown; text?: unknown } | null;
 
+/** FEEDBACK_TEXT_LOG also tells the client to show the feedback dialog's privacy hint. */
+export function isFeedbackTextLogEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isEnabled(env.FEEDBACK_TEXT_LOG);
+}
+
 function known<T extends string>(values: readonly T[], value: unknown): T | 'unknown' {
   return values.includes(value as T) ? (value as T) : 'unknown';
 }
@@ -26,7 +31,7 @@ export function logFeedbackText(
   feedback: FeedbackTextInput | undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): void {
-  if (!isEnabled(env.FEEDBACK_TEXT_LOG) || typeof feedback?.text !== 'string') {
+  if (!isFeedbackTextLogEnabled(env) || typeof feedback?.text !== 'string') {
     return;
   }
   let text = feedback.text.trim().slice(0, MAX_TEXT_LENGTH);
