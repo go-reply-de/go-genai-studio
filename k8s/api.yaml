@@ -256,6 +256,11 @@ spec:
                 configMapKeyRef:
                   key: EMAIL_USERNAME
                   name: env
+            - name: FEEDBACK_TEXT_TABLE
+              valueFrom:
+                configMapKeyRef:
+                  key: FEEDBACK_TEXT_TABLE
+                  name: env
             - name: FILE_RETENTION_SWEEP_INTERVAL_MS
               valueFrom:
                 configMapKeyRef:
