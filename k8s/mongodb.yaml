@@ -136,13 +136,15 @@ data:
     # Created only once the corresponding feature is used; absence is normal in
     # a fresh environment and is not an error.
     OPTIONAL="accessroles aclentries actions agentapikeys agentcategories
-              balances banners chatprojects configs groups mcpservers
+              balances banners configs groups mcpservers
               promptgroups prompts skillfiles skills systemgrants"
 
     # Asserted after the fact as defence in depth. The allow-list is the
-    # control; this catches an accidental addition to it.
+    # control; this catches an accidental addition to it. Every collection the
+    # weekly reset deletes belongs here, or a Backup would outlive it.
     FORBIDDEN="conversations messages files sharedlinks conversationtags
-               memoryentries toolcalls presets sessions tokens transactions"
+               memoryentries toolcalls presets sessions tokens transactions
+               chatprojects"
 
     rm -rf "$DUMP"
     mkdir -p "$DUMP"
