@@ -27,7 +27,7 @@ describe('installFeedbackTextHint', () => {
     const uninstall = installFeedbackTextHint(i18n);
 
     expect(i18n.t('com_ui_feedback_placeholder')).toBe(
-      'What was it about, and what went wrong? Please no patient data, names or case numbers.',
+      'What was it about, and what went wrong? Please no patient data and no details about staff.',
     );
     expect(i18n.t('com_ui_feedback_more_information')).toBe(
       'Additional feedback – evaluated without your name',
@@ -43,7 +43,7 @@ describe('installFeedbackTextHint', () => {
     i18n.addResourceBundle('de', 'translation', UPSTREAM_DE, true, true);
 
     expect(i18n.getResource('de', 'translation', 'com_ui_feedback_placeholder')).toBe(
-      'Worum ging es, und was hat gestört? Bitte keine Patientendaten, Namen oder Fallnummern.',
+      'Worum ging es, und was hat gestört? Bitte keine Patientendaten und keine Angaben zu Beschäftigten.',
     );
     expect(i18n.getResource('de', 'translation', 'com_ui_feedback_more_information')).toBe(
       'Zusätzliches Feedback – wird ohne Ihren Namen ausgewertet',

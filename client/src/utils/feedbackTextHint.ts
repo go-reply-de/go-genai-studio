@@ -2,17 +2,17 @@ import type { i18n as I18n } from 'i18next';
 
 const NAMESPACE = 'translation';
 
-/** The free text is logged without ids for the feedback dashboard; the dialog says so. */
+/** The free text is evaluated without ids; the dialog says so and asks for no personal details. */
 const HINTS: Record<'de' | 'en', Record<string, string>> = {
   de: {
     com_ui_feedback_more_information: 'Zusätzliches Feedback – wird ohne Ihren Namen ausgewertet',
     com_ui_feedback_placeholder:
-      'Worum ging es, und was hat gestört? Bitte keine Patientendaten, Namen oder Fallnummern.',
+      'Worum ging es, und was hat gestört? Bitte keine Patientendaten und keine Angaben zu Beschäftigten.',
   },
   en: {
     com_ui_feedback_more_information: 'Additional feedback – evaluated without your name',
     com_ui_feedback_placeholder:
-      'What was it about, and what went wrong? Please no patient data, names or case numbers.',
+      'What was it about, and what went wrong? Please no patient data and no details about staff.',
   },
 };
 

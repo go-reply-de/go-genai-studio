@@ -7,7 +7,7 @@ const {
   countTokens,
   sendFeedbackScore,
   traceIdForMessage,
-  logFeedbackText,
+  saveFeedbackText,
 } = require('@librechat/api');
 const { findAllArtifacts, replaceArtifactContent } = require('~/server/services/Artifacts/update');
 const { requireJwtAuth, validateMessageReq } = require('~/server/middleware');
@@ -396,7 +396,7 @@ router.put('/:conversationId/:messageId/feedback', validateMessageReq, async (re
       },
       { context: 'updateFeedback' },
     );
-    logFeedbackText(updatedMessage.feedback);
+    void saveFeedbackText(updatedMessage.feedback);
 
     // Best-effort: Assistants messages do not have deterministic AgentRun traces.
     if (!isAssistantsEndpoint(updatedMessage.endpoint)) {

@@ -17,7 +17,7 @@ function readFlag(startupConfig: TStartupConfig | undefined, key: string): boole
 export default function useHardening(startupConfig?: TStartupConfig) {
   const speechLocalOnly = readFlag(startupConfig, 'speechLocalOnly');
   const strictBrowserEgress = readFlag(startupConfig, 'strictBrowserEgress');
-  const feedbackTextLog = readFlag(startupConfig, 'feedbackTextLog');
+  const feedbackTexts = readFlag(startupConfig, 'feedbackTexts');
 
   useLocalSpeechOnly(speechLocalOnly);
 
@@ -43,9 +43,9 @@ export default function useHardening(startupConfig?: TStartupConfig) {
   }, [strictBrowserEgress]);
 
   useEffect(() => {
-    if (!feedbackTextLog) {
+    if (!feedbackTexts) {
       return;
     }
     return installFeedbackTextHint(i18n);
-  }, [feedbackTextLog]);
+  }, [feedbackTexts]);
 }
