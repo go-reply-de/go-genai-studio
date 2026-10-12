@@ -522,7 +522,8 @@ steps:
         exit 1
       fi
       kubectl apply -f ./k8s/feedback-review.yaml --namespace=${_GKE_NAMESPACE}
-      kubectl rollout status deploy/feedback-review --namespace=${_GKE_NAMESPACE} --timeout=180s
+      # Its first pod may wait for a new node to pull the API image.
+      kubectl rollout status deploy/feedback-review --namespace=${_GKE_NAMESPACE} --timeout=300s
   env:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"

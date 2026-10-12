@@ -36,7 +36,7 @@ spec:
       containers:
         - name: review
           image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
-          command: ["node", "api/feedback-review/server.js"]
+          command: ["node", "/app/api/feedback-review/server.js"]
           ports:
             - name: http
               containerPort: 8080
