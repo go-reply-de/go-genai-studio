@@ -37,14 +37,21 @@ const MONTHS = [
 ];
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
+  '/theme.js': ['theme.js', 'text/javascript; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/app.css': ['app.css', 'text/css; charset=utf-8'],
 };
+/** LibreChat's own Inter, from the client build in the image or its sources in a checkout. */
+const FONTS = ['Inter-Regular.woff2', 'Inter-SemiBold.woff2', 'Inter-Bold.woff2'];
+const FONT_DIRS = [
+  path.join(__dirname, '..', '..', 'client', 'dist', 'fonts'),
+  path.join(__dirname, '..', '..', 'client', 'public', 'fonts'),
+];
 const HEADERS = {
   'Cache-Control': 'no-store',
   'Content-Security-Policy':
     "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; " +
-    "img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    "font-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
   'Referrer-Policy': 'no-referrer',
   'X-Content-Type-Options': 'nosniff',
 };
@@ -65,12 +72,16 @@ const day = (y, m, d) => `${y}-${pad(m)}-${pad(d)}`;
 const daysIn = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
 const dateParam = (value) => ({ type: 'DATE', value });
 const stringParam = (value) => ({ type: 'STRING', value });
+const berlinDay = (date) =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' }).format(date);
 
-/** The page and its API; `fetchFn` and `env` are swapped in tests. */
+/** The page and its API; `fetchFn`, `env` and the clock are swapped in tests. */
 function createReview({
   env = process.env,
   fetchFn = fetch,
+  now = () => new Date(),
   staticDir = path.join(__dirname, 'public'),
+  fontDirs = FONT_DIRS,
 } = {}) {
   const dataset = env.FEEDBACK_DATASET?.trim() || 'feedback';
   const files = Object.fromEntries(
@@ -78,6 +89,12 @@ function createReview({
       route,
       [fs.readFileSync(path.join(staticDir, name)), type],
     ]),
+  );
+  const fontDir = fontDirs.find((dir) => fs.existsSync(path.join(dir, FONTS[0])));
+  const fonts = Object.fromEntries(
+    fontDir
+      ? FONTS.map((name) => [`/fonts/${name}`, fs.readFileSync(path.join(fontDir, name))])
+      : [],
   );
   let project = '';
   let token = { value: '', expires: 0 };
@@ -149,22 +166,41 @@ function createReview({
 
   const table = async (name) => `\`${(await credentials()).project}.${dataset}.${name}\``;
 
+  /**
+   * A month's counts, compared with the same days of the month before while it is still
+   * running (1–12 October against 1–12 September), and its texts.
+   */
   async function monthView(y, m) {
     const first = day(y, m, 1);
     const last = day(y, m, daysIn(y, m));
     const [py, pm] = m === 1 ? [y - 1, 12] : [y, m - 1];
+    const today = berlinDay(now());
+    const running = today.slice(0, 7) === `${y}-${pad(m)}`;
+    const until = running ? Number(today.slice(8)) : daysIn(y, m);
+    const previousLast = day(py, pm, running ? Math.min(until, daysIn(py, pm)) : daysIn(py, pm));
     const { rows: counts } = await query(
       `SELECT date, rating, reason, SUM(ratings), SUM(texts) FROM ${await table('counts')} ` +
         'WHERE date BETWEEN @first AND @last GROUP BY date, rating, reason',
       { first: dateParam(day(py, pm, 1)), last: dateParam(last) },
     );
     const current = { rated: 0, up: 0, down: 0, texts: 0 };
-    const previous = { label: MONTHS[pm - 1], rated: 0, up: 0, down: 0, texts: 0 };
+    const previous = {
+      label: MONTHS[pm - 1],
+      from: day(py, pm, 1),
+      to: previousLast,
+      rated: 0,
+      up: 0,
+      down: 0,
+      texts: 0,
+    };
     const days = Array.from({ length: daysIn(y, m) }, () => [0, 0]);
     const reasons = { thumbsDown: {}, thumbsUp: {} };
     for (const [date, rating, reason, ratingsValue, textsValue] of counts) {
       const ratings = Number(ratingsValue);
       const inMonth = date >= first;
+      if (!inMonth && date > previousLast) {
+        continue;
+      }
       const totals = inMonth ? current : previous;
       totals.texts += Number(textsValue);
       if (!(rating in reasons)) {
@@ -195,6 +231,7 @@ function createReview({
       environment: env.ENVIRONMENT || '',
       month: `${y}-${pad(m)}`,
       label: `${MONTHS[m - 1]} ${y}`,
+      period: { from: first, to: day(y, m, until), running },
       current,
       previous,
       days,
@@ -215,11 +252,16 @@ function createReview({
     return changed;
   }
 
-  function send(res, status, body, type = 'application/json; charset=utf-8') {
+  function send(res, status, body, type = 'application/json; charset=utf-8', extra = {}) {
     const data = Buffer.isBuffer(body)
       ? body
       : Buffer.from(typeof body === 'string' ? body : JSON.stringify(body));
-    res.writeHead(status, { ...HEADERS, 'Content-Type': type, 'Content-Length': data.length });
+    res.writeHead(status, {
+      ...HEADERS,
+      'Content-Type': type,
+      'Content-Length': data.length,
+      ...extra,
+    });
     res.end(data);
   }
 
@@ -308,6 +350,11 @@ function createReview({
     const route = url.pathname.startsWith(PREFIX) ? url.pathname.slice(PREFIX.length) : null;
     if (files[route]) {
       return send(res, 200, ...files[route]);
+    }
+    if (fonts[route]) {
+      return send(res, 200, fonts[route], 'font/woff2', {
+        'Cache-Control': 'private, max-age=86400',
+      });
     }
     if (route === '/api/month') {
       const match = MONTH.exec(url.searchParams.get('m') || '');

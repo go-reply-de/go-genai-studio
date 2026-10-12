@@ -1,5 +1,12 @@
+const fs = require('fs');
 const http = require('http');
+const os = require('os');
+const path = require('path');
 const { createReview } = require('./server');
+
+/** October 2026 has ended, so it is compared with all of September. */
+const NOVEMBER = () => new Date('2026-11-05T10:00:00Z');
+const ENV = { FEEDBACK_DATASET: 'feedback', APP_TITLE: 'DiMeAs', ENVIRONMENT: 'sov-dev' };
 
 const REVIEWER = { 'X-Goog-Authenticated-User-Email': 'accounts.google.com:reviewer@example.org' };
 const ACTION = { ...REVIEWER, 'X-Feedback-Review': '1', 'Content-Type': 'application/json' };
@@ -25,12 +32,9 @@ function fakeFetch(answer) {
 }
 
 /** Starts the review server on a free port; returns a fetch bound to it. */
-async function start(
-  answer,
-  env = { FEEDBACK_DATASET: 'feedback', APP_TITLE: 'DiMeAs', ENVIRONMENT: 'sov-dev' },
-) {
+async function start(answer, { now = NOVEMBER, fontDirs } = {}) {
   const fake = fakeFetch(answer);
-  const review = createReview({ env, fetchFn: fake.fn });
+  const review = createReview({ env: ENV, fetchFn: fake.fn, now, ...(fontDirs && { fontDirs }) });
   const server = http.createServer((req, res) => review.handle(req, res));
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}/feedback`;
@@ -73,11 +77,67 @@ describe('feedback review server', () => {
     const res = await app.request('/', { headers: REVIEWER });
     expect(res.status).toBe(200);
     expect(res.headers.get('content-security-policy')).toContain("script-src 'self'");
+    expect(res.headers.get('content-security-policy')).toContain("font-src 'self'");
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect(await res.text()).toContain('<script src="app.js" defer></script>');
+    const page = await res.text();
+    expect(page).toContain('<script src="theme.js"></script>');
+    expect(page).toContain('<script src="app.js" defer></script>');
+    expect((await app.request('/theme.js', { headers: REVIEWER })).status).toBe(200);
     expect((await app.request('', { headers: REVIEWER })).headers.get('location')).toBe(
       '/feedback/',
     );
+  });
+
+  it("serves LibreChat's Inter from the page itself and nothing else from the font folder", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-fonts-'));
+    for (const name of [
+      'Inter-Regular.woff2',
+      'Inter-SemiBold.woff2',
+      'Inter-Bold.woff2',
+      'other.woff2',
+    ]) {
+      fs.writeFileSync(path.join(dir, name), `synthetic ${name}`);
+    }
+    app = await start(() => Response.json({ jobComplete: true }), {
+      fontDirs: ['/nonexistent', dir],
+    });
+    const font = await app.request('/fonts/Inter-SemiBold.woff2', { headers: REVIEWER });
+    expect(font.status).toBe(200);
+    expect(font.headers.get('content-type')).toBe('font/woff2');
+    expect(await font.text()).toBe('synthetic Inter-SemiBold.woff2');
+    expect((await app.request('/fonts/other.woff2', { headers: REVIEWER })).status).toBe(404);
+    expect((await app.request('/fonts/Inter-Regular.woff2')).status).toBe(403);
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  it('compares a running month with the same days of the month before', async () => {
+    app = await start(
+      (body) =>
+        Response.json(
+          body.query.includes('.counts`')
+            ? {
+                jobComplete: true,
+                rows: [
+                  cells('2026-10-02', 'thumbsUp', 'accurate_reliable', 3, 1),
+                  cells('2026-09-05', 'thumbsUp', 'accurate_reliable', 4, 1),
+                  cells('2026-09-30', 'thumbsDown', 'other', 9, 2),
+                ],
+              }
+            : { jobComplete: true, rows: [] },
+        ),
+      { now: () => new Date('2026-10-11T22:30:00Z') },
+    );
+    const data = await (await app.request('/api/month?m=2026-10', { headers: REVIEWER })).json();
+    // 22:30 UTC on the 11th is already the 12th in Berlin, so only 1–12 September counts.
+    expect(data.period).toEqual({ from: '2026-10-01', to: '2026-10-12', running: true });
+    expect(data.previous).toMatchObject({
+      from: '2026-09-01',
+      to: '2026-09-12',
+      rated: 4,
+      down: 0,
+      texts: 1,
+    });
+    expect(data.current).toEqual({ rated: 3, up: 3, down: 0, texts: 1 });
   });
 
   it('sums a month and the one before from the counts and lists its texts', async () => {
@@ -109,8 +169,9 @@ describe('feedback review server', () => {
       month: '2026-10',
       label: 'Oktober 2026',
       user: 'reviewer@example.org',
+      period: { from: '2026-10-01', to: '2026-10-31', running: false },
       current: { rated: 8, up: 5, down: 3, texts: 2 },
-      previous: { label: 'September', rated: 7, up: 7, down: 0, texts: 2 },
+      previous: { label: 'September', to: '2026-09-30', rated: 7, up: 7, down: 0, texts: 2 },
       reasons: { thumbsUp: { accurate_reliable: 5 }, thumbsDown: { inaccurate: 2, other: 1 } },
       texts: [
         { id: ID, date: '2026-10-01', rating: 'thumbsDown', reason: 'inaccurate', text: 'zu lang' },
