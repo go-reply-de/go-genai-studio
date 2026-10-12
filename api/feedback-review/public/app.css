@@ -532,7 +532,7 @@ textarea:focus-visible {
 .dim {
   transition: opacity 200ms ease-out;
 }
-.content[aria-busy='true'] .dim {
+.content.stale .dim {
   opacity: 0.4;
   transition-delay: 150ms;
 }
@@ -569,6 +569,7 @@ textarea:focus-visible {
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
+/* Placeholders shaped like the content, until the first month arrives. */
 .skeleton {
   display: inline-block;
   width: 64px;
@@ -576,6 +577,40 @@ textarea:focus-visible {
   border-radius: 6px;
   background: var(--surface-tertiary);
   vertical-align: middle;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.skeleton.line {
+  display: block;
+  width: 100%;
+  max-width: 420px;
+  height: 12px;
+  margin: 5px 0;
+}
+.skeleton.short {
+  max-width: 220px;
+}
+#chart .placeholder {
+  fill: var(--surface-secondary);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.reasons .placeholder {
+  padding: 8px 0;
+}
+.row.placeholder .date {
+  width: 40px;
+  height: 14px;
+}
+.row.placeholder .mark {
+  width: 18px;
+  height: 18px;
+}
+.row.placeholder .lines {
+  display: block;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.5;
+  }
 }
 .split {
   display: grid;
@@ -962,7 +997,9 @@ mark.hint {
 
 @media (prefers-reduced-motion: reduce) {
   .row.arrived,
-  .live.busy .live-dot {
+  .live.busy .live-dot,
+  .skeleton,
+  #chart .placeholder {
     animation: none;
   }
   .row.leaving,

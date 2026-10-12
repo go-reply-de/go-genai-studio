@@ -45,7 +45,6 @@ const SHORT = [
 const REFRESH_MS = 60000;
 /** A month shown from memory is checked again in the background once it is this old. */
 const FRESH_MS = 60000;
-const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const PAGE = 50;
 const MARKER = '[entfernt]';
 const SEEN_KEY = 'feedback-seen';
@@ -203,6 +202,8 @@ function settleLive(data) {
 }
 
 function busy(on) {
+  // Placeholders stand in on the first load; after that the previous month fades back.
+  $('content').classList.toggle('stale', on && Boolean(state.data));
   if (on) {
     $('content').setAttribute('aria-busy', 'true');
     setLive('busy', 'Lädt …');
@@ -445,19 +446,9 @@ function renderNav(month) {
   );
 }
 
+/** The brand and the reviewer are written into the page by the server; only the month changes. */
 function renderHeader() {
-  const d = state.data;
-  const app = d.application || 'Feedback';
-  document.title = `${d.label} · ${app} Feedback`;
-  $('app').textContent = app;
-  $('logo').textContent = app.charAt(0).toUpperCase();
-  $('env').textContent = d.environment || '';
-  $('user').title = d.user || '';
-  $('user-name').textContent = d.user ? `Angemeldet als ${d.user}` : '';
-  $('avatar').textContent = (d.user || '?')
-    .split('@')[0]
-    .replace(/[^a-zA-Z]/g, '')
-    .slice(0, 2);
+  document.title = `${state.data.label} · ${$('app').textContent} Feedback`;
 }
 
 function renderStats() {
@@ -968,7 +959,7 @@ document.querySelectorAll('.theme button').forEach((b) =>
 system.addEventListener('change', applyTheme);
 applyTheme();
 
-const linked = new URLSearchParams(location.search).get('m') || '';
-const initial = MONTH_RE.test(linked) ? linked : berlinMonth();
+// The server writes the month into the page; the clock is only a fallback.
+const initial = $('month').value || berlinMonth();
 renderMonths([initial]);
 show(initial);

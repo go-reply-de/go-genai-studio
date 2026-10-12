@@ -56,6 +56,13 @@ async function start(answer, { now = NOVEMBER, fontDirs } = {}) {
   return { ...fake, request, close: () => new Promise((resolve) => server.close(resolve)) };
 }
 
+/** Waits up to half a second for background work. */
+async function waitFor(check) {
+  for (let i = 0; i < 100 && !check(); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 /** Runs `run` and returns the JSON lines it wrote to stdout. */
 async function stdoutLines(run) {
   const lines = [];
@@ -100,6 +107,34 @@ describe('feedback review server', () => {
     expect((await app.request('', { headers: REVIEWER })).headers.get('location')).toBe(
       '/feedback/',
     );
+  });
+
+  it('writes the reviewer, the app and the month into the page', async () => {
+    app = await start(bigQuery());
+    const page = await (
+      await app.request('/?m=2026-09', {
+        headers: { 'X-Goog-Authenticated-User-Email': 'accounts.google.com:a&b.rev@example.org' },
+      })
+    ).text();
+    expect(page).toContain('<b id="app">DiMeAs</b>');
+    expect(page).toContain('<span class="badge" id="env">sov-dev</span>');
+    expect(page).toContain('Angemeldet als a&amp;b.rev@example.org');
+    expect(page).toContain('<span class="avatar" id="avatar" aria-hidden="true">AB</span>');
+    expect(page).toContain('<option value="2026-09">September 2026</option>');
+    expect(page).toContain('<title>September 2026 · DiMeAs Feedback</title>');
+    expect(page).not.toContain('{{');
+
+    const fallback = await (await app.request('/?m=2026-13', { headers: REVIEWER })).text();
+    expect(fallback).toContain('<option value="2026-11">November 2026</option>');
+  });
+
+  it('starts the month queries while the page itself is served', async () => {
+    app = await start(bigQuery({ months: ['2026-11'] }));
+    expect((await app.request('/', { headers: REVIEWER })).status).toBe(200);
+    await waitFor(() => app.queries.length === 3);
+    expect(app.queries).toHaveLength(3);
+    expect((await app.request('/api/month?m=2026-11', { headers: REVIEWER })).status).toBe(200);
+    expect(app.queries).toHaveLength(3);
   });
 
   it("serves LibreChat's Inter from the page itself and nothing else from the font folder", async () => {
@@ -166,11 +201,8 @@ describe('feedback review server', () => {
     const data = await res.json();
 
     expect(data).toMatchObject({
-      application: 'DiMeAs',
-      environment: 'sov-dev',
       month: '2026-10',
       label: 'Oktober 2026',
-      user: 'reviewer@example.org',
       period: { from: '2026-10-01', to: '2026-10-31', running: false },
       current: { rated: 8, up: 5, down: 3, texts: 2 },
       previous: { label: 'September', to: '2026-09-30', rated: 7, up: 7, down: 0, texts: 2 },
@@ -191,6 +223,7 @@ describe('feedback review server', () => {
       'https://bigquery.googleapis.com/bigquery/v2/projects/synthetic-project/queries',
     );
     expect(counts.auth).toBe('Bearer synthetic-token');
+    expect(counts.jobCreationMode).toBe('JOB_CREATION_OPTIONAL');
     expect(counts.query).toContain('`synthetic-project.feedback.counts`');
     expect(counts.queryParameters).toEqual([
       { name: 'first', parameterType: { type: 'DATE' }, parameterValue: { value: '2026-09-01' } },
@@ -264,12 +297,14 @@ describe('feedback review server', () => {
     expect(metadata).toHaveLength(2);
   });
 
-  it('keeps a finished month in memory until a text changes, but not the running month', async () => {
+  it('keeps a finished month for five minutes or until a text changes, the running month for seconds', async () => {
+    let clock = Date.parse('2026-11-05T10:00:00Z');
     app = await start(
       bigQuery({
         months: ['2026-10'],
         texts: [cells(ID, '2026-10-01', 'thumbsDown', 'other', 'zu lang')],
       }),
+      { now: () => new Date(clock) },
     );
     const month = async (m) =>
       (await app.request(`/api/month?m=${m}`, { headers: REVIEWER })).json();
@@ -285,9 +320,18 @@ describe('feedback review server', () => {
     // The delete, then counts and texts again; the list of months stays in memory.
     expect(app.queries).toHaveLength(6);
 
+    // Requests a few seconds apart share the running month, like a page and its first poll.
     await month('2026-11');
+    await month('2026-11');
+    expect(app.queries).toHaveLength(8);
+    clock += 6000;
     await month('2026-11');
     expect(app.queries).toHaveLength(10);
+
+    // After five minutes the finished month and the list of months are asked again.
+    clock += 5 * 60 * 1000;
+    await month('2026-10');
+    expect(app.queries).toHaveLength(13);
   });
 
   it('refuses a malformed month', async () => {

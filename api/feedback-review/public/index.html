@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Feedback</title>
+    <title>{{MONTH_LABEL}} · {{APP}} Feedback</title>
     <script src="theme.js"></script>
     <link rel="stylesheet" href="app.css" />
     <script src="app.js" defer></script>
@@ -14,9 +14,9 @@
     <header class="topbar">
       <div class="bar">
         <div class="brand">
-          <span class="logo" id="logo" aria-hidden="true"></span>
-          <span class="brand-name"><b id="app">Feedback</b><span>Feedback</span></span>
-          <span class="badge" id="env"></span>
+          <span class="logo" id="logo" aria-hidden="true">{{LOGO}}</span>
+          <span class="brand-name"><b id="app">{{APP}}</b><span>Feedback</span></span>
+          <span class="badge" id="env">{{ENVIRONMENT}}</span>
         </div>
         <span class="grow"></span>
         <div class="theme" role="group" aria-label="Darstellung">
@@ -45,10 +45,10 @@
             </svg>
           </button>
         </div>
-        <span class="user" id="user"
-          ><span class="avatar" id="avatar" aria-hidden="true"></span
-          ><span class="sr-only" id="user-name"></span
-        ></span>
+        <span class="user" id="user" title="{{USER}}">
+          <span class="avatar" id="avatar" aria-hidden="true">{{INITIALS}}</span>
+          <span class="sr-only" id="user-name">Angemeldet als {{USER}}</span>
+        </span>
       </div>
     </header>
 
@@ -74,19 +74,21 @@
               </button>
             </div>
             <div class="picker">
-              <h1 class="picker-label" id="month-title">Feedback</h1>
+              <h1 class="picker-label" id="month-title">{{MONTH_LABEL}}</h1>
               <svg class="i chevron" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="m6 9 6 6 6-6" />
               </svg>
               <label class="sr-only" for="month">Monat auswählen</label>
-              <select id="month"></select>
+              <select id="month">
+                <option value="{{MONTH}}">{{MONTH_LABEL}}</option>
+              </select>
             </div>
           </div>
           <p class="live" id="live" role="status" aria-live="polite">
             <i class="live-dot" aria-hidden="true"></i><span id="live-text">Lädt …</span>
           </p>
         </div>
-        <p class="period dim" id="period"></p>
+        <p class="period dim" id="period"><span class="skeleton line"></span></p>
         <dl class="stats dim" id="stats">
           <div class="stat">
             <dt>Bewertungen</dt>
@@ -126,7 +128,9 @@
             role="img"
             aria-labelledby="chart-title"
             focusable="false"
-          ></svg>
+          >
+            <rect class="placeholder" x="44" y="12" width="952" height="174" rx="8" />
+          </svg>
           <table class="sr-only" id="chart-table">
             <caption>
               Bewertungen pro Tag
@@ -139,9 +143,15 @@
           <h3 class="reasons-head">
             <span class="dot down" aria-hidden="true"></span>Daumen runter
           </h3>
-          <ul class="reasons" id="r-down"></ul>
+          <ul class="reasons" id="r-down">
+            <li class="placeholder"><span class="skeleton line"></span></li>
+            <li class="placeholder"><span class="skeleton line short"></span></li>
+          </ul>
           <h3 class="reasons-head"><span class="dot up" aria-hidden="true"></span>Daumen hoch</h3>
-          <ul class="reasons" id="r-up"></ul>
+          <ul class="reasons" id="r-up">
+            <li class="placeholder"><span class="skeleton line"></span></li>
+            <li class="placeholder"><span class="skeleton line short"></span></li>
+          </ul>
         </section>
       </div>
 
@@ -180,7 +190,26 @@
             Mögliche Personenangaben <span class="count" id="hints-count"></span>
           </button>
         </div>
-        <ol class="rows" id="list" aria-describedby="texts-title"></ol>
+        <ol class="rows" id="list" aria-describedby="texts-title">
+          <li class="row placeholder">
+            <span class="skeleton date"></span><span class="skeleton mark"></span>
+            <span class="lines"
+              ><span class="skeleton line"></span><span class="skeleton line short"></span
+            ></span>
+          </li>
+          <li class="row placeholder">
+            <span class="skeleton date"></span><span class="skeleton mark"></span>
+            <span class="lines"
+              ><span class="skeleton line"></span><span class="skeleton line short"></span
+            ></span>
+          </li>
+          <li class="row placeholder">
+            <span class="skeleton date"></span><span class="skeleton mark"></span>
+            <span class="lines"
+              ><span class="skeleton line"></span><span class="skeleton line short"></span
+            ></span>
+          </li>
+        </ol>
         <div class="list-foot" id="list-foot"></div>
       </section>
     </main>

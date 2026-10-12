@@ -22,6 +22,9 @@ const ROW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MONTH = /^(\d{4})-(0[1-9]|1[0-2])$/;
 /** Finished months only change when a text is deleted or cleaned here, which clears them. */
 const CACHE_MS = 5 * 60 * 1000;
+/** Requests this close together share the running month, such as the page and its first data. */
+const RECENT_MS = 5000;
+const MAX_VIEWS = 48;
 const ACTION = new RegExp(`^${PREFIX}/api/texts/([^/]+)/(delete|clean)$`);
 const MONTHS = [
   'Januar',
@@ -38,7 +41,6 @@ const MONTHS = [
   'Dezember',
 ];
 const STATIC = {
-  '/': ['index.html', 'text/html; charset=utf-8'],
   '/theme.js': ['theme.js', 'text/javascript; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/app.css': ['app.css', 'text/css; charset=utf-8'],
@@ -76,6 +78,9 @@ const dateParam = (value) => ({ type: 'DATE', value });
 const stringParam = (value) => ({ type: 'STRING', value });
 const berlinDay = (date) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' }).format(date);
+const monthLabel = (month) => `${MONTHS[Number(month.slice(5)) - 1]} ${month.slice(0, 4)}`;
+const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (c) => ESCAPES[c]);
 
 /** The page and its API; `fetchFn`, `env` and the clock are swapped in tests. */
 function createReview({
@@ -86,6 +91,7 @@ function createReview({
   fontDirs = FONT_DIRS,
 } = {}) {
   const dataset = env.FEEDBACK_DATASET?.trim() || 'feedback';
+  const template = fs.readFileSync(path.join(staticDir, 'index.html'), 'utf8');
   const files = Object.fromEntries(
     Object.entries(STATIC).map(([route, [name, type]]) => [
       route,
@@ -104,9 +110,9 @@ function createReview({
   let project = '';
   let token = { value: '', expires: 0 };
   let refreshing = null;
-  let months = { list: [], expires: 0 };
+  let months = { list: null, expires: 0 };
   const views = new Map();
-  let generation = 0;
+  const at = () => now().getTime();
 
   async function metadata(p) {
     const res = await fetchFn(`${METADATA}/${p}`, { headers: { 'Metadata-Flavor': 'Google' } });
@@ -160,6 +166,8 @@ function createReview({
     let data = await call(base, {
       query: sql,
       useLegacySql: false,
+      // Small queries then run without a job: about 0.3 s instead of 1 s each in sov-dev.
+      jobCreationMode: 'JOB_CREATION_OPTIONAL',
       timeoutMs: 60000,
       parameterMode: 'NAMED',
       queryParameters: Object.entries(params).map(([name, { type, value }]) => ({
@@ -246,8 +254,6 @@ function createReview({
       text,
     }));
     return {
-      application: env.APP_TITLE || '',
-      environment: env.ENVIRONMENT || '',
       month: `${y}-${pad(m)}`,
       label: `${MONTHS[m - 1]} ${y}`,
       period: { from: first, to: day(y, m, until), running },
@@ -259,33 +265,82 @@ function createReview({
     };
   }
 
-  /** A finished month from memory; the running month always from BigQuery. */
+  /**
+   * A month's view, shared by requests that ask while it loads. A text that changes clears all
+   * of them, so a result still loading then is not kept.
+   */
   async function cachedMonthView(y, m) {
     const key = `${y}-${pad(m)}`;
     const hit = views.get(key);
-    if (hit && Date.now() < hit.expires) {
+    if (hit && at() < hit.expires) {
       return hit.view;
     }
-    const before = generation;
-    const view = await monthView(y, m);
-    // A text that changed while this query ran may still be in its result.
-    if (!view.period.running && before === generation) {
-      views.set(key, { view, expires: Date.now() + CACHE_MS });
+    const entry = { view: monthView(y, m), expires: Infinity };
+    views.delete(key);
+    views.set(key, entry);
+    if (views.size > MAX_VIEWS) {
+      views.delete(views.keys().next().value);
     }
-    return view;
+    try {
+      const view = await entry.view;
+      entry.expires = at() + (view.period.running ? RECENT_MS : CACHE_MS);
+      return view;
+    } catch (error) {
+      if (views.get(key) === entry) {
+        views.delete(key);
+      }
+      throw error;
+    }
   }
 
   /** Months with feedback, newest first; the running month is always one of them. */
   async function feedbackMonths() {
-    if (Date.now() >= months.expires) {
-      const { rows } = await query(
-        `SELECT FORMAT_DATE('%Y-%m', date) AS month FROM ${await table('counts')} ` +
-          'GROUP BY month HAVING SUM(ratings) != 0 OR SUM(texts) != 0 ORDER BY month DESC',
-        {},
+    if (at() >= months.expires) {
+      const entry = {
+        list: table('counts')
+          .then((counts) =>
+            query(
+              `SELECT FORMAT_DATE('%Y-%m', date) AS month FROM ${counts} ` +
+                'GROUP BY month HAVING SUM(ratings) != 0 OR SUM(texts) != 0 ORDER BY month DESC',
+              {},
+            ),
+          )
+          .then(({ rows }) => rows.map(([month]) => month)),
+        expires: Infinity,
+      };
+      months = entry;
+      entry.list.then(
+        () => {
+          entry.expires = at() + CACHE_MS;
+        },
+        () => {
+          if (months === entry) {
+            months = { list: null, expires: 0 };
+          }
+        },
       );
-      months = { list: rows.map(([month]) => month), expires: Date.now() + CACHE_MS };
     }
-    return [...new Set([berlinDay(now()).slice(0, 7), ...months.list])].sort().reverse();
+    const list = await months.list;
+    return [...new Set([berlinDay(now()).slice(0, 7), ...list])].sort().reverse();
+  }
+
+  /** The page with its header written in, so it is complete before any data arrives. */
+  function renderPage(reviewer, month) {
+    const app = env.APP_TITLE?.trim() || 'Feedback';
+    const values = {
+      APP: app,
+      LOGO: app.charAt(0).toUpperCase(),
+      ENVIRONMENT: env.ENVIRONMENT || '',
+      USER: reviewer,
+      INITIALS: reviewer
+        .split('@')[0]
+        .replace(/[^a-zA-Z]/g, '')
+        .slice(0, 2)
+        .toUpperCase(),
+      MONTH: month,
+      MONTH_LABEL: monthLabel(month),
+    };
+    return template.replace(/\{\{(\w+)\}\}/g, (_, key) => escapeHtml(values[key] ?? ''));
   }
 
   async function changeText(action, id, text) {
@@ -297,7 +352,6 @@ function createReview({
             id: stringParam(id),
             text: stringParam(text),
           });
-    generation += 1;
     views.clear();
     return changed;
   }
@@ -398,6 +452,15 @@ function createReview({
       return send(res, 405, { error: 'method' });
     }
     const route = url.pathname.startsWith(PREFIX) ? url.pathname.slice(PREFIX.length) : null;
+    if (route === '/') {
+      const asked = url.searchParams.get('m') || '';
+      const month = MONTH.test(asked) ? asked : berlinDay(now()).slice(0, 7);
+      // The page asks for this month as soon as it has loaded; by then the queries are running.
+      Promise.all([feedbackMonths(), cachedMonthView(...month.split('-').map(Number))]).catch(
+        () => {},
+      );
+      return send(res, 200, renderPage(reviewer, month), 'text/html; charset=utf-8');
+    }
     if (files[route]) {
       return send(res, 200, ...files[route]);
     }
@@ -416,7 +479,7 @@ function createReview({
           feedbackMonths(),
           cachedMonthView(Number(match[1]), Number(match[2])),
         ]);
-        return send(res, 200, { ...view, months: list, user: reviewer });
+        return send(res, 200, { ...view, months: list });
       } catch (error) {
         log('ERROR', 'feedback review query failed', { detail: error.message });
         return send(res, error.status || 500, { error: error.message });
