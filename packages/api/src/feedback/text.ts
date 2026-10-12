@@ -1,5 +1,4 @@
 import { randomUUID } from 'crypto';
-import { logger } from '@librechat/data-schemas';
 import { FEEDBACK_RATINGS, FEEDBACK_REASON_KEYS } from 'librechat-data-provider';
 
 /** The feedback box stops at 500 characters; a hand-made request can send more. */
@@ -12,8 +11,8 @@ const MASKS: Array<[RegExp, string]> = [
   [/\d{6,}/g, '[Nummer]'],
 ];
 
-/** The regional endpoint keeps the text inside europe-west3 in transit as well. */
-const BIGQUERY = 'https://bigquery.europe-west3.rep.googleapis.com/bigquery/v2';
+/** Private Google Access in the cluster serves *.googleapis.com, not the regional rep names. */
+const BIGQUERY = 'https://bigquery.googleapis.com/bigquery/v2';
 const METADATA = 'http://metadata.google.internal/computeMetadata/v1';
 
 export type FeedbackTextInput = { rating?: unknown; tag?: unknown; text?: unknown } | null;
@@ -68,6 +67,12 @@ export function feedbackTextRow(
   };
 }
 
+/** Not the app logger: it adds the request's user id, which must not sit next to a feedback. */
+function logFailure(reason: string): void {
+  const message = `[feedback] Free text not saved to BigQuery: ${reason}`;
+  process.stderr.write(`${JSON.stringify({ severity: 'ERROR', message })}\n`);
+}
+
 async function metadata(path: string, fetchFn: typeof fetch): Promise<Response> {
   return fetchFn(`${METADATA}/${path}`, { headers: { 'Metadata-Flavor': 'Google' } });
 }
@@ -105,9 +110,10 @@ export async function saveFeedbackText(
     );
     const body = res.ok ? await res.json() : undefined;
     if (!res.ok || body?.insertErrors?.length) {
-      logger.error(`[feedback] Free text not saved to BigQuery (HTTP ${res.status})`);
+      logFailure(res.ok ? 'row rejected' : `HTTP ${res.status}`);
     }
   } catch (error) {
-    logger.error('[feedback] Free text not saved to BigQuery', (error as Error)?.message);
+    const cause = (error as Error & { cause?: { code?: string } })?.cause?.code;
+    logFailure(`${(error as Error)?.message}${cause ? ` (${cause})` : ''}`);
   }
 }

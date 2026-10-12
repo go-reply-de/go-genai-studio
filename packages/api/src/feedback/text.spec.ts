@@ -1,11 +1,4 @@
-import { logger } from '@librechat/data-schemas';
 import { feedbackTextRow, saveFeedbackText } from './text';
-
-jest.mock('@librechat/data-schemas', () => ({
-  logger: {
-    error: jest.fn(),
-  },
-}));
 
 const ON = { FEEDBACK_TEXT_TABLE: 'feedback.feedback_texts' } as NodeJS.ProcessEnv;
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -28,6 +21,21 @@ function fakeFetch(
     return bigquery();
   });
   return { calls, fn: fn as unknown as typeof fetch };
+}
+
+/** Runs `run` and returns the JSON lines it wrote to stderr. */
+async function stderrLines(run: () => Promise<void>): Promise<Array<Record<string, unknown>>> {
+  const lines: string[] = [];
+  const spy = jest.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+    lines.push(String(chunk));
+    return true;
+  });
+  try {
+    await run();
+  } finally {
+    spy.mockRestore();
+  }
+  return lines.map((line) => JSON.parse(line));
 }
 
 describe('feedbackTextRow', () => {
@@ -92,8 +100,6 @@ describe('feedbackTextRow', () => {
 });
 
 describe('saveFeedbackText', () => {
-  beforeEach(() => jest.clearAllMocks());
-
   it('sends nothing while FEEDBACK_TEXT_TABLE is unset', async () => {
     const { fn } = fakeFetch();
     await saveFeedbackText({ rating: 'thumbsDown', tag: 'other', text: 'zu lang' }, {}, fn);
@@ -106,13 +112,15 @@ describe('saveFeedbackText', () => {
     expect(fn).not.toHaveBeenCalled();
   });
 
-  it('adds one row through the regional endpoint, as the pod service account', async () => {
+  it('adds one row as the pod service account and logs nothing', async () => {
     const { calls, fn } = fakeFetch();
-    await saveFeedbackText({ rating: 'thumbsDown', tag: 'other', text: 'zu lang' }, ON, fn);
+    const lines = await stderrLines(() =>
+      saveFeedbackText({ rating: 'thumbsDown', tag: 'other', text: 'zu lang' }, ON, fn),
+    );
 
     const insert = calls.find((call) => call.url.includes('/insertAll'));
     expect(insert?.url).toBe(
-      'https://bigquery.europe-west3.rep.googleapis.com/bigquery/v2/projects/synthetic-project/datasets/feedback/tables/feedback_texts/insertAll',
+      'https://bigquery.googleapis.com/bigquery/v2/projects/synthetic-project/datasets/feedback/tables/feedback_texts/insertAll',
     );
     expect(new Headers(insert?.init?.headers).get('Authorization')).toBe('Bearer synthetic-token');
     const body = JSON.parse(String(insert?.init?.body));
@@ -125,29 +133,43 @@ describe('saveFeedbackText', () => {
       'text',
     ]);
     expect(body.rows[0].insertId).toBe(body.rows[0].json.id);
-    expect(logger.error).not.toHaveBeenCalled();
+    expect(lines).toEqual([]);
   });
 
-  it('logs a refusal without the text and does not throw', async () => {
+  it('logs a refusal with its status, without the text or a user id', async () => {
     const { fn } = fakeFetch(() => new Response('denied', { status: 403 }));
-    await expect(
+    const lines = await stderrLines(() =>
       saveFeedbackText({ rating: 'thumbsDown', tag: 'other', text: 'TESTFALL-DIMEAS-01' }, ON, fn),
-    ).resolves.toBeUndefined();
-    expect(logger.error).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify((logger.error as jest.Mock).mock.calls)).not.toContain('TESTFALL');
+    );
+    expect(lines).toEqual([
+      { severity: 'ERROR', message: '[feedback] Free text not saved to BigQuery: HTTP 403' },
+    ]);
   });
 
   it('logs rows BigQuery rejects', async () => {
     const { fn } = fakeFetch(() => Response.json({ insertErrors: [{ index: 0, errors: [] }] }));
-    await saveFeedbackText({ rating: 'thumbsDown', tag: 'other', text: 'zu lang' }, ON, fn);
-    expect(logger.error).toHaveBeenCalledTimes(1);
+    const lines = await stderrLines(() =>
+      saveFeedbackText({ rating: 'thumbsDown', tag: 'other', text: 'zu lang' }, ON, fn),
+    );
+    expect(lines).toEqual([
+      { severity: 'ERROR', message: '[feedback] Free text not saved to BigQuery: row rejected' },
+    ]);
   });
 
-  it('does not throw when the network fails', async () => {
-    const fn = jest.fn().mockRejectedValue(new Error('offline')) as unknown as typeof fetch;
-    await expect(
+  it('logs a network failure with its cause and does not throw', async () => {
+    const failure = Object.assign(new Error('fetch failed'), {
+      cause: { code: 'ERR_TLS_CERT_ALTNAME_INVALID' },
+    });
+    const fn = jest.fn().mockRejectedValue(failure) as unknown as typeof fetch;
+    const lines = await stderrLines(() =>
       saveFeedbackText({ rating: 'thumbsDown', tag: 'other', text: 'zu lang' }, ON, fn),
-    ).resolves.toBeUndefined();
-    expect(logger.error).toHaveBeenCalledTimes(1);
+    );
+    expect(lines).toEqual([
+      {
+        severity: 'ERROR',
+        message:
+          '[feedback] Free text not saved to BigQuery: fetch failed (ERR_TLS_CERT_ALTNAME_INVALID)',
+      },
+    ]);
   });
 });
