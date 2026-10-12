@@ -179,6 +179,7 @@ steps:
         sed -i -e "s/###IP_ADDRESS_ID###/${_IP_ADDRESS_ID}/g" "$file"
         sed -i -e "s|###_REGIONAL_IP_NAME###|${_REGIONAL_IP_NAME}|g" "$file"
         sed -i -e "s|###_IAP_CLIENT_ID###|${_IAP_CLIENT_ID}|g" "$file"
+        sed -i -e "s|###_PROXY_ONLY_CIDR###|${_PROXY_ONLY_CIDR}|g" "$file"
         sed -i -e "s/###_SECURITY_POLICY###/${_SECURITY_POLICY}/g" "$file"
         sed -i -e "s/###APP_TITLE###/${_APP_TITLE}/g" "$file"
         sed -i -e "s/###_BRANDING_BUCKET_NAME###/${_BRANDING_BUCKET_NAME}/g" "$file"
@@ -498,6 +499,34 @@ steps:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
+- name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy feedback review'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      # Same FEEDBACK_REVIEW_ENABLED the profiles set. The page is a path on the
+      # admin host of the regional load balancer, so it needs both.
+      FEEDBACK_REVIEW_ENABLED=$(sed -n 's/^FEEDBACK_REVIEW_ENABLED=//p' /workspace/render-vars.env)
+      if [ "$$FEEDBACK_REVIEW_ENABLED" != "true" ]; then
+        echo "FEEDBACK_REVIEW_ENABLED is '$$FEEDBACK_REVIEW_ENABLED' for profile '${_PROFILE}', skipping the feedback review page."
+        exit 0
+      fi
+      if [ "${_ENABLE_REGIONAL_LB}" != "true" ] || [ "${_ADMIN_PANEL_ENABLED}" != "true" ]; then
+        echo "ERROR: FEEDBACK_REVIEW_ENABLED needs the regional load balancer and the admin panel." >&2
+        exit 1
+      fi
+      # Without it the NetworkPolicy would not render; the setup repo sends it with the regional LB.
+      if [ -z "${_PROXY_ONLY_CIDR}" ]; then
+        echo "ERROR: FEEDBACK_REVIEW_ENABLED is true but _PROXY_ONLY_CIDR is empty." >&2
+        exit 1
+      fi
+      kubectl apply -f ./k8s/feedback-review.yaml --namespace=${_GKE_NAMESPACE}
+      kubectl rollout status deploy/feedback-review --namespace=${_GKE_NAMESPACE} --timeout=180s
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
 # Defaults for the sovereign-inference substitutions.
 substitutions:
   # Selects k8s/profiles/<name>.env for workload sizing. "default" keeps every
@@ -535,6 +564,9 @@ substitutions:
   _ENABLE_REGIONAL_LB: "false"
   _REGIONAL_IP_NAME: ""
   _IAP_CLIENT_ID: ""
+  # The regional load balancer's proxy-only subnet, the only source the feedback
+  # review page's NetworkPolicy admits besides health checks.
+  _PROXY_ONLY_CIDR: ""
   # Appended to the api pod's claimName: empty selects the ReadWriteOnce claims,
   # "-rwx" selects the ReadWriteMany ones.
   _ENABLE_SOVEREIGN_INFERENCE: "false"

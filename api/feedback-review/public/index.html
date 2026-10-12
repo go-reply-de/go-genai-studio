@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Feedback</title>
+    <link rel="stylesheet" href="app.css" />
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <div class="app">
+      <nav aria-label="Navigation">
+        <div class="brand">
+          <div class="logo" id="logo" aria-hidden="true"></div>
+          <div><b id="app"></b><span>Feedback</span></div>
+        </div>
+        <a href="#overview" class="active"
+          ><svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 3v18h18" />
+            <path d="M18 17V9" />
+            <path d="M13 17V5" />
+            <path d="M8 17v-3" /></svg
+          >Übersicht</a
+        >
+        <a href="#texts"
+          ><svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg
+          >Freitexte</a
+        >
+        <div class="spacer"></div>
+        <div class="who">
+          <div class="avatar" id="avatar" aria-hidden="true"></div>
+          <div><span id="user"></span><small>angemeldet über IAP</small></div>
+        </div>
+      </nav>
+
+      <main>
+        <header>
+          <h1>Feedback</h1>
+          <span class="badge" id="env"></span>
+          <span class="grow"></span>
+          <select id="month" aria-label="Monat"></select>
+          <button class="btn icon" id="theme" type="button" aria-label="Hell oder dunkel">
+            <svg class="i sun" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+            <svg class="i moon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+            </svg>
+          </button>
+        </header>
+
+        <div class="content">
+          <div class="note" id="status" role="status">
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 16v-4M12 8h.01" /></svg
+            ><span id="status-text">Lädt …</span>
+          </div>
+
+          <section id="overview" class="kpis" aria-label="Kennzahlen">
+            <div class="card kpi">
+              <div class="label">Bewertungen</div>
+              <div class="value" id="k-rated">–</div>
+              <div class="prev" id="p-rated"></div>
+            </div>
+            <div class="card kpi">
+              <div class="label">Anteil positiv</div>
+              <div class="value" id="k-positive">–</div>
+              <div class="prev" id="p-positive"></div>
+            </div>
+            <div class="card kpi">
+              <div class="label">Daumen runter</div>
+              <div class="value" id="k-down">–</div>
+              <div class="prev" id="p-down"></div>
+            </div>
+            <div class="card kpi">
+              <div class="label">Freitexte</div>
+              <div class="value" id="k-texts">–</div>
+              <div class="prev" id="p-texts"></div>
+            </div>
+          </section>
+
+          <section class="card" aria-label="Bewertungen pro Tag">
+            <h2>
+              Bewertungen pro Tag<span class="legend"
+                ><span><i class="dot up"></i>Daumen hoch</span
+                ><span><i class="dot down"></i>Daumen runter</span></span
+              >
+            </h2>
+            <svg
+              id="chart"
+              width="100%"
+              viewBox="0 0 1000 180"
+              role="img"
+              aria-label="Bewertungen pro Tag, gestapelt nach Daumen hoch und runter"
+            ></svg>
+          </section>
+
+          <div class="two">
+            <section class="card">
+              <h2>Gründe für Daumen runter</h2>
+              <div id="r-down"></div>
+            </section>
+            <section class="card">
+              <h2>Gründe für Daumen hoch</h2>
+              <div id="r-up"></div>
+            </section>
+          </div>
+
+          <section id="texts" class="card">
+            <h2>Freitexte <span class="badge" id="t-count"></span></h2>
+            <div class="toolbar">
+              <div class="searchbox">
+                <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="m21 21-4.3-4.3" />
+                </svg>
+                <input
+                  type="search"
+                  id="filter"
+                  placeholder="Texte filtern"
+                  aria-label="Texte filtern"
+                  autocomplete="off"
+                />
+              </div>
+              <div class="seg" role="group" aria-label="Bewertung">
+                <button type="button" data-r="" class="on">Alle</button
+                ><button type="button" data-r="thumbsUp">Daumen hoch</button
+                ><button type="button" data-r="thumbsDown">Daumen runter</button>
+              </div>
+            </div>
+            <div id="list"></div>
+            <div class="foot">
+              Der Filter läuft nur im Browser und erscheint in keinem Protokoll. Löschen und
+              Bereinigen gelten sofort, die Zählwerte bleiben. Jede Aktion wird mit Ihrer Kennung
+              protokolliert. Gespeichert sind nur Tag, Bewertung, Grund und Freitext: keine Uhrzeit,
+              keine Nutzer, keine Chats.
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <div class="overlay" id="dlg-delete" role="dialog" aria-modal="true" aria-labelledby="dd-title">
+      <div class="dialog">
+        <h3 id="dd-title">Freitext löschen?</h3>
+        <p>
+          Der Text wird aus der Tabelle entfernt; die Bewertung bleibt gezählt. Zwei Tage lang lässt
+          er sich wiederherstellen, danach ist er endgültig weg.
+        </p>
+        <p class="error" id="dd-error"></p>
+        <div class="buttons">
+          <button class="btn" type="button" data-close>Abbrechen</button
+          ><button class="btn destructive" type="button" id="dd-ok">Löschen</button>
+        </div>
+      </div>
+    </div>
+    <div class="overlay" id="dlg-clean" role="dialog" aria-modal="true" aria-labelledby="dc-title">
+      <div class="dialog">
+        <h3 id="dc-title">Freitext bereinigen</h3>
+        <p>Entfernen Sie Namen, Geburtsdaten, Fallnummern und andere personenbezogene Angaben.</p>
+        <textarea id="dc-text" maxlength="500" aria-label="Bereinigter Text"></textarea>
+        <p class="hint">Im Zweifel den ganzen Text durch [entfernt] ersetzen.</p>
+        <p class="error" id="dc-error"></p>
+        <div class="buttons">
+          <button class="btn" type="button" id="dc-all">Ganz entfernen</button
+          ><span class="grow"></span><button class="btn" type="button" data-close>Abbrechen</button
+          ><button class="btn submit" type="button" id="dc-ok">Speichern</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
