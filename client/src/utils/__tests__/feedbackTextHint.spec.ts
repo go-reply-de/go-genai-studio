@@ -27,10 +27,10 @@ describe('installFeedbackTextHint', () => {
     const uninstall = installFeedbackTextHint(i18n);
 
     expect(i18n.t('com_ui_feedback_placeholder')).toBe(
-      'What was it about, and what went wrong? Please no patient data and no details about staff.',
+      'What did not go well? Please do not enter any personal data (e.g. names of staff or patients, dates of birth or case numbers).',
     );
     expect(i18n.t('com_ui_feedback_more_information')).toBe(
-      'Additional feedback – evaluated without your name',
+      'Your feedback is evaluated anonymously',
     );
     expect(i18n.t('com_ui_feedback_positive')).toBe('Love this');
     uninstall();
@@ -43,10 +43,10 @@ describe('installFeedbackTextHint', () => {
     i18n.addResourceBundle('de', 'translation', UPSTREAM_DE, true, true);
 
     expect(i18n.getResource('de', 'translation', 'com_ui_feedback_placeholder')).toBe(
-      'Worum ging es, und was hat gestört? Bitte keine Patientendaten und keine Angaben zu Beschäftigten.',
+      'Was lief nicht gut? Bitte geben Sie keine personenbezogenen Daten ein (z. B. Namen von Beschäftigten oder Patient:innen, Geburtsdaten oder Fallnummern).',
     );
     expect(i18n.getResource('de', 'translation', 'com_ui_feedback_more_information')).toBe(
-      'Zusätzliches Feedback – wird ohne Ihren Namen ausgewertet',
+      'Ihr Feedback wird anonym ausgewertet',
     );
     uninstall();
   });

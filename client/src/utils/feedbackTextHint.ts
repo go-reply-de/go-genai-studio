@@ -5,14 +5,14 @@ const NAMESPACE = 'translation';
 /** The free text is evaluated without ids; the dialog says so and asks for no personal details. */
 const HINTS: Record<'de' | 'en', Record<string, string>> = {
   de: {
-    com_ui_feedback_more_information: 'Zusätzliches Feedback – wird ohne Ihren Namen ausgewertet',
+    com_ui_feedback_more_information: 'Ihr Feedback wird anonym ausgewertet',
     com_ui_feedback_placeholder:
-      'Worum ging es, und was hat gestört? Bitte keine Patientendaten und keine Angaben zu Beschäftigten.',
+      'Was lief nicht gut? Bitte geben Sie keine personenbezogenen Daten ein (z. B. Namen von Beschäftigten oder Patient:innen, Geburtsdaten oder Fallnummern).',
   },
   en: {
-    com_ui_feedback_more_information: 'Additional feedback – evaluated without your name',
+    com_ui_feedback_more_information: 'Your feedback is evaluated anonymously',
     com_ui_feedback_placeholder:
-      'What was it about, and what went wrong? Please no patient data and no details about staff.',
+      'What did not go well? Please do not enter any personal data (e.g. names of staff or patients, dates of birth or case numbers).',
   },
 };
 
