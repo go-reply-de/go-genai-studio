@@ -248,7 +248,7 @@ describe('startHardening', () => {
   it('registers nothing and reads nothing while its env is unset', async () => {
     delete process.env.STRICT_BROWSER_EGRESS;
     delete process.env.SPEECH_LOCAL_ONLY;
-    delete process.env.FEEDBACK_TEXT_TABLE;
+    delete process.env.FEEDBACK_DATASET;
     delete process.env.ROLE_PERMISSION_CAPS;
     delete process.env.RETENTION_WEEKLY_RESET;
     const app = express();
@@ -268,7 +268,7 @@ describe('startHardening', () => {
   it('turns each piece on with its env', async () => {
     process.env.STRICT_BROWSER_EGRESS = 'true';
     process.env.SPEECH_LOCAL_ONLY = 'true';
-    process.env.FEEDBACK_TEXT_TABLE = 'feedback.feedback_texts';
+    process.env.FEEDBACK_DATASET = 'feedback';
     const app = express();
 
     await startHardening({ app, methods: methods() });
