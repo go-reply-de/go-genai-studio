@@ -43,6 +43,9 @@ const SHORT = [
   'Dez.',
 ];
 const REFRESH_MS = 60000;
+/** A month shown from memory is checked again in the background once it is this old. */
+const FRESH_MS = 60000;
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const PAGE = 50;
 const MARKER = '[entfernt]';
 const SEEN_KEY = 'feedback-seen';
@@ -89,6 +92,13 @@ const monthOf = (iso) => Number(iso.slice(5, 7));
 const days = (to) => (dayOf(to) === 1 ? '1.' : `1.–${dayOf(to)}.`);
 const clock = (ms) =>
   new Date(ms).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+const monthLabel = (month) => `${MONTHS[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`;
+const berlinMonth = () =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Berlin',
+    year: 'numeric',
+    month: '2-digit',
+  }).format(new Date());
 
 function storage(read) {
   try {
@@ -112,9 +122,12 @@ const state = {
   open: null,
   drafts: new Map(),
   arrived: new Set(),
-  lastRefresh: 0,
+  months: [],
+  want: '',
+  failed: '',
+  cache: new Map(),
+  inflight: new Map(),
   timer: 0,
-  loading: false,
 };
 
 function rememberSeen(ids) {
@@ -178,8 +191,24 @@ function enrich(text, data) {
 }
 
 function setLive(kind, text) {
+  $('live').hidden = !text;
   $('live').className = `live ${kind}`;
   $('live-text').textContent = text;
+}
+
+/** A running month says when it was fetched; a finished month needs no status. */
+function settleLive(data) {
+  const at = state.cache.get(data.month)?.at || Date.now();
+  setLive('on', data.period.running ? `Live · aktualisiert ${clock(at)}` : '');
+}
+
+function busy(on) {
+  if (on) {
+    $('content').setAttribute('aria-busy', 'true');
+    setLive('busy', 'Lädt …');
+  } else {
+    $('content').removeAttribute('aria-busy');
+  }
 }
 
 function showError(message) {
@@ -197,68 +226,138 @@ function toast(message) {
   }, 4000);
 }
 
-function fillMonths() {
-  const now = new Date();
-  const wanted = new URLSearchParams(location.search).get('m');
-  for (let i = 0; i < 12; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const option = document.createElement('option');
-    option.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    option.textContent = `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
-    $('month').append(option);
+/** One request per month at a time; every answer is kept for switching back. */
+function request(month) {
+  if (!state.inflight.has(month)) {
+    const pending = fetch(`api/month?m=${encodeURIComponent(month)}`, {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    })
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(res.status === 403 ? 'Kein Zugriff.' : `HTTP ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((data) => {
+        state.cache.set(month, { data, at: Date.now() });
+        return data;
+      })
+      .finally(() => state.inflight.delete(month));
+    state.inflight.set(month, pending);
   }
-  if (wanted && [...$('month').options].some((o) => o.value === wanted)) {
-    $('month').value = wanted;
+  return state.inflight.get(month);
+}
+
+/** Shows a month: at once from memory, otherwise once it has loaded. The latest choice wins. */
+async function show(month) {
+  state.want = month;
+  state.failed = '';
+  clearTimeout(state.timer);
+  renderNav(month);
+  const hit = state.cache.get(month);
+  if (hit) {
+    apply(hit.data, false);
+    settleLive(hit.data);
+    if (Date.now() - hit.at < FRESH_MS) {
+      settle(hit.data);
+      return;
+    }
+  } else {
+    busy(true);
+  }
+  try {
+    const data = await request(month);
+    if (state.want !== month) {
+      return;
+    }
+    if (!data.months.includes(month)) {
+      // An old link to a month without feedback: show the newest month instead.
+      history.replaceState(null, '', location.pathname);
+      show(data.months[0]);
+      return;
+    }
+    apply(data, false);
+    settle(data);
+  } catch (error) {
+    if (state.want !== month) {
+      return;
+    }
+    busy(false);
+    if (hit) {
+      setLive('warn', 'Nicht aktuell · Aktualisierung fehlgeschlagen');
+      schedule();
+      return;
+    }
+    state.failed = month;
+    showError(
+      error.message === 'Kein Zugriff.'
+        ? 'Kein Zugriff auf die Feedback-Daten.'
+        : `${monthLabel(month)} konnte nicht geladen werden.`,
+    );
+    if (state.data) {
+      state.want = state.data.month;
+      history.replaceState(null, '', `?m=${state.data.month}`);
+      renderNav(state.data.month);
+      settleLive(state.data);
+      schedule();
+    } else {
+      setLive('warn', 'Nicht geladen');
+    }
   }
 }
 
-async function load({ live = false } = {}) {
-  if (state.loading) {
+function settle(data) {
+  busy(false);
+  showError('');
+  settleLive(data);
+  prefetchAround(data.month);
+  schedule();
+}
+
+function navigate(month) {
+  if (!month || month === state.want) {
     return;
   }
-  state.loading = true;
-  const month = $('month').value;
+  closeWork(false);
+  state.shown = PAGE;
+  history.replaceState(null, '', `?m=${month}`);
+  show(month);
+}
+
+/** Loads the months next to this one in the background, so stepping is instant. */
+function prefetchAround(month) {
+  const i = state.months.indexOf(month);
+  for (const next of i < 0 ? [] : [state.months[i + 1], state.months[i - 1]]) {
+    if (next && !state.cache.has(next)) {
+      request(next).catch(() => {});
+    }
+  }
+}
+
+/** Fetches the running month again; new texts slide in. */
+async function poll() {
+  const month = state.data?.month;
+  if (!month || state.want !== month) {
+    return;
+  }
   try {
-    const res = await fetch(`api/month?m=${encodeURIComponent(month)}`, {
-      credentials: 'same-origin',
-      headers: { Accept: 'application/json' },
-    });
-    if (!res.ok) {
-      throw new Error(res.status === 403 ? 'Kein Zugriff.' : `HTTP ${res.status}`);
+    const data = await request(month);
+    if (state.want === month) {
+      apply(data, true);
+      settleLive(data);
     }
-    const data = await res.json();
-    if (month === $('month').value) {
-      apply(data, live);
-      state.lastRefresh = Date.now();
-      showError('');
-      setLive(
-        data.period.running ? 'on' : '',
-        data.period.running
-          ? `Live · aktualisiert ${clock(state.lastRefresh)}`
-          : 'Abgeschlossener Monat',
-      );
-    }
-  } catch (error) {
-    if (live) {
+  } catch {
+    if (state.want === month) {
       setLive(
         'warn',
         `Aktualisierung fehlgeschlagen · nächster Versuch ${clock(Date.now() + REFRESH_MS)}`,
       );
-    } else {
-      const label = $('month').selectedOptions[0]?.textContent || month;
-      showError(
-        error.message === 'Kein Zugriff.'
-          ? 'Kein Zugriff auf die Feedback-Daten.'
-          : `Die Daten für ${label} konnten nicht geladen werden.`,
-      );
-      if (state.data) {
-        $('month').value = state.data.month;
-      }
-      setLive('warn', 'Nicht aktuell');
     }
   } finally {
-    state.loading = false;
-    schedule();
+    if (state.want === month) {
+      schedule();
+    }
   }
 }
 
@@ -273,6 +372,8 @@ function apply(data, live) {
   }
   state.data = data;
   state.rows = data.texts.map((t) => enrich(t, data));
+  renderMonths(data.months);
+  renderNav(data.month);
   if (state.open && !state.rows.some((r) => r.id === state.open.id)) {
     state.open = null;
     toast('Der Freitext, den Sie gerade bearbeitet haben, wurde inzwischen gelöscht.');
@@ -294,9 +395,54 @@ function schedule() {
     if (document.hidden) {
       schedule();
     } else {
-      load({ live: true });
+      poll();
     }
   }, REFRESH_MS);
+}
+
+/** Only months with feedback, grouped by year once there is more than one. */
+function renderMonths(months) {
+  if (months.join() === state.months.join() && $('month').options.length) {
+    return;
+  }
+  state.months = months;
+  const option = (month) => new Option(monthLabel(month), month);
+  const years = [...new Set(months.map((month) => month.slice(0, 4)))];
+  $('month').replaceChildren(
+    ...(years.length > 1
+      ? years.map((year) => {
+          const group = document.createElement('optgroup');
+          group.label = year;
+          group.append(...months.filter((month) => month.startsWith(year)).map(option));
+          return group;
+        })
+      : months.map(option)),
+  );
+}
+
+function setStep(button, month, label, none) {
+  button.disabled = !month;
+  button.dataset.month = month || '';
+  button.setAttribute('aria-label', month ? `${label}: ${monthLabel(month)}` : none);
+  button.title = month ? monthLabel(month) : none;
+}
+
+function renderNav(month) {
+  $('month').value = month;
+  $('month-title').textContent = monthLabel(month);
+  const i = state.months.indexOf(month);
+  setStep(
+    $('prev'),
+    i < 0 ? '' : state.months[i + 1],
+    'Vorheriger Monat',
+    'Kein früherer Monat mit Feedback',
+  );
+  setStep(
+    $('next'),
+    i > 0 ? state.months[i - 1] : '',
+    'Nächster Monat',
+    'Kein späterer Monat mit Feedback',
+  );
 }
 
 function renderHeader() {
@@ -312,29 +458,38 @@ function renderHeader() {
     .split('@')[0]
     .replace(/[^a-zA-Z]/g, '')
     .slice(0, 2);
-  $('month-title').textContent = d.label;
 }
 
 function renderStats() {
   const d = state.data;
   const c = d.current;
   const p = d.previous;
-  const previous = monthOf(p.from);
-  const before = d.period.running ? `${days(p.to)} ${SHORT[previous - 1]}` : MONTHS[previous - 1];
+  const before = MONTHS[monthOf(p.from) - 1];
+  // A month without feedback, such as one before the store existed, is no comparison.
+  const compare = d.months.includes(p.from.slice(0, 7));
+  let scope = `Keine Vormonatswerte, im ${before} gab es kein Feedback.`;
+  if (compare) {
+    scope = d.period.running
+      ? `Vormonatswerte für denselben Zeitraum (${days(p.to)} ${before}).`
+      : `Vormonatswerte für den ganzen ${before}.`;
+  }
   $('period').textContent = d.period.running
-    ? `${days(d.period.to)} ${MONTHS[monthOf(d.period.from) - 1]}, verglichen mit ${days(p.to)} ${MONTHS[previous - 1]}`
-    : `Ganzer Monat, verglichen mit dem ganzen ${MONTHS[previous - 1]}`;
+    ? `Laufender Monat, Stand ${dayOf(d.period.to)}. ${MONTHS[monthOf(d.period.from) - 1]}. ${scope}`
+    : `Abgeschlossener Monat. ${scope}`;
+  const vs = (value) => (compare ? `Vormonat: ${value}` : '');
   $('k-rated').textContent = int(c.rated);
-  $('p-rated').textContent = `${before}: ${int(p.rated)}`;
+  $('p-rated').textContent = vs(int(p.rated));
   const positive = share(c.up, num(c.rated));
   $('k-positive').textContent = positive ?? '–';
   $('p-positive').textContent = positive
-    ? `${before}: ${share(p.up, num(p.rated)) ?? '–'}`
+    ? vs(share(p.up, num(p.rated)) ?? '–')
     : 'Erst ab 10 Bewertungen';
   $('k-down').textContent = int(c.down);
-  $('p-down').textContent = `${before}: ${int(p.down)}`;
+  $('p-down').textContent = vs(int(p.down));
   $('k-texts').textContent = int(c.texts);
-  $('p-texts').textContent = `${int(state.rows.length)} in der Liste · ${before}: ${int(p.texts)}`;
+  $('p-texts').textContent = [`${int(state.rows.length)} in der Liste`, vs(int(p.texts))]
+    .filter(Boolean)
+    .join(' · ');
 }
 
 function niceMax(max) {
@@ -493,6 +648,14 @@ function renderTexts() {
 }
 
 const rowOf = (id) => state.rows.find((r) => r.id === id);
+
+/** Keeps the month in memory in step with a deleted or cleaned text. */
+function patchCached(date, change) {
+  const entry = state.cache.get(date.slice(0, 7));
+  if (entry) {
+    entry.data.texts = change(entry.data.texts);
+  }
+}
 const liOf = (id) => $('list').querySelector(`[data-id="${id}"]`);
 
 function openWork(id, mode) {
@@ -620,6 +783,7 @@ async function run(button, action) {
         setTimeout(resolve, matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180),
       );
       state.rows = state.rows.filter((row) => row.id !== id);
+      patchCached(r.date, (texts) => texts.filter((t) => t.id !== id));
       renderTexts();
       renderStats();
       (next ? liOf(next)?.querySelector('[data-act="delete"]') : $('texts-title'))?.focus();
@@ -630,6 +794,9 @@ async function run(button, action) {
         cleaned: result.text.includes(MARKER),
         hints: findHints(result.text),
       });
+      patchCached(r.date, (texts) =>
+        texts.map((t) => (t.id === id ? { ...t, text: result.text } : t)),
+      );
       renderTexts();
       liOf(id)?.querySelector('[data-act="clean"]')?.focus();
       toast(`Freitext ${when} bereinigt.`);
@@ -638,6 +805,7 @@ async function run(button, action) {
     if (error.status === 404) {
       state.open = null;
       state.rows = state.rows.filter((row) => row.id !== id);
+      patchCached(r.date, (texts) => texts.filter((t) => t.id !== id));
       renderTexts();
       toast('Dieser Freitext ist schon gelöscht.');
       $('texts-title').focus();
@@ -751,13 +919,14 @@ $('filter').addEventListener('input', () => {
     renderTexts();
   }
 });
-$('month').addEventListener('change', () => {
-  history.replaceState(null, '', `?m=${$('month').value}`);
-  state.open = null;
-  state.shown = PAGE;
-  load();
+$('month').addEventListener('change', () => navigate($('month').value));
+$('prev').addEventListener('click', () => navigate($('prev').dataset.month));
+$('next').addEventListener('click', () => navigate($('next').dataset.month));
+$('retry').addEventListener('click', () => {
+  const month = state.failed || state.want;
+  history.replaceState(null, '', `?m=${month}`);
+  show(month);
 });
-$('retry').addEventListener('click', () => load());
 
 document.addEventListener('keydown', (event) => {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
@@ -771,12 +940,9 @@ document.addEventListener('keydown', (event) => {
 });
 
 document.addEventListener('visibilitychange', () => {
-  if (
-    !document.hidden &&
-    state.data?.period.running &&
-    Date.now() - state.lastRefresh >= REFRESH_MS
-  ) {
-    load({ live: true });
+  const at = state.data ? state.cache.get(state.data.month)?.at : 0;
+  if (!document.hidden && state.data?.period.running && Date.now() - (at || 0) >= REFRESH_MS) {
+    poll();
   }
 });
 
@@ -802,5 +968,7 @@ document.querySelectorAll('.theme button').forEach((b) =>
 system.addEventListener('change', applyTheme);
 applyTheme();
 
-fillMonths();
-load();
+const linked = new URLSearchParams(location.search).get('m') || '';
+const initial = MONTH_RE.test(linked) ? linked : berlinMonth();
+renderMonths([initial]);
+show(initial);

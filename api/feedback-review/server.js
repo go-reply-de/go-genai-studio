@@ -20,6 +20,8 @@ const METADATA = 'http://metadata.google.internal/computeMetadata/v1';
 const BIGQUERY = 'https://bigquery.googleapis.com/bigquery/v2';
 const ROW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MONTH = /^(\d{4})-(0[1-9]|1[0-2])$/;
+/** Finished months only change when a text is deleted or cleaned here, which clears them. */
+const CACHE_MS = 5 * 60 * 1000;
 const ACTION = new RegExp(`^${PREFIX}/api/texts/([^/]+)/(delete|clean)$`);
 const MONTHS = [
   'Januar',
@@ -44,7 +46,7 @@ const STATIC = {
 /** LibreChat's own Inter, from the client build in the image or its sources in a checkout. */
 const FONTS = ['Inter-Regular.woff2', 'Inter-SemiBold.woff2', 'Inter-Bold.woff2'];
 const FONT_DIRS = [
-  path.join(__dirname, '..', '..', 'client', 'dist', 'fonts'),
+  path.join(__dirname, '..', '..', 'client', 'dist', 'assets', 'fonts'),
   path.join(__dirname, '..', '..', 'client', 'public', 'fonts'),
 ];
 const HEADERS = {
@@ -91,6 +93,9 @@ function createReview({
     ]),
   );
   const fontDir = fontDirs.find((dir) => fs.existsSync(path.join(dir, FONTS[0])));
+  if (!fontDir) {
+    log('WARNING', 'Inter not found, the page falls back to the system font', { fontDirs });
+  }
   const fonts = Object.fromEntries(
     fontDir
       ? FONTS.map((name) => [`/fonts/${name}`, fs.readFileSync(path.join(fontDir, name))])
@@ -98,6 +103,10 @@ function createReview({
   );
   let project = '';
   let token = { value: '', expires: 0 };
+  let refreshing = null;
+  let months = { list: [], expires: 0 };
+  const views = new Map();
+  let generation = 0;
 
   async function metadata(p) {
     const res = await fetchFn(`${METADATA}/${p}`, { headers: { 'Metadata-Flavor': 'Google' } });
@@ -107,13 +116,21 @@ function createReview({
     return res;
   }
 
-  async function credentials() {
+  async function refresh() {
     if (!project) {
       project = (await (await metadata('project/project-id')).text()).trim();
     }
-    if (Date.now() > token.expires - 60000) {
-      const data = await (await metadata('instance/service-accounts/default/token')).json();
-      token = { value: data.access_token, expires: Date.now() + data.expires_in * 1000 };
+    const data = await (await metadata('instance/service-accounts/default/token')).json();
+    token = { value: data.access_token, expires: Date.now() + data.expires_in * 1000 };
+  }
+
+  /** Queries run in parallel, so they share one token request. */
+  async function credentials() {
+    if (!project || Date.now() > token.expires - 60000) {
+      refreshing ??= refresh().finally(() => {
+        refreshing = null;
+      });
+      await refreshing;
     }
     return { project, token: token.value };
   }
@@ -178,11 +195,18 @@ function createReview({
     const running = today.slice(0, 7) === `${y}-${pad(m)}`;
     const until = running ? Number(today.slice(8)) : daysIn(y, m);
     const previousLast = day(py, pm, running ? Math.min(until, daysIn(py, pm)) : daysIn(py, pm));
-    const { rows: counts } = await query(
-      `SELECT date, rating, reason, SUM(ratings), SUM(texts) FROM ${await table('counts')} ` +
-        'WHERE date BETWEEN @first AND @last GROUP BY date, rating, reason',
-      { first: dateParam(day(py, pm, 1)), last: dateParam(last) },
-    );
+    const [{ rows: counts }, { rows }] = await Promise.all([
+      query(
+        `SELECT date, rating, reason, SUM(ratings), SUM(texts) FROM ${await table('counts')} ` +
+          'WHERE date BETWEEN @first AND @last GROUP BY date, rating, reason',
+        { first: dateParam(day(py, pm, 1)), last: dateParam(last) },
+      ),
+      query(
+        `SELECT id, date, rating, reason, text FROM ${await table('texts')} ` +
+          'WHERE date BETWEEN @first AND @last ORDER BY date DESC, id',
+        { first: dateParam(first), last: dateParam(last) },
+      ),
+    ]);
     const current = { rated: 0, up: 0, down: 0, texts: 0 };
     const previous = {
       label: MONTHS[pm - 1],
@@ -214,11 +238,6 @@ function createReview({
         reasons[rating][reason] = (reasons[rating][reason] || 0) + ratings;
       }
     }
-    const { rows } = await query(
-      `SELECT id, date, rating, reason, text FROM ${await table('texts')} ` +
-        'WHERE date BETWEEN @first AND @last ORDER BY date DESC, id',
-      { first: dateParam(first), last: dateParam(last) },
-    );
     const texts = rows.map(([id, date, rating, reason, text]) => ({
       id,
       date,
@@ -240,6 +259,35 @@ function createReview({
     };
   }
 
+  /** A finished month from memory; the running month always from BigQuery. */
+  async function cachedMonthView(y, m) {
+    const key = `${y}-${pad(m)}`;
+    const hit = views.get(key);
+    if (hit && Date.now() < hit.expires) {
+      return hit.view;
+    }
+    const before = generation;
+    const view = await monthView(y, m);
+    // A text that changed while this query ran may still be in its result.
+    if (!view.period.running && before === generation) {
+      views.set(key, { view, expires: Date.now() + CACHE_MS });
+    }
+    return view;
+  }
+
+  /** Months with feedback, newest first; the running month is always one of them. */
+  async function feedbackMonths() {
+    if (Date.now() >= months.expires) {
+      const { rows } = await query(
+        `SELECT FORMAT_DATE('%Y-%m', date) AS month FROM ${await table('counts')} ` +
+          'GROUP BY month HAVING SUM(ratings) != 0 OR SUM(texts) != 0 ORDER BY month DESC',
+        {},
+      );
+      months = { list: rows.map(([month]) => month), expires: Date.now() + CACHE_MS };
+    }
+    return [...new Set([berlinDay(now()).slice(0, 7), ...months.list])].sort().reverse();
+  }
+
   async function changeText(action, id, text) {
     const texts = await table('texts');
     const { changed } =
@@ -249,6 +297,8 @@ function createReview({
             id: stringParam(id),
             text: stringParam(text),
           });
+    generation += 1;
+    views.clear();
     return changed;
   }
 
@@ -362,10 +412,11 @@ function createReview({
         return send(res, 400, { error: 'month' });
       }
       try {
-        return send(res, 200, {
-          ...(await monthView(Number(match[1]), Number(match[2]))),
-          user: reviewer,
-        });
+        const [list, view] = await Promise.all([
+          feedbackMonths(),
+          cachedMonthView(Number(match[1]), Number(match[2])),
+        ]);
+        return send(res, 200, { ...view, months: list, user: reviewer });
       } catch (error) {
         log('ERROR', 'feedback review query failed', { detail: error.message });
         return send(res, error.status || 500, { error: error.message });

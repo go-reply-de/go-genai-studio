@@ -18,12 +18,7 @@
           <span class="brand-name"><b id="app">Feedback</b><span>Feedback</span></span>
           <span class="badge" id="env"></span>
         </div>
-        <p class="live" id="live" role="status" aria-live="polite">
-          <i class="live-dot" aria-hidden="true"></i><span id="live-text">Lädt …</span>
-        </p>
         <span class="grow"></span>
-        <label class="sr-only" for="month">Monat</label>
-        <select id="month"></select>
         <div class="theme" role="group" aria-label="Darstellung">
           <button
             type="button"
@@ -57,7 +52,7 @@
       </div>
     </header>
 
-    <main class="content">
+    <main class="content" id="content">
       <div class="alert" id="error" role="alert" hidden>
         <span id="error-text"></span>
         <button class="btn" type="button" id="retry">Erneut versuchen</button>
@@ -65,10 +60,34 @@
 
       <section class="month" aria-labelledby="month-title">
         <div class="month-head">
-          <h1 id="month-title">Feedback</h1>
-          <p class="muted" id="period"></p>
+          <div class="month-nav" role="group" aria-label="Monat">
+            <div class="steps">
+              <button type="button" id="prev" aria-label="Vorheriger Monat" disabled>
+                <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m15 18-6-6 6-6" />
+                </svg>
+              </button>
+              <button type="button" id="next" aria-label="Nächster Monat" disabled>
+                <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+              </button>
+            </div>
+            <div class="picker">
+              <h1 class="picker-label" id="month-title">Feedback</h1>
+              <svg class="i chevron" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+              <label class="sr-only" for="month">Monat auswählen</label>
+              <select id="month"></select>
+            </div>
+          </div>
+          <p class="live" id="live" role="status" aria-live="polite">
+            <i class="live-dot" aria-hidden="true"></i><span id="live-text">Lädt …</span>
+          </p>
         </div>
-        <dl class="stats" id="stats">
+        <p class="period dim" id="period"></p>
+        <dl class="stats dim" id="stats">
           <div class="stat">
             <dt>Bewertungen</dt>
             <dd class="value" id="k-rated"><span class="skeleton"></span></dd>
@@ -92,7 +111,7 @@
         </dl>
       </section>
 
-      <div class="split">
+      <div class="split dim">
         <section class="panel" aria-labelledby="chart-title">
           <div class="panel-head">
             <h2 id="chart-title">Bewertungen pro Tag</h2>
@@ -126,7 +145,7 @@
         </section>
       </div>
 
-      <section class="panel texts" aria-labelledby="texts-title">
+      <section class="panel texts dim" aria-labelledby="texts-title">
         <div class="panel-head">
           <h2 id="texts-title" tabindex="-1">Freitexte</h2>
           <span class="badge" id="t-count"></span>

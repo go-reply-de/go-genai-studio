@@ -208,7 +208,7 @@ svg.i.small {
   background: var(--down);
 }
 
-/* Top bar: brand, live status, month, theme, reviewer. */
+/* Top bar: brand, theme, reviewer. */
 .topbar {
   position: sticky;
   top: 0;
@@ -248,32 +248,6 @@ svg.i.small {
 .brand-name span {
   margin-left: 6px;
   color: var(--text-tertiary);
-}
-.live {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-.live-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 9999px;
-  background: var(--border-heavy);
-}
-.live.on .live-dot {
-  background: var(--green-500);
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
-}
-.live.warn {
-  color: var(--amber-700);
-}
-.dark .live.warn {
-  color: #fbbf24;
-}
-.live.warn .live-dot {
-  background: var(--amber-500);
 }
 select,
 input[type='search'],
@@ -426,17 +400,141 @@ textarea:focus-visible {
 .alert[hidden] {
   display: none;
 }
+
+/* Month header: step through or pick a month with feedback, its status on the right. */
 .month-head {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 14px;
-  margin-bottom: 14px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
 }
-.month-head h1 {
+.month-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.steps {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: var(--surface-secondary);
+}
+.steps button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.steps button:hover:not(:disabled) {
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--border-medium);
+}
+.steps button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* The month reads as the page title; a transparent native select on top opens the list. */
+.picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 2px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  transition:
+    background-color 150ms ease-out,
+    border-color 150ms ease-out;
+}
+.picker:hover {
+  background: var(--surface-secondary);
+  border-color: var(--border-light);
+}
+.picker:has(select:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.picker-label {
   font-size: 22px;
   font-weight: 600;
   letter-spacing: -0.01em;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+.picker .chevron {
+  width: 18px;
+  height: 18px;
+  color: var(--text-tertiary);
+}
+.picker select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.live[hidden] {
+  display: none;
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--border-heavy);
+}
+.live.on .live-dot {
+  background: var(--green-500);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
+}
+.live.busy .live-dot {
+  width: 12px;
+  height: 12px;
+  background: transparent;
+  border: 2px solid var(--border-medium);
+  border-top-color: var(--text-secondary);
+  animation: spin 800ms linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.live.warn {
+  color: var(--amber-700);
+}
+.dark .live.warn {
+  color: #fbbf24;
+}
+.live.warn .live-dot {
+  background: var(--amber-500);
+}
+.period {
+  margin: 4px 0 16px;
+  color: var(--text-secondary);
+}
+/* While another month loads, the one on screen fades back; quick loads never flicker. */
+.dim {
+  transition: opacity 200ms ease-out;
+}
+.content[aria-busy='true'] .dim {
+  opacity: 0.4;
+  transition-delay: 150ms;
 }
 .stats {
   display: grid;
@@ -863,12 +961,15 @@ mark.hint {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .row.arrived {
+  .row.arrived,
+  .live.busy .live-dot {
     animation: none;
   }
   .row.leaving,
   .btn,
-  .ghost {
+  .ghost,
+  .picker,
+  .dim {
     transition: none;
   }
 }
@@ -899,9 +1000,8 @@ mark.hint {
   .legend {
     display: none;
   }
-  .live {
-    order: 5;
-    width: 100%;
+  .picker-label {
+    font-size: 20px;
   }
   /* The wrapped toolbar is too tall to stick under the wrapped top bar on a phone. */
   .toolbar {

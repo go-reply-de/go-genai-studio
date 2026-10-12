@@ -13,6 +13,20 @@ const ACTION = { ...REVIEWER, 'X-Feedback-Review': '1', 'Content-Type': 'applica
 const ID = '3f1c2a9e-1111-4a6b-9c1d-000000000001';
 
 const cells = (...values) => ({ f: values.map((v) => ({ v: String(v) })) });
+const MONTHS_QUERY = 'SELECT FORMAT_DATE';
+
+/** Answers like BigQuery: the months with feedback, the counts and the texts. */
+const bigQuery =
+  ({ months = [], counts = [], texts = [] } = {}) =>
+  (body) => {
+    let rows = texts;
+    if (body.query.startsWith(MONTHS_QUERY)) {
+      rows = months.map((month) => cells(month));
+    } else if (body.query.includes('.counts`')) {
+      rows = counts;
+    }
+    return Response.json({ jobComplete: true, numDmlAffectedRows: '1', rows });
+  };
 
 /** Answers like the GKE metadata server and BigQuery would, and records every query. */
 function fakeFetch(answer) {
@@ -112,19 +126,13 @@ describe('feedback review server', () => {
 
   it('compares a running month with the same days of the month before', async () => {
     app = await start(
-      (body) =>
-        Response.json(
-          body.query.includes('.counts`')
-            ? {
-                jobComplete: true,
-                rows: [
-                  cells('2026-10-02', 'thumbsUp', 'accurate_reliable', 3, 1),
-                  cells('2026-09-05', 'thumbsUp', 'accurate_reliable', 4, 1),
-                  cells('2026-09-30', 'thumbsDown', 'other', 9, 2),
-                ],
-              }
-            : { jobComplete: true, rows: [] },
-        ),
+      bigQuery({
+        counts: [
+          cells('2026-10-02', 'thumbsUp', 'accurate_reliable', 3, 1),
+          cells('2026-09-05', 'thumbsUp', 'accurate_reliable', 4, 1),
+          cells('2026-09-30', 'thumbsDown', 'other', 9, 2),
+        ],
+      }),
       { now: () => new Date('2026-10-11T22:30:00Z') },
     );
     const data = await (await app.request('/api/month?m=2026-10', { headers: REVIEWER })).json();
@@ -141,24 +149,18 @@ describe('feedback review server', () => {
   });
 
   it('sums a month and the one before from the counts and lists its texts', async () => {
-    app = await start((body) =>
-      Response.json(
-        body.query.includes('.counts`')
-          ? {
-              jobComplete: true,
-              rows: [
-                cells('2026-10-01', 'thumbsUp', 'accurate_reliable', 5, 0),
-                cells('2026-10-01', 'thumbsDown', 'inaccurate', 2, 1),
-                cells('2026-10-31', 'thumbsDown', 'other', 1, 1),
-                cells('2026-09-30', 'thumbsUp', 'accurate_reliable', 7, 2),
-                cells('2026-10-02', 'unknown', 'unknown', 3, 0),
-              ],
-            }
-          : {
-              jobComplete: true,
-              rows: [cells(ID, '2026-10-01', 'thumbsDown', 'inaccurate', 'zu lang')],
-            },
-      ),
+    app = await start(
+      bigQuery({
+        months: ['2026-10', '2026-09'],
+        counts: [
+          cells('2026-10-01', 'thumbsUp', 'accurate_reliable', 5, 0),
+          cells('2026-10-01', 'thumbsDown', 'inaccurate', 2, 1),
+          cells('2026-10-31', 'thumbsDown', 'other', 1, 1),
+          cells('2026-09-30', 'thumbsUp', 'accurate_reliable', 7, 2),
+          cells('2026-10-02', 'unknown', 'unknown', 3, 0),
+        ],
+        texts: [cells(ID, '2026-10-01', 'thumbsDown', 'inaccurate', 'zu lang')],
+      }),
     );
     const res = await app.request('/api/month?m=2026-10', { headers: REVIEWER });
     const data = await res.json();
@@ -181,7 +183,10 @@ describe('feedback review server', () => {
     expect(data.days[0]).toEqual([5, 2]);
     expect(data.days[30]).toEqual([0, 1]);
 
-    const [counts, texts] = app.queries;
+    const counts = app.queries.find(
+      (q) => q.query.includes('.counts`') && !q.query.startsWith(MONTHS_QUERY),
+    );
+    const texts = app.queries.find((q) => q.query.includes('.texts`'));
     expect(counts.url).toBe(
       'https://bigquery.googleapis.com/bigquery/v2/projects/synthetic-project/queries',
     );
@@ -199,9 +204,8 @@ describe('feedback review server', () => {
   });
 
   it('reads further result pages', async () => {
-    let page = 0;
     app = await start(() => Response.json({ jobComplete: true, rows: [] }));
-    app.fn.mockImplementation(async (url) => {
+    app.fn.mockImplementation(async (url, init) => {
       if (url.endsWith('/project/project-id')) {
         return new Response('synthetic-project');
       }
@@ -214,12 +218,12 @@ describe('feedback review server', () => {
           rows: [cells(ID, '2026-10-02', 'thumbsUp', 'other', 'zwei')],
         });
       }
-      page += 1;
+      const texts = JSON.parse(init.body).query.includes('.texts`');
       return Response.json({
         jobComplete: true,
         jobReference: { jobId: 'job-1', location: 'europe-west3' },
-        pageToken: page === 2 ? 'next' : undefined,
-        rows: page === 2 ? [cells(ID, '2026-10-01', 'thumbsUp', 'other', 'eins')] : [],
+        pageToken: texts ? 'next' : undefined,
+        rows: texts ? [cells(ID, '2026-10-01', 'thumbsUp', 'other', 'eins')] : [],
       });
     });
     const data = await (await app.request('/api/month?m=2026-10', { headers: REVIEWER })).json();
@@ -227,6 +231,63 @@ describe('feedback review server', () => {
     expect(app.fn.mock.calls.map(([url]) => url)).toContain(
       'https://bigquery.googleapis.com/bigquery/v2/projects/synthetic-project/queries/job-1?location=europe-west3&pageToken=next',
     );
+  });
+
+  it('lists the months with feedback, newest first, and always the running month', async () => {
+    app = await start(bigQuery({ months: ['2026-10', '2026-08'] }));
+    const data = await (await app.request('/api/month?m=2026-10', { headers: REVIEWER })).json();
+    expect(data.months).toEqual(['2026-11', '2026-10', '2026-08']);
+    expect(app.queries.find((q) => q.query.startsWith(MONTHS_QUERY)).query).toBe(
+      "SELECT FORMAT_DATE('%Y-%m', date) AS month FROM `synthetic-project.feedback.counts` " +
+        'GROUP BY month HAVING SUM(ratings) != 0 OR SUM(texts) != 0 ORDER BY month DESC',
+    );
+
+    await app.close();
+    app = await start(bigQuery({ months: ['2026-11', '2026-10'] }));
+    const again = await (await app.request('/api/month?m=2026-11', { headers: REVIEWER })).json();
+    expect(again.months).toEqual(['2026-11', '2026-10']);
+  });
+
+  it('asks BigQuery for the months, counts and texts at the same time', async () => {
+    let open = 0;
+    let most = 0;
+    app = await start(async () => {
+      open += 1;
+      most = Math.max(most, open);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      open -= 1;
+      return Response.json({ jobComplete: true, rows: [] });
+    });
+    expect((await app.request('/api/month?m=2026-10', { headers: REVIEWER })).status).toBe(200);
+    expect(most).toBe(3);
+    const metadata = app.fn.mock.calls.filter(([url]) => url.includes('metadata.google.internal'));
+    expect(metadata).toHaveLength(2);
+  });
+
+  it('keeps a finished month in memory until a text changes, but not the running month', async () => {
+    app = await start(
+      bigQuery({
+        months: ['2026-10'],
+        texts: [cells(ID, '2026-10-01', 'thumbsDown', 'other', 'zu lang')],
+      }),
+    );
+    const month = async (m) =>
+      (await app.request(`/api/month?m=${m}`, { headers: REVIEWER })).json();
+    await month('2026-10');
+    expect(app.queries).toHaveLength(3);
+    expect((await month('2026-10')).texts).toHaveLength(1);
+    expect(app.queries).toHaveLength(3);
+
+    await stdoutLines(() =>
+      app.request(`/api/texts/${ID}/delete`, { method: 'POST', headers: ACTION }),
+    );
+    await month('2026-10');
+    // The delete, then counts and texts again; the list of months stays in memory.
+    expect(app.queries).toHaveLength(6);
+
+    await month('2026-11');
+    await month('2026-11');
+    expect(app.queries).toHaveLength(10);
   });
 
   it('refuses a malformed month', async () => {
