@@ -281,7 +281,7 @@ describe('feedback review server', () => {
     expect(data.ratingsByMonth).toEqual({ '2026-11': 0, '2026-10': 72, '2026-08': 16 });
     expect(app.queries.find((q) => q.query.startsWith(MONTHS_QUERY)).query).toBe(
       "SELECT FORMAT_DATE('%Y-%m', date) AS month, " +
-        "SUM(IF(rating IN ('thumbsUp', 'thumbsDown'), ratings, 0)) AS ratings " +
+        "SUM(IF(rating IN ('thumbsUp', 'thumbsDown'), ratings, 0)) AS rated " +
         'FROM `synthetic-project.feedback.counts` GROUP BY month ' +
         'HAVING SUM(ratings) != 0 OR SUM(texts) != 0 ORDER BY month DESC',
     );

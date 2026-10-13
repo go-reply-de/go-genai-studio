@@ -301,7 +301,8 @@ function createReview({
           .then((counts) =>
             query(
               `SELECT FORMAT_DATE('%Y-%m', date) AS month, ` +
-                "SUM(IF(rating IN ('thumbsUp', 'thumbsDown'), ratings, 0)) AS ratings " +
+                // Named apart from the column: HAVING would otherwise read SUM(ratings) as this sum.
+                "SUM(IF(rating IN ('thumbsUp', 'thumbsDown'), ratings, 0)) AS rated " +
                 `FROM ${counts} GROUP BY month ` +
                 'HAVING SUM(ratings) != 0 OR SUM(texts) != 0 ORDER BY month DESC',
               {},
