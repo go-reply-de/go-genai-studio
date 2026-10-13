@@ -553,22 +553,16 @@ function niceMax(max) {
   return (Math.ceil((max / step) * 2) * step) / 2;
 }
 
-/** The days so far: a running month ends at today, so its bars fill the width as it goes. */
+/** The whole month; in a running month a thin line marks today and the days after stay empty. */
 function renderChart() {
   const d = state.data;
   const month = monthOf(d.period.from);
   const last = d.period.running ? dayOf(d.period.to) : d.days.length;
-  const values = d.days.slice(0, last).map(([up, down]) => [num(up), num(down)]);
-  const top = niceMax(Math.max(0, ...values.map(([up, down]) => up + down)));
+  const values = d.days.map(([up, down]) => [num(up), num(down)]);
+  const top = niceMax(Math.max(0, ...values.slice(0, last).map(([up, down]) => up + down)));
   const [left, right, y0, y1] = [44, 996, 186, 12];
   const step = (right - left) / values.length;
-  // Early in a month a few bars would each take a large share of the width.
-  const width = Math.min(64, Math.max(2, step - 6));
-  const labels = new Set([1, ...values.map((_, i) => i + 1).filter((day) => day % 5 === 0)]);
-  // Today gets a label too, unless it would crowd the one before it.
-  if ((last - Math.max(...labels)) * step >= 60) {
-    labels.add(last);
-  }
+  const width = Math.max(2, step - 6);
   const y = (v) => y0 - (v / top) * (y0 - y1);
   let svg = [0, top / 2, top]
     .map(
@@ -577,19 +571,30 @@ function renderChart() {
         `<text x="${left - 8}" y="${y(v) + 4}" text-anchor="end">${int(v)}</text>`,
     )
     .join('');
+  // Today sits on the date axis: a tag in the row of day numbers, the line rising from it.
+  const marker = last < values.length ? left + last * step : null;
+  const tagWidth = t('today').length * 7.5 + 18;
+  if (marker !== null) {
+    svg += `<line class="today-line" x1="${marker}" x2="${marker}" y1="${y1}" y2="196"/>`;
+    svg += `<rect class="today-tag" x="${marker - tagWidth / 2}" y="196" width="${tagWidth}" height="22" rx="11"/>`;
+    svg += `<text class="today-label" x="${marker}" y="211" text-anchor="middle">${t('today')}</text>`;
+  }
   values.forEach(([up, down], i) => {
     const center = left + (i + 0.5) * step;
     const x = center - width / 2;
-    const title = `<title>${t('dayTip', { date: T.shortDate(i + 1, month), up, down })}</title>`;
-    const hu = y0 - y(up);
-    const hd = y0 - y(down);
-    svg += `<g>${title}<rect class="up" x="${x}" y="${y0 - hu}" width="${width}" height="${hu}" rx="3"/>`;
-    svg += `<rect class="down" x="${x}" y="${y0 - hu - hd - (hd ? 2 : 0)}" width="${width}" height="${hd}" rx="3"/></g>`;
-    if (labels.has(i + 1)) {
+    if (i < last) {
+      const title = `<title>${t('dayTip', { date: T.shortDate(i + 1, month), up, down })}</title>`;
+      const hu = y0 - y(up);
+      const hd = y0 - y(down);
+      svg += `<g>${title}<rect class="up" x="${x}" y="${y0 - hu}" width="${width}" height="${hu}" rx="3"/>`;
+      svg += `<rect class="down" x="${x}" y="${y0 - hu - hd - (hd ? 2 : 0)}" width="${width}" height="${hd}" rx="3"/></g>`;
+    }
+    const clear = marker === null || Math.abs(center - marker) > tagWidth / 2 + 26;
+    if ((i === 0 || (i + 1) % 5 === 0) && clear) {
       svg += `<text x="${center}" y="210" text-anchor="middle">${T.axisDay(i + 1)}</text>`;
     }
   });
-  if (!values.some(([up, down]) => up + down)) {
+  if (!values.slice(0, last).some(([up, down]) => up + down)) {
     svg += `<text class="empty" x="${(left + right) / 2}" y="${(y0 + y1) / 2}" text-anchor="middle">${t('noRatingsYet')}</text>`;
   }
   $('chart').innerHTML = svg;
@@ -597,6 +602,7 @@ function renderChart() {
     `<caption>${t('perDay')}</caption>` +
     `<tr><th>${t('day')}</th><th>${t('thumbsUp')}</th><th>${t('thumbsDown')}</th></tr>` +
     values
+      .slice(0, last)
       .map(
         ([up, down], i) =>
           `<tr><td>${T.shortDate(i + 1, month)}</td><td>${up}</td><td>${down}</td></tr>`,

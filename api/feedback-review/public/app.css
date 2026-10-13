@@ -768,6 +768,19 @@ textarea:focus-visible {
 #chart .down {
   fill: var(--down);
 }
+#chart .today-line {
+  stroke: var(--text-tertiary);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+}
+#chart .today-tag {
+  fill: var(--surface-tertiary);
+}
+#chart text.today-label {
+  fill: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
 #chart .grid {
   stroke: var(--border-light);
   stroke-width: 1;
