@@ -15,13 +15,13 @@ const ID = '3f1c2a9e-1111-4a6b-9c1d-000000000001';
 const cells = (...values) => ({ f: values.map((v) => ({ v: String(v) })) });
 const MONTHS_QUERY = 'SELECT FORMAT_DATE';
 
-/** Answers like BigQuery: the months with feedback, the counts and the texts. */
+/** Answers like BigQuery: the months with feedback (one rating each unless given), counts, texts. */
 const bigQuery =
   ({ months = [], counts = [], texts = [] } = {}) =>
   (body) => {
     let rows = texts;
     if (body.query.startsWith(MONTHS_QUERY)) {
-      rows = months.map((month) => cells(month));
+      rows = months.map((month) => (Array.isArray(month) ? cells(...month) : cells(month, 1)));
     } else if (body.query.includes('.counts`')) {
       rows = counts;
     }
@@ -120,12 +120,13 @@ describe('feedback review server', () => {
     expect(page).toContain('<span class="badge" id="env">sov-dev</span>');
     expect(page).toContain('Angemeldet als a&amp;b.rev@example.org');
     expect(page).toContain('<span class="avatar" id="avatar" aria-hidden="true">AB</span>');
-    expect(page).toContain('<option value="2026-09">September 2026</option>');
+    expect(page).toContain('data-month="2026-09"');
+    expect(page).toContain('<span id="month-title">September 2026</span>');
     expect(page).toContain('<title>September 2026 · DiMeAs Feedback</title>');
     expect(page).not.toContain('{{');
 
     const fallback = await (await app.request('/?m=2026-13', { headers: REVIEWER })).text();
-    expect(fallback).toContain('<option value="2026-11">November 2026</option>');
+    expect(fallback).toContain('data-month="2026-11"');
   });
 
   it('starts the month queries while the page itself is served', async () => {
@@ -266,13 +267,23 @@ describe('feedback review server', () => {
     );
   });
 
-  it('lists the months with feedback, newest first, and always the running month', async () => {
-    app = await start(bigQuery({ months: ['2026-10', '2026-08'] }));
+  it('lists the months with feedback and their ratings, newest first, and the running month', async () => {
+    app = await start(
+      bigQuery({
+        months: [
+          ['2026-10', 72],
+          ['2026-08', 16],
+        ],
+      }),
+    );
     const data = await (await app.request('/api/month?m=2026-10', { headers: REVIEWER })).json();
     expect(data.months).toEqual(['2026-11', '2026-10', '2026-08']);
+    expect(data.ratingsByMonth).toEqual({ '2026-11': 0, '2026-10': 72, '2026-08': 16 });
     expect(app.queries.find((q) => q.query.startsWith(MONTHS_QUERY)).query).toBe(
-      "SELECT FORMAT_DATE('%Y-%m', date) AS month FROM `synthetic-project.feedback.counts` " +
-        'GROUP BY month HAVING SUM(ratings) != 0 OR SUM(texts) != 0 ORDER BY month DESC',
+      "SELECT FORMAT_DATE('%Y-%m', date) AS month, " +
+        "SUM(IF(rating IN ('thumbsUp', 'thumbsDown'), ratings, 0)) AS ratings " +
+        'FROM `synthetic-project.feedback.counts` GROUP BY month ' +
+        'HAVING SUM(ratings) != 0 OR SUM(texts) != 0 ORDER BY month DESC',
     );
 
     await app.close();

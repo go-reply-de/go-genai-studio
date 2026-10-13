@@ -73,15 +73,39 @@
                 </svg>
               </button>
             </div>
-            <div class="picker">
-              <h1 class="picker-label" id="month-title">{{MONTH_LABEL}}</h1>
-              <svg class="i chevron" viewBox="0 0 24 24" aria-hidden="true">
-                <path d="m6 9 6 6 6-6" />
-              </svg>
-              <label class="sr-only" for="month">Monat auswählen</label>
-              <select id="month">
-                <option value="{{MONTH}}">{{MONTH_LABEL}}</option>
-              </select>
+            <h1 class="month-heading">
+              <button
+                type="button"
+                class="picker"
+                id="month-button"
+                data-month="{{MONTH}}"
+                aria-haspopup="dialog"
+                aria-expanded="false"
+                aria-controls="month-pop"
+                aria-describedby="month-hint"
+              >
+                <span id="month-title">{{MONTH_LABEL}}</span>
+                <svg class="i chevron" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+            </h1>
+            <span class="sr-only" id="month-hint">Monat wählen</span>
+            <div class="month-pop" id="month-pop" role="dialog" aria-label="Monat wählen" hidden>
+              <div class="pop-year">
+                <button type="button" id="year-prev" aria-label="Vorheriges Jahr">
+                  <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m15 18-6-6 6-6" />
+                  </svg>
+                </button>
+                <span id="year-label"></span>
+                <button type="button" id="year-next" aria-label="Nächstes Jahr">
+                  <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                </button>
+              </div>
+              <div class="month-grid" id="month-grid"></div>
             </div>
           </div>
           <p class="live" id="live" role="status" aria-live="polite">

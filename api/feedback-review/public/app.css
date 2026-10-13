@@ -410,6 +410,7 @@ textarea:focus-visible {
   gap: 8px 16px;
 }
 .month-nav {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -441,46 +442,146 @@ textarea:focus-visible {
   opacity: 0.4;
   cursor: default;
 }
-/* The month reads as the page title; a transparent native select on top opens the list. */
+/* The month is the page title and opens a grid of one year's months. */
+.month-heading {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+}
 .picker {
-  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 2px 8px 2px 10px;
   border: 1px solid transparent;
   border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
   transition:
     background-color 150ms ease-out,
     border-color 150ms ease-out;
 }
-.picker:hover {
+.picker:hover,
+.picker[aria-expanded='true'] {
   background: var(--surface-secondary);
   border-color: var(--border-light);
-}
-.picker:has(select:focus-visible) {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-.picker-label {
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.35;
-  white-space: nowrap;
 }
 .picker .chevron {
   width: 18px;
   height: 18px;
   color: var(--text-tertiary);
+  transition: transform 150ms ease-out;
 }
-.picker select {
+.picker[aria-expanded='true'] .chevron {
+  transform: rotate(180deg);
+}
+.month-pop {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  padding: 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  background: var(--surface-primary);
+  /* LibreChat's menu shadow (Tailwind shadow-lg). */
+  box-shadow:
+    0 10px 15px -3px rgba(0, 0, 0, 0.1),
+    0 4px 6px -4px rgba(0, 0, 0, 0.1);
+}
+.dark .month-pop {
+  border-color: var(--border-medium);
+  box-shadow:
+    0 10px 15px -3px rgba(0, 0, 0, 0.5),
+    0 4px 6px -4px rgba(0, 0, 0, 0.4);
+}
+.month-pop[hidden] {
+  display: none;
+}
+.pop-year {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.pop-year button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
   cursor: pointer;
+}
+.pop-year button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.pop-year button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.month-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+.month-grid button {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+  padding: 8px 4px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.month-grid small {
+  min-height: 16px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.month-grid button:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+.month-grid button:disabled {
+  color: var(--text-tertiary);
+  opacity: 0.55;
+  cursor: default;
+}
+.month-grid button[aria-current='true'] {
+  background: var(--text-primary);
+  color: var(--surface-primary);
+}
+.month-grid button[aria-current='true'] small {
+  color: inherit;
+  opacity: 0.75;
+}
+/* The running month carries the same green dot as the live status. */
+.month-grid .running::after {
+  content: '';
+  position: absolute;
+  top: 7px;
+  right: 9px;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--green-500);
 }
 .live {
   display: inline-flex;
@@ -1006,6 +1107,7 @@ mark.hint {
   .btn,
   .ghost,
   .picker,
+  .picker .chevron,
   .dim {
     transition: none;
   }
@@ -1037,7 +1139,7 @@ mark.hint {
   .legend {
     display: none;
   }
-  .picker-label {
+  .month-heading {
     font-size: 20px;
   }
   /* The wrapped toolbar is too tall to stick under the wrapped top bar on a phone. */

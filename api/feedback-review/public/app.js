@@ -122,6 +122,8 @@ const state = {
   drafts: new Map(),
   arrived: new Set(),
   months: [],
+  ratings: {},
+  year: 0,
   want: '',
   failed: '',
   cache: new Map(),
@@ -373,7 +375,7 @@ function apply(data, live) {
   }
   state.data = data;
   state.rows = data.texts.map((t) => enrich(t, data));
-  renderMonths(data.months);
+  renderMonths(data.months, data.ratingsByMonth);
   renderNav(data.month);
   if (state.open && !state.rows.some((r) => r.id === state.open.id)) {
     state.open = null;
@@ -401,24 +403,116 @@ function schedule() {
   }, REFRESH_MS);
 }
 
-/** Only months with feedback, grouped by year once there is more than one. */
-function renderMonths(months) {
-  if (months.join() === state.months.join() && $('month').options.length) {
+/** The months with feedback and their ratings; an open grid shows them at once. */
+function renderMonths(months, ratings = {}) {
+  state.months = months;
+  state.ratings = ratings;
+  if (!$('month-pop').hidden) {
+    renderGrid();
+  }
+}
+
+/** A loaded month knows its ratings best; for the running month that is the latest poll. */
+const ratingsOf = (month) =>
+  state.cache.get(month)?.data.current.rated ?? state.ratings[month] ?? 0;
+
+/** One year as a grid; only months with feedback can be opened. */
+function renderGrid() {
+  const focused = document.activeElement?.closest?.('#month-grid button')?.dataset.month;
+  const newest = state.months[0] || state.want;
+  const years = state.months.map((month) => Number(month.slice(0, 4)));
+  $('year-label').textContent = state.year;
+  $('year-prev').disabled = state.year <= Math.min(...years);
+  $('year-next').disabled = state.year >= Math.max(...years);
+  const cells = MONTHS.map((name, i) => {
+    const month = `${state.year}-${String(i + 1).padStart(2, '0')}`;
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.tabIndex = -1;
+    cell.dataset.month = month;
+    cell.disabled = !state.months.includes(month);
+    let count = month > newest ? '' : '–';
+    let detail = month > newest ? 'noch nicht begonnen' : 'kein Feedback';
+    if (!cell.disabled) {
+      count = int(ratingsOf(month));
+      detail = `${count} Bewertungen${month === newest ? ', läuft' : ''}`;
+    }
+    cell.innerHTML = `<span>${SHORT[i]}</span><small>${count}</small>`;
+    cell.setAttribute('aria-label', `${name} ${state.year}, ${detail}`);
+    cell.classList.toggle('running', month === newest);
+    if (month === state.want) {
+      cell.setAttribute('aria-current', 'true');
+    }
+    return cell;
+  });
+  $('month-grid').replaceChildren(...cells);
+  const target =
+    cells.find((c) => c.dataset.month === focused && !c.disabled) ||
+    cells.find((c) => c.hasAttribute('aria-current')) ||
+    cells.find((c) => !c.disabled);
+  if (target) {
+    target.tabIndex = 0;
+    if (focused) {
+      target.focus();
+    }
+  }
+}
+
+function openPicker() {
+  state.year = Number(state.want.slice(0, 4));
+  $('month-pop').hidden = false;
+  $('month-button').setAttribute('aria-expanded', 'true');
+  renderGrid();
+  $('month-grid').querySelector('[tabindex="0"]')?.focus();
+}
+
+function closePicker(restoreFocus) {
+  if ($('month-pop').hidden) {
     return;
   }
-  state.months = months;
-  const option = (month) => new Option(monthLabel(month), month);
-  const years = [...new Set(months.map((month) => month.slice(0, 4)))];
-  $('month').replaceChildren(
-    ...(years.length > 1
-      ? years.map((year) => {
-          const group = document.createElement('optgroup');
-          group.label = year;
-          group.append(...months.filter((month) => month.startsWith(year)).map(option));
-          return group;
-        })
-      : months.map(option)),
-  );
+  $('month-pop').hidden = true;
+  $('month-button').setAttribute('aria-expanded', 'false');
+  if (restoreFocus) {
+    $('month-button').focus();
+  }
+}
+
+function changeYear(step) {
+  state.year += step;
+  renderGrid();
+  // A year button that has just been disabled drops focus; keep it inside the picker.
+  if (document.activeElement === document.body || document.activeElement?.disabled) {
+    $('month-grid').querySelector('[tabindex="0"]')?.focus();
+  }
+}
+
+const GRID_KEYS = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -4, ArrowDown: 4 };
+
+/** Arrow keys move between months with feedback, Home and End jump to the first and last. */
+function moveInGrid(event) {
+  const cells = [...$('month-grid').children];
+  const open = cells.filter((c) => !c.disabled);
+  let to;
+  if (event.key in GRID_KEYS) {
+    const step = GRID_KEYS[event.key];
+    let i = cells.indexOf(document.activeElement) + step;
+    while (i >= 0 && i < cells.length && cells[i].disabled) {
+      i += step;
+    }
+    to = cells[i];
+  } else if (event.key === 'Home' || event.key === 'End') {
+    to = event.key === 'Home' ? open[0] : open[open.length - 1];
+  } else {
+    return;
+  }
+  event.preventDefault();
+  if (to) {
+    cells.forEach((c) => {
+      c.tabIndex = -1;
+    });
+    to.tabIndex = 0;
+    to.focus();
+  }
 }
 
 function setStep(button, month, label, none) {
@@ -429,7 +523,7 @@ function setStep(button, month, label, none) {
 }
 
 function renderNav(month) {
-  $('month').value = month;
+  $('month-button').dataset.month = month;
   $('month-title').textContent = monthLabel(month);
   const i = state.months.indexOf(month);
   setStep(
@@ -910,7 +1004,29 @@ $('filter').addEventListener('input', () => {
     renderTexts();
   }
 });
-$('month').addEventListener('change', () => navigate($('month').value));
+$('month-button').addEventListener('click', () =>
+  $('month-pop').hidden ? openPicker() : closePicker(true),
+);
+$('month-grid').addEventListener('click', (event) => {
+  const cell = event.target.closest('button');
+  if (cell && !cell.disabled) {
+    closePicker(true);
+    navigate(cell.dataset.month);
+  }
+});
+$('month-grid').addEventListener('keydown', moveInGrid);
+$('year-prev').addEventListener('click', () => changeYear(-1));
+$('year-next').addEventListener('click', () => changeYear(1));
+document.addEventListener('pointerdown', (event) => {
+  if (!event.target.closest('#month-pop, #month-button')) {
+    closePicker(false);
+  }
+});
+$('month-pop').addEventListener('focusout', (event) => {
+  if (event.relatedTarget && !event.relatedTarget.closest('#month-pop, #month-button')) {
+    closePicker(false);
+  }
+});
 $('prev').addEventListener('click', () => navigate($('prev').dataset.month));
 $('next').addEventListener('click', () => navigate($('next').dataset.month));
 $('retry').addEventListener('click', () => {
@@ -924,6 +1040,9 @@ document.addEventListener('keydown', (event) => {
   if (event.key === '/' && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault();
     $('filter').focus();
+  } else if (event.key === 'Escape' && !$('month-pop').hidden) {
+    event.preventDefault();
+    closePicker(true);
   } else if (event.key === 'Escape' && state.open) {
     event.preventDefault();
     closeWork();
@@ -960,6 +1079,6 @@ system.addEventListener('change', applyTheme);
 applyTheme();
 
 // The server writes the month into the page; the clock is only a fallback.
-const initial = $('month').value || berlinMonth();
+const initial = $('month-button').dataset.month || berlinMonth();
 renderMonths([initial]);
 show(initial);

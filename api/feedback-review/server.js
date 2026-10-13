@@ -293,19 +293,21 @@ function createReview({
     }
   }
 
-  /** Months with feedback, newest first; the running month is always one of them. */
+  /** Months with feedback and their ratings, newest first; the running month is always one. */
   async function feedbackMonths() {
     if (at() >= months.expires) {
       const entry = {
         list: table('counts')
           .then((counts) =>
             query(
-              `SELECT FORMAT_DATE('%Y-%m', date) AS month FROM ${counts} ` +
-                'GROUP BY month HAVING SUM(ratings) != 0 OR SUM(texts) != 0 ORDER BY month DESC',
+              `SELECT FORMAT_DATE('%Y-%m', date) AS month, ` +
+                "SUM(IF(rating IN ('thumbsUp', 'thumbsDown'), ratings, 0)) AS ratings " +
+                `FROM ${counts} GROUP BY month ` +
+                'HAVING SUM(ratings) != 0 OR SUM(texts) != 0 ORDER BY month DESC',
               {},
             ),
           )
-          .then(({ rows }) => rows.map(([month]) => month)),
+          .then(({ rows }) => rows.map(([month, ratings]) => [month, Number(ratings)])),
         expires: Infinity,
       };
       months = entry;
@@ -320,8 +322,12 @@ function createReview({
         },
       );
     }
-    const list = await months.list;
-    return [...new Set([berlinDay(now()).slice(0, 7), ...list])].sort().reverse();
+    const ratings = Object.fromEntries(await months.list);
+    const running = berlinDay(now()).slice(0, 7);
+    return {
+      months: [...new Set([running, ...Object.keys(ratings)])].sort().reverse(),
+      ratingsByMonth: { [running]: 0, ...ratings },
+    };
   }
 
   /** The page with its header written in, so it is complete before any data arrives. */
@@ -479,7 +485,7 @@ function createReview({
           feedbackMonths(),
           cachedMonthView(Number(match[1]), Number(match[2])),
         ]);
-        return send(res, 200, { ...view, months: list });
+        return send(res, 200, { ...view, ...list });
       } catch (error) {
         log('ERROR', 'feedback review query failed', { detail: error.message });
         return send(res, error.status || 500, { error: error.message });
