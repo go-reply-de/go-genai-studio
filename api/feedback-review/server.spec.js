@@ -103,7 +103,9 @@ describe('feedback review server', () => {
     const page = await res.text();
     expect(page).toContain('<script src="theme.js"></script>');
     expect(page).toContain('<script src="app.js" defer></script>');
+    expect(page).toContain('<script src="hints.js" defer></script>');
     expect((await app.request('/theme.js', { headers: REVIEWER })).status).toBe(200);
+    expect((await app.request('/hints.js', { headers: REVIEWER })).status).toBe(200);
     expect((await app.request('', { headers: REVIEWER })).headers.get('location')).toBe(
       '/feedback/',
     );

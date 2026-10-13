@@ -1,4 +1,5 @@
 'use strict';
+/* global FeedbackHints */
 
 const REASONS = {
   inaccurate: 'Ungenaue oder falsche Antwort',
@@ -45,26 +46,17 @@ const SHORT = [
 const REFRESH_MS = 60000;
 /** A month shown from memory is checked again in the background once it is this old. */
 const FRESH_MS = 60000;
-const PAGE = 50;
+/** Ten texts fit on one screen. */
+const PAGE_SIZE = 10;
 const MARKER = '[entfernt]';
 const SEEN_KEY = 'feedback-seen';
 const SEEN_MAX = 5000;
 const THEME_KEY = 'feedback-theme';
 const TODAY_NOTE = 'Heute eingegangen: Änderungen sind oft erst nach etwa 90 Minuten möglich.';
 
-/**
- * Likely personal data, found only in this browser. The API already masks e-mail addresses,
- * full dates and long numbers when it saves a text; what is left are names and partial dates.
- */
-const HINTS = [
-  /\b(?:Herr|Frau|Hr\.|Fr\.|Dr\.|Prof\.|Pat\.|Patientin|Patient|Kollegin|Kollege|Schwester|Pflegerin|Pfleger)\s+[A-ZÄÖÜ][\p{L}-]+/gu,
-  /\[(?:Nummer|Datum|E-Mail)\]/g,
-  /\b\d{1,2}\.\s?\d{1,2}\.(?:\s?\d{2,4})?(?!\d)/g,
-  /\b(?:geb\.|geboren|Geburtsdatum|Fallnummer|Fall-Nr\.?|Aufnahmenummer|Station\s+\d+\w*|Zimmer\s+\d+)/giu,
-  /\b(?!(?:19|20)\d{2}\b)\d{4,5}\b/g,
-];
-
 const ICON = {
+  prev: '<svg class="i small" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>',
+  next: '<svg class="i small" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
   thumbsUp:
     '<svg class="i up" viewBox="0 0 24 24" role="img" aria-label="Daumen hoch"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>',
   thumbsDown:
@@ -76,6 +68,8 @@ const ICON = {
 };
 
 const $ = (id) => document.getElementById(id);
+// Possible personal data, marked only in this browser (hints.js).
+const { findHints } = FeedbackHints;
 const num = (n) => Math.max(0, Number(n) || 0);
 const int = (n) => num(n).toLocaleString('de-DE');
 const share = (part, whole) =>
@@ -117,7 +111,11 @@ const state = {
   rows: [],
   rating: '',
   hintsOnly: false,
-  shown: PAGE,
+  page: 1,
+  // New texts that arrived while another page was open; they wait so that page stays put.
+  held: new Set(),
+  // Texts that came in while the page was open, in order of arrival.
+  arrivals: new Map(),
   open: null,
   drafts: new Map(),
   arrived: new Set(),
@@ -135,16 +133,6 @@ function rememberSeen(ids) {
   const stored = storage((s) => JSON.parse(s.getItem(SEEN_KEY) || '[]')) || [];
   const all = [...new Set([...stored, ...ids])];
   storage((s) => s.setItem(SEEN_KEY, JSON.stringify(all.slice(-SEEN_MAX))));
-}
-
-function findHints(text) {
-  const ranges = [];
-  for (const pattern of HINTS) {
-    for (const match of text.matchAll(pattern)) {
-      ranges.push([match.index, match.index + match[0].length]);
-    }
-  }
-  return ranges;
 }
 
 const WRAP = {
@@ -323,7 +311,7 @@ function navigate(month) {
     return;
   }
   closeWork(false);
-  state.shown = PAGE;
+  state.page = 1;
   history.replaceState(null, '', `?m=${month}`);
   show(month);
 }
@@ -367,14 +355,38 @@ async function poll() {
 function apply(data, live) {
   const known = new Set(state.rows.map((r) => r.id));
   if (live) {
-    data.texts.filter((t) => !known.has(t.id)).forEach((t) => state.arrived.add(t.id));
+    const target = state.page === 1 && !state.open ? state.arrived : state.held;
+    data.texts
+      .filter((t) => !known.has(t.id))
+      .forEach((t) => {
+        target.add(t.id);
+        state.arrivals.set(t.id, state.arrivals.size + 1);
+      });
+  } else {
+    state.held.clear();
   }
+  const ids = new Set(data.texts.map((t) => t.id));
+  state.held.forEach((id) => {
+    if (!ids.has(id)) {
+      state.held.delete(id);
+    }
+  });
   if (firstVisit) {
     data.texts.forEach((t) => seen.add(t.id));
     firstVisit = false;
   }
   state.data = data;
-  state.rows = data.texts.map((t) => enrich(t, data));
+  // Texts carry a day but no time, so a text that came in while the page was open goes first in its day.
+  const order = new Map(data.texts.map((t, i) => [t.id, i]));
+  const arrival = (r) => state.arrivals.get(r.id) || 0;
+  state.rows = data.texts
+    .map((t) => enrich(t, data))
+    .sort(
+      (a, b) =>
+        b.date.localeCompare(a.date) ||
+        arrival(b) - arrival(a) ||
+        order.get(a.id) - order.get(b.id),
+    );
   renderMonths(data.months, data.ratingsByMonth);
   renderNav(data.month);
   if (state.open && !state.rows.some((r) => r.id === state.open.id)) {
@@ -664,7 +676,8 @@ function visibleRows(query) {
   return state.rows.filter(
     (r) =>
       r.id === state.open?.id ||
-      ((!state.rating || r.rating === state.rating) &&
+      (!state.held.has(r.id) &&
+        (!state.rating || r.rating === state.rating) &&
         (!state.hintsOnly || r.hints.length > 0) &&
         (!query || r.text.toLowerCase().includes(query))),
   );
@@ -693,6 +706,10 @@ function rowElement(r, query) {
 }
 
 function renderTexts() {
+  if (state.page === 1 && !state.open && state.held.size) {
+    state.held.forEach((id) => state.arrived.add(id));
+    state.held.clear();
+  }
   const query = $('filter').value.trim().toLowerCase();
   const list = $('list');
   const active = document.activeElement;
@@ -701,8 +718,10 @@ function renderTexts() {
   const openRow = state.open ? list.querySelector(`[data-id="${state.open.id}"]`) : null;
 
   const rows = visibleRows(query);
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  state.page = Math.min(state.page, pages);
   const fragment = document.createDocumentFragment();
-  rows.slice(0, state.shown).forEach((r) => {
+  rows.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE).forEach((r) => {
     fragment.append(r.id === state.open?.id && openRow ? openRow : rowElement(r, query));
   });
   if (!rows.length) {
@@ -716,11 +735,8 @@ function renderTexts() {
   list.replaceChildren(fragment);
   state.arrived.clear();
 
-  const rest = rows.length - state.shown;
-  $('list-foot').innerHTML =
-    rest > 0
-      ? `<button type="button" class="btn" id="more">Weitere ${Math.min(PAGE, rest)} von ${rest} anzeigen</button>`
-      : '';
+  renderPager(rows.length, pages);
+  renderIncoming();
   $('t-count').textContent = `${int(state.rows.length)} in der Liste`;
   const hinted = state.rows.filter((r) => r.hints.length > 0).length;
   $('hints-count').textContent = `(${int(hinted)})`;
@@ -730,6 +746,57 @@ function renderTexts() {
       .querySelector(`[data-id="${focusRow}"] [data-act="${focusAct}"]`)
       ?.focus({ preventScroll: true });
   }
+}
+
+/** Page numbers around the open page, with gaps: 1 … 4 5 6 … 13. */
+function pageList(page, pages) {
+  const wanted = new Set([1, pages, page - 1, page, page + 1]);
+  if (page <= 3) {
+    [2, 3, 4].forEach((p) => wanted.add(p));
+  }
+  if (page >= pages - 2) {
+    [pages - 3, pages - 2, pages - 1].forEach((p) => wanted.add(p));
+  }
+  const list = [...wanted].filter((p) => p >= 1 && p <= pages).sort((a, b) => a - b);
+  return list.flatMap((p, i) => (i && p - list[i - 1] > 1 ? ['…', p] : [p]));
+}
+
+function renderPager(total, pages) {
+  if (pages <= 1) {
+    $('list-foot').replaceChildren();
+    return;
+  }
+  const from = (state.page - 1) * PAGE_SIZE + 1;
+  const to = Math.min(total, state.page * PAGE_SIZE);
+  const step = (name, page, label) =>
+    `<button type="button" data-step="${name}" data-page="${page}" aria-label="${label}"` +
+    `${page < 1 || page > pages ? ' disabled' : ''}>${ICON[name]}</button>`;
+  const numbers = pageList(state.page, pages)
+    .map((p) =>
+      p === '…'
+        ? '<span class="gap" aria-hidden="true">…</span>'
+        : `<button type="button" data-page="${p}" aria-label="Seite ${p}"` +
+          `${p === state.page ? ' aria-current="page"' : ''}>${p}</button>`,
+    )
+    .join('');
+  $('list-foot').innerHTML =
+    '<nav class="pager" aria-label="Seiten der Freitexte">' +
+    `<p class="pager-range" aria-live="polite">${from}–${to} von ${int(total)}</p>` +
+    `<div class="pager-pages">${step('prev', state.page - 1, 'Vorherige Seite')}${numbers}` +
+    `${step('next', state.page + 1, 'Nächste Seite')}</div></nav>`;
+}
+
+function renderIncoming() {
+  const n = state.held.size;
+  $('incoming').hidden = n === 0;
+  $('incoming-text').textContent = n === 1 ? '1 neuer Freitext' : `${int(n)} neue Freitexte`;
+}
+
+function goToPage(page) {
+  closeWork(false);
+  state.page = page;
+  renderTexts();
+  $('texts-title').scrollIntoView({ block: 'start' });
 }
 
 const rowOf = (id) => state.rows.find((r) => r.id === id);
@@ -919,6 +986,7 @@ $('list').addEventListener('click', (event) => {
     $('filter').value = '';
     state.rating = '';
     state.hintsOnly = false;
+    state.page = 1;
     syncFilters();
     renderTexts();
     $('filter').focus();
@@ -971,10 +1039,22 @@ $('list').addEventListener('input', (event) => {
 });
 
 $('list-foot').addEventListener('click', (event) => {
-  if (event.target.closest('#more')) {
-    state.shown += PAGE;
-    renderTexts();
+  const button = event.target.closest('button');
+  if (!button || button.disabled) {
+    return;
   }
+  const { step } = button.dataset;
+  goToPage(Number(button.dataset.page));
+  // Keyboard focus stays on the pager: on the same arrow, or on the page just opened.
+  const foot = $('list-foot');
+  (
+    (step && foot.querySelector(`[data-step="${step}"]:not(:disabled)`)) ||
+    foot.querySelector('[aria-current="page"]')
+  )?.focus({ preventScroll: true });
+});
+$('incoming').addEventListener('click', () => {
+  goToPage(1);
+  $('texts-title').focus({ preventScroll: true });
 });
 
 function syncFilters() {
@@ -987,19 +1067,19 @@ function syncFilters() {
 document.querySelectorAll('.seg button').forEach((b) =>
   b.addEventListener('click', () => {
     state.rating = b.dataset.rating;
-    state.shown = PAGE;
+    state.page = 1;
     syncFilters();
     renderTexts();
   }),
 );
 $('hints-only').addEventListener('click', () => {
   state.hintsOnly = !state.hintsOnly;
-  state.shown = PAGE;
+  state.page = 1;
   syncFilters();
   renderTexts();
 });
 $('filter').addEventListener('input', () => {
-  state.shown = PAGE;
+  state.page = 1;
   if (state.data) {
     renderTexts();
   }

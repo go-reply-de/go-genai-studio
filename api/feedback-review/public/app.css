@@ -1057,10 +1057,82 @@ mark.hint {
 .work .error:empty {
   display: none;
 }
-.list-foot {
+/* Ten texts per page; the range and the page numbers sit under the list. */
+.pager {
   display: flex;
-  justify-content: center;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
   padding-top: 12px;
+  border-top: 1px solid var(--border-light);
+}
+.pager-range {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.pager-pages {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pager-pages button {
+  display: inline-grid;
+  place-items: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.pager-pages button:hover:not(:disabled, [aria-current]) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.pager-pages button[aria-current='page'] {
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  font-weight: 600;
+}
+.pager-pages button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.pager-pages .gap {
+  min-width: 20px;
+  text-align: center;
+  color: var(--text-tertiary);
+}
+/* New texts wait here while another page is open, so the page being read stays put. */
+.incoming {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin: 12px 0 4px;
+  padding: 8px 12px;
+  border: 1px solid var(--new);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--new);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.incoming:hover {
+  background: rgba(16, 185, 129, 0.08);
+}
+.incoming[hidden] {
+  display: none;
 }
 .list-foot:empty {
   display: none;

@@ -42,6 +42,7 @@ const MONTHS = [
 ];
 const STATIC = {
   '/theme.js': ['theme.js', 'text/javascript; charset=utf-8'],
+  '/hints.js': ['hints.js', 'text/javascript; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/app.css': ['app.css', 'text/css; charset=utf-8'],
 };

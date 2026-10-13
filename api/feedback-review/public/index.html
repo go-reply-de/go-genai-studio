@@ -6,6 +6,7 @@
     <title>{{MONTH_LABEL}} · {{APP}} Feedback</title>
     <script src="theme.js"></script>
     <link rel="stylesheet" href="app.css" />
+    <script src="hints.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
@@ -214,6 +215,12 @@
             Mögliche Personenangaben <span class="count" id="hints-count"></span>
           </button>
         </div>
+        <button type="button" class="incoming" id="incoming" hidden>
+          <svg class="i small" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m18 15-6-6-6 6" />
+          </svg>
+          <span><span id="incoming-text"></span> anzeigen</span>
+        </button>
         <ol class="rows" id="list" aria-describedby="texts-title">
           <li class="row placeholder">
             <span class="skeleton date"></span><span class="skeleton mark"></span>
