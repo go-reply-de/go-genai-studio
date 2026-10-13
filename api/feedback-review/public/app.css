@@ -266,14 +266,16 @@ textarea:focus-visible {
   outline-offset: 0;
   border-color: var(--focus);
 }
-.theme {
+.theme,
+.lang {
   display: inline-flex;
   padding: 2px;
   border: 1px solid var(--border-light);
   border-radius: 10px;
   background: var(--surface-secondary);
 }
-.theme button {
+.theme button,
+.lang button {
   display: grid;
   place-items: center;
   width: 30px;
@@ -288,7 +290,14 @@ textarea:focus-visible {
   width: 16px;
   height: 16px;
 }
-.theme button[aria-pressed='true'] {
+.lang button {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.theme button[aria-pressed='true'],
+.lang button[aria-pressed='true'] {
   background: var(--surface-primary);
   color: var(--text-primary);
   box-shadow: 0 0 0 1px var(--border-medium);

@@ -106,6 +106,7 @@ describe('feedback review server', () => {
     expect(page).toContain('<script src="hints.js" defer></script>');
     expect((await app.request('/theme.js', { headers: REVIEWER })).status).toBe(200);
     expect((await app.request('/hints.js', { headers: REVIEWER })).status).toBe(200);
+    expect((await app.request('/i18n.js', { headers: REVIEWER })).status).toBe(200);
     expect((await app.request('', { headers: REVIEWER })).headers.get('location')).toBe(
       '/feedback/',
     );
@@ -129,6 +130,27 @@ describe('feedback review server', () => {
 
     const fallback = await (await app.request('/?m=2026-13', { headers: REVIEWER })).text();
     expect(fallback).toContain('data-month="2026-11"');
+  });
+
+  it('speaks English when the reviewer chose it or the browser prefers it', async () => {
+    app = await start(bigQuery());
+    const page = async (headers) =>
+      (await app.request('/?m=2026-10', { headers: { ...REVIEWER, ...headers } })).text();
+    const chosen = await page({ Cookie: 'other=1; feedback-lang=en' });
+    expect(chosen).toContain('<html lang="en">');
+    expect(chosen).toContain('<span id="month-title">October 2026</span>');
+    expect(chosen).toContain('Signed in as reviewer@example.org');
+    expect(chosen).toMatch(/data-lang="en"[^>]*aria-pressed="true"/);
+    expect(chosen).not.toContain('{{');
+    expect(await page({ 'Accept-Language': 'en-GB,en;q=0.9,de;q=0.8' })).toContain('lang="en"');
+    expect(await page({ 'Accept-Language': 'fr-FR,de;q=0.7,en;q=0.5' })).toContain('lang="de"');
+    expect(await page({ 'Accept-Language': 'en-GB', Cookie: 'feedback-lang=de' })).toContain(
+      '<html lang="de">',
+    );
+    const german = await page({});
+    expect(german).toContain('<span id="month-title">Oktober 2026</span>');
+    expect(german).toContain('Angemeldet als reviewer@example.org');
+    expect(german).not.toContain('{{');
   });
 
   it('starts the month queries while the page itself is served', async () => {
@@ -205,10 +227,9 @@ describe('feedback review server', () => {
 
     expect(data).toMatchObject({
       month: '2026-10',
-      label: 'Oktober 2026',
       period: { from: '2026-10-01', to: '2026-10-31', running: false },
       current: { rated: 8, up: 5, down: 3, texts: 2 },
-      previous: { label: 'September', to: '2026-09-30', rated: 7, up: 7, down: 0, texts: 2 },
+      previous: { to: '2026-09-30', rated: 7, up: 7, down: 0, texts: 2 },
       reasons: { thumbsUp: { accurate_reliable: 5 }, thumbsDown: { inaccurate: 2, other: 1 } },
       texts: [
         { id: ID, date: '2026-10-01', rating: 'thumbsDown', reason: 'inaccurate', text: 'zu lang' },

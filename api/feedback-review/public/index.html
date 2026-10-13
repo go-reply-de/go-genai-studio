@@ -1,16 +1,17 @@
 <!doctype html>
-<html lang="de">
+<html lang="{{LANG}}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{MONTH_LABEL}} · {{APP}} Feedback</title>
     <script src="theme.js"></script>
     <link rel="stylesheet" href="app.css" />
+    <script src="i18n.js" defer></script>
     <script src="hints.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
-    <a class="skip" href="#texts-title">Zu den Freitexten springen</a>
+    <a class="skip" href="#texts-title">{{t:skip}}</a>
 
     <header class="topbar">
       <div class="bar">
@@ -20,19 +21,46 @@
           <span class="badge" id="env">{{ENVIRONMENT}}</span>
         </div>
         <span class="grow"></span>
-        <div class="theme" role="group" aria-label="Darstellung">
+        <div class="lang" role="group" aria-label="{{t:language}}">
+          <button
+            type="button"
+            data-lang="de"
+            lang="de"
+            aria-label="Deutsch"
+            aria-pressed="{{LANG_DE}}"
+            title="Deutsch"
+          >
+            DE
+          </button>
+          <button
+            type="button"
+            data-lang="en"
+            lang="en"
+            aria-label="English"
+            aria-pressed="{{LANG_EN}}"
+            title="English"
+          >
+            EN
+          </button>
+        </div>
+        <div class="theme" role="group" aria-label="{{t:appearance}}">
           <button
             type="button"
             data-theme="system"
-            aria-label="Wie das System"
-            title="Wie das System"
+            aria-label="{{t:themeSystem}}"
+            title="{{t:themeSystem}}"
           >
             <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
               <rect x="2" y="3" width="20" height="14" rx="2" />
               <path d="M8 21h8M12 17v4" />
             </svg>
           </button>
-          <button type="button" data-theme="light" aria-label="Hell" title="Hell">
+          <button
+            type="button"
+            data-theme="light"
+            aria-label="{{t:themeLight}}"
+            title="{{t:themeLight}}"
+          >
             <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="12" cy="12" r="4" />
               <path
@@ -40,7 +68,12 @@
               />
             </svg>
           </button>
-          <button type="button" data-theme="dark" aria-label="Dunkel" title="Dunkel">
+          <button
+            type="button"
+            data-theme="dark"
+            aria-label="{{t:themeDark}}"
+            title="{{t:themeDark}}"
+          >
             <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
             </svg>
@@ -48,7 +81,7 @@
         </div>
         <span class="user" id="user" title="{{USER}}">
           <span class="avatar" id="avatar" aria-hidden="true">{{INITIALS}}</span>
-          <span class="sr-only" id="user-name">Angemeldet als {{USER}}</span>
+          <span class="sr-only" id="user-name">{{t:signedInAs}}</span>
         </span>
       </div>
     </header>
@@ -56,19 +89,19 @@
     <main class="content" id="content">
       <div class="alert" id="error" role="alert" hidden>
         <span id="error-text"></span>
-        <button class="btn" type="button" id="retry">Erneut versuchen</button>
+        <button class="btn" type="button" id="retry">{{t:retry}}</button>
       </div>
 
       <section class="month" aria-labelledby="month-title">
         <div class="month-head">
-          <div class="month-nav" role="group" aria-label="Monat">
+          <div class="month-nav" role="group" aria-label="{{t:month}}">
             <div class="steps">
-              <button type="button" id="prev" aria-label="Vorheriger Monat" disabled>
+              <button type="button" id="prev" aria-label="{{t:prevMonth}}" disabled>
                 <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
                   <path d="m15 18-6-6 6-6" />
                 </svg>
               </button>
-              <button type="button" id="next" aria-label="Nächster Monat" disabled>
+              <button type="button" id="next" aria-label="{{t:nextMonth}}" disabled>
                 <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
                   <path d="m9 18 6-6-6-6" />
                 </svg>
@@ -91,16 +124,22 @@
                 </svg>
               </button>
             </h1>
-            <span class="sr-only" id="month-hint">Monat wählen</span>
-            <div class="month-pop" id="month-pop" role="dialog" aria-label="Monat wählen" hidden>
+            <span class="sr-only" id="month-hint">{{t:chooseMonth}}</span>
+            <div
+              class="month-pop"
+              id="month-pop"
+              role="dialog"
+              aria-label="{{t:chooseMonth}}"
+              hidden
+            >
               <div class="pop-year">
-                <button type="button" id="year-prev" aria-label="Vorheriges Jahr">
+                <button type="button" id="year-prev" aria-label="{{t:prevYear}}">
                   <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
                     <path d="m15 18-6-6 6-6" />
                   </svg>
                 </button>
                 <span id="year-label"></span>
-                <button type="button" id="year-next" aria-label="Nächstes Jahr">
+                <button type="button" id="year-next" aria-label="{{t:nextYear}}">
                   <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
                     <path d="m9 18 6-6-6-6" />
                   </svg>
@@ -110,28 +149,28 @@
             </div>
           </div>
           <p class="live" id="live" role="status" aria-live="polite">
-            <i class="live-dot" aria-hidden="true"></i><span id="live-text">Lädt …</span>
+            <i class="live-dot" aria-hidden="true"></i><span id="live-text">{{t:loading}}</span>
           </p>
         </div>
         <p class="period dim" id="period"><span class="skeleton line"></span></p>
         <dl class="stats dim" id="stats">
           <div class="stat">
-            <dt>Bewertungen</dt>
+            <dt>{{t:ratings}}</dt>
             <dd class="value" id="k-rated"><span class="skeleton"></span></dd>
             <dd class="cmp" id="p-rated"></dd>
           </div>
           <div class="stat">
-            <dt>Anteil positiv</dt>
+            <dt>{{t:positive}}</dt>
             <dd class="value" id="k-positive"><span class="skeleton"></span></dd>
             <dd class="cmp" id="p-positive"></dd>
           </div>
           <div class="stat">
-            <dt>Daumen runter</dt>
+            <dt>{{t:thumbsDown}}</dt>
             <dd class="value" id="k-down"><span class="skeleton"></span></dd>
             <dd class="cmp" id="p-down"></dd>
           </div>
           <div class="stat">
-            <dt>Freitexte eingegangen</dt>
+            <dt>{{t:textsReceived}}</dt>
             <dd class="value" id="k-texts"><span class="skeleton"></span></dd>
             <dd class="cmp" id="p-texts"></dd>
           </div>
@@ -141,10 +180,10 @@
       <div class="split dim">
         <section class="panel" aria-labelledby="chart-title">
           <div class="panel-head">
-            <h2 id="chart-title">Bewertungen pro Tag</h2>
+            <h2 id="chart-title">{{t:perDay}}</h2>
             <p class="legend" aria-hidden="true">
-              <span><i class="dot up"></i>Daumen hoch</span
-              ><span><i class="dot down"></i>Daumen runter</span>
+              <span><i class="dot up"></i>{{t:thumbsUp}}</span
+              ><span><i class="dot down"></i>{{t:thumbsDown}}</span>
             </p>
           </div>
           <svg
@@ -158,21 +197,23 @@
           </svg>
           <table class="sr-only" id="chart-table">
             <caption>
-              Bewertungen pro Tag
+              {{t:perDay}}
             </caption>
           </table>
         </section>
 
         <section class="panel" aria-labelledby="reasons-title">
-          <div class="panel-head"><h2 id="reasons-title">Gründe</h2></div>
+          <div class="panel-head"><h2 id="reasons-title">{{t:reasonsTitle}}</h2></div>
           <h3 class="reasons-head">
-            <span class="dot down" aria-hidden="true"></span>Daumen runter
+            <span class="dot down" aria-hidden="true"></span>{{t:thumbsDown}}
           </h3>
           <ul class="reasons" id="r-down">
             <li class="placeholder"><span class="skeleton line"></span></li>
             <li class="placeholder"><span class="skeleton line short"></span></li>
           </ul>
-          <h3 class="reasons-head"><span class="dot up" aria-hidden="true"></span>Daumen hoch</h3>
+          <h3 class="reasons-head">
+            <span class="dot up" aria-hidden="true"></span>{{t:thumbsUp}}
+          </h3>
           <ul class="reasons" id="r-up">
             <li class="placeholder"><span class="skeleton line"></span></li>
             <li class="placeholder"><span class="skeleton line short"></span></li>
@@ -182,28 +223,27 @@
 
       <section class="panel texts dim" aria-labelledby="texts-title">
         <div class="panel-head">
-          <h2 id="texts-title" tabindex="-1">Freitexte</h2>
+          <h2 id="texts-title" tabindex="-1">{{t:texts}}</h2>
           <span class="badge" id="t-count"></span>
         </div>
-        <p class="muted note">
-          Ihre Suche bleibt in diesem Browser. Löschen und Bereinigen ändern keine Zählung und
-          werden mit Ihrer Kennung protokolliert.
-        </p>
+        <p class="muted note">{{t:note}}</p>
         <div class="toolbar">
           <div class="searchbox">
             <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="11" cy="11" r="8" />
               <path d="m21 21-4.3-4.3" />
             </svg>
-            <label class="sr-only" for="filter">Freitexte durchsuchen</label>
-            <input type="search" id="filter" placeholder="Durchsuchen" autocomplete="off" />
+            <label class="sr-only" for="filter">{{t:searchLabel}}</label>
+            <input type="search" id="filter" placeholder="{{t:search}}" autocomplete="off" />
             <kbd aria-hidden="true">/</kbd>
           </div>
-          <div class="seg" role="group" aria-label="Bewertung">
-            <button type="button" data-rating="" aria-pressed="true">Alle</button
+          <div class="seg" role="group" aria-label="{{t:rating}}">
+            <button type="button" data-rating="" aria-pressed="true">{{t:all}}</button
             ><button type="button" data-rating="thumbsDown" aria-pressed="false">
-              Daumen runter</button
-            ><button type="button" data-rating="thumbsUp" aria-pressed="false">Daumen hoch</button>
+              {{t:thumbsDown}}</button
+            ><button type="button" data-rating="thumbsUp" aria-pressed="false">
+              {{t:thumbsUp}}
+            </button>
           </div>
           <button type="button" class="toggle" id="hints-only" aria-pressed="false">
             <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
@@ -212,14 +252,14 @@
                 d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"
               />
             </svg>
-            Mögliche Personenangaben <span class="count" id="hints-count"></span>
+            {{t:hints}} <span class="count" id="hints-count"></span>
           </button>
         </div>
         <button type="button" class="incoming" id="incoming" hidden>
           <svg class="i small" viewBox="0 0 24 24" aria-hidden="true">
             <path d="m18 15-6-6-6 6" />
           </svg>
-          <span><span id="incoming-text"></span> anzeigen</span>
+          <span id="incoming-text"></span>
         </button>
         <ol class="rows" id="list" aria-describedby="texts-title">
           <li class="row placeholder">

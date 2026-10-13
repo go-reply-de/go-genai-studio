@@ -10,6 +10,7 @@
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const TEXTS = require('./public/i18n');
 
 const PREFIX = '/feedback';
 const MAX_TEXT_LENGTH = 500;
@@ -26,22 +27,9 @@ const CACHE_MS = 5 * 60 * 1000;
 const RECENT_MS = 5000;
 const MAX_VIEWS = 48;
 const ACTION = new RegExp(`^${PREFIX}/api/texts/([^/]+)/(delete|clean)$`);
-const MONTHS = [
-  'Januar',
-  'Februar',
-  'März',
-  'April',
-  'Mai',
-  'Juni',
-  'Juli',
-  'August',
-  'September',
-  'Oktober',
-  'November',
-  'Dezember',
-];
 const STATIC = {
   '/theme.js': ['theme.js', 'text/javascript; charset=utf-8'],
+  '/i18n.js': ['i18n.js', 'text/javascript; charset=utf-8'],
   '/hints.js': ['hints.js', 'text/javascript; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/app.css': ['app.css', 'text/css; charset=utf-8'],
@@ -79,7 +67,20 @@ const dateParam = (value) => ({ type: 'DATE', value });
 const stringParam = (value) => ({ type: 'STRING', value });
 const berlinDay = (date) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' }).format(date);
-const monthLabel = (month) => `${MONTHS[Number(month.slice(5)) - 1]} ${month.slice(0, 4)}`;
+const LANG_COOKIE = /(?:^|;\s*)feedback-lang=(de|en)(?:;|$)/;
+
+/** The reviewer's choice from the page's switch, else the browser's first of German and English. */
+function language(req) {
+  const chosen = LANG_COOKIE.exec(req.headers.cookie || '');
+  if (chosen) {
+    return chosen[1];
+  }
+  const preferred = String(req.headers['accept-language'] || '')
+    .split(',')
+    .map((part) => part.trim().slice(0, 2).toLowerCase())
+    .find((tag) => tag === 'de' || tag === 'en');
+  return preferred || 'de';
+}
 const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (c) => ESCAPES[c]);
 
@@ -218,7 +219,6 @@ function createReview({
     ]);
     const current = { rated: 0, up: 0, down: 0, texts: 0 };
     const previous = {
-      label: MONTHS[pm - 1],
       from: day(py, pm, 1),
       to: previousLast,
       rated: 0,
@@ -256,7 +256,6 @@ function createReview({
     }));
     return {
       month: `${y}-${pad(m)}`,
-      label: `${MONTHS[m - 1]} ${y}`,
       period: { from: first, to: day(y, m, until), running },
       current,
       previous,
@@ -333,9 +332,13 @@ function createReview({
   }
 
   /** The page with its header written in, so it is complete before any data arrives. */
-  function renderPage(reviewer, month) {
+  function renderPage(reviewer, month, lang) {
+    const texts = TEXTS[lang];
     const app = env.APP_TITLE?.trim() || 'Feedback';
     const values = {
+      LANG: lang,
+      LANG_DE: String(lang === 'de'),
+      LANG_EN: String(lang === 'en'),
       APP: app,
       LOGO: app.charAt(0).toUpperCase(),
       ENVIRONMENT: env.ENVIRONMENT || '',
@@ -346,9 +349,13 @@ function createReview({
         .slice(0, 2)
         .toUpperCase(),
       MONTH: month,
-      MONTH_LABEL: monthLabel(month),
+      MONTH_LABEL: `${texts.months[Number(month.slice(5)) - 1]} ${month.slice(0, 4)}`,
     };
-    return template.replace(/\{\{(\w+)\}\}/g, (_, key) => escapeHtml(values[key] ?? ''));
+    // {{t:signedInAs}} is a text in the page's language, {{USER}} a value; both escaped.
+    const text = (key) => texts[key].replace(/\{(\w+)\}/g, (_, name) => values[name.toUpperCase()]);
+    return template.replace(/\{\{(t:)?(\w+)\}\}/g, (_, isText, key) =>
+      escapeHtml(isText ? text(key) : (values[key] ?? '')),
+    );
   }
 
   async function changeText(action, id, text) {
@@ -467,7 +474,10 @@ function createReview({
       Promise.all([feedbackMonths(), cachedMonthView(...month.split('-').map(Number))]).catch(
         () => {},
       );
-      return send(res, 200, renderPage(reviewer, month), 'text/html; charset=utf-8');
+      const lang = language(req);
+      return send(res, 200, renderPage(reviewer, month, lang), 'text/html; charset=utf-8', {
+        'Content-Language': lang,
+      });
     }
     if (files[route]) {
       return send(res, 200, ...files[route]);

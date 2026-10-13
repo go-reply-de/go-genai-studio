@@ -1,48 +1,12 @@
 'use strict';
-/* global FeedbackHints */
+/* global FeedbackHints, FeedbackTexts */
 
-const REASONS = {
-  inaccurate: 'Ungenaue oder falsche Antwort',
-  not_helpful: 'Es fehlten nützliche Informationen',
-  not_matched: 'Entspricht nicht der Anfrage',
-  unjustified_refusal: 'Mit anderer Begründung abgelehnt',
-  bad_style: 'Schlechter Stil oder Tonfall',
-  missing_image: 'Bild erwartet',
-  other: 'Anderer Fehler',
-  accurate_reliable: 'Akkurat und Zuverlässig',
-  creative_solution: 'Kreative Lösung',
-  clear_well_written: 'Klar und gut geschrieben',
-  attention_to_detail: 'Liebe zum Detail',
-  unknown: 'Unbekannt',
-};
-const MONTHS = [
-  'Januar',
-  'Februar',
-  'März',
-  'April',
-  'Mai',
-  'Juni',
-  'Juli',
-  'August',
-  'September',
-  'Oktober',
-  'November',
-  'Dezember',
-];
-const SHORT = [
-  'Jan.',
-  'Feb.',
-  'März',
-  'Apr.',
-  'Mai',
-  'Juni',
-  'Juli',
-  'Aug.',
-  'Sep.',
-  'Okt.',
-  'Nov.',
-  'Dez.',
-];
+// The page's language, which the server writes into <html lang> from the reviewer's choice.
+const T = FeedbackTexts[document.documentElement.lang === 'en' ? 'en' : 'de'];
+const t = (key, values = {}) => T[key].replace(/\{(\w+)\}/g, (_, name) => values[name] ?? '');
+const REASONS = T.reasons;
+const MONTHS = T.months;
+const SHORT = T.short;
 const REFRESH_MS = 60000;
 /** A month shown from memory is checked again in the background once it is this old. */
 const FRESH_MS = 60000;
@@ -52,15 +16,13 @@ const MARKER = '[entfernt]';
 const SEEN_KEY = 'feedback-seen';
 const SEEN_MAX = 5000;
 const THEME_KEY = 'feedback-theme';
-const TODAY_NOTE = 'Heute eingegangen: Änderungen sind oft erst nach etwa 90 Minuten möglich.';
+const LANG_COOKIE = 'feedback-lang';
 
 const ICON = {
   prev: '<svg class="i small" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>',
   next: '<svg class="i small" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
-  thumbsUp:
-    '<svg class="i up" viewBox="0 0 24 24" role="img" aria-label="Daumen hoch"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>',
-  thumbsDown:
-    '<svg class="i down" viewBox="0 0 24 24" role="img" aria-label="Daumen runter"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></svg>',
+  thumbsUp: `<svg class="i up" viewBox="0 0 24 24" role="img" aria-label="${t('thumbsUp')}"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>`,
+  thumbsDown: `<svg class="i down" viewBox="0 0 24 24" role="img" aria-label="${t('thumbsDown')}"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></svg>`,
   clean:
     '<svg class="i small" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>',
   trash:
@@ -71,20 +33,25 @@ const $ = (id) => document.getElementById(id);
 // Possible personal data, marked only in this browser (hints.js).
 const { findHints } = FeedbackHints;
 const num = (n) => Math.max(0, Number(n) || 0);
-const int = (n) => num(n).toLocaleString('de-DE');
-const share = (part, whole) =>
-  whole >= 10 ? `${((100 * num(part)) / whole).toFixed(1).replace('.', ',')} %` : null;
+const int = (n) => num(n).toLocaleString(T.locale);
+const percent = (value, digits) =>
+  new Intl.NumberFormat(T.locale, {
+    style: 'percent',
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value);
+const share = (part, whole) => (whole >= 10 ? percent(num(part) / whole, 1) : null);
 const esc = (s) =>
   String(s).replace(
     /[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
   );
-const dm = (iso) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.`;
 const dayOf = (iso) => Number(iso.slice(8, 10));
 const monthOf = (iso) => Number(iso.slice(5, 7));
-const days = (to) => (dayOf(to) === 1 ? '1.' : `1.–${dayOf(to)}.`);
+const dm = (iso) => T.date(dayOf(iso), monthOf(iso));
+const days = (to) => T.span(dayOf(to));
 const clock = (ms) =>
-  new Date(ms).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  new Date(ms).toLocaleTimeString(T.locale, { hour: '2-digit', minute: '2-digit' });
 const monthLabel = (month) => `${MONTHS[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`;
 const berlinMonth = () =>
   new Intl.DateTimeFormat('en-CA', {
@@ -101,7 +68,7 @@ function storage(read) {
   }
 }
 
-// Texts seen in an earlier visit; anything else is marked "Neu". A first visit marks nothing.
+// Texts seen in an earlier visit; anything else is marked new. A first visit marks nothing.
 const seenStored = storage((s) => s.getItem(SEEN_KEY));
 const seen = new Set(storage(() => JSON.parse(seenStored || '[]')) || []);
 let firstVisit = seenStored === null;
@@ -137,7 +104,7 @@ function rememberSeen(ids) {
 
 const WRAP = {
   match: (part) => `<mark class="match">${part}</mark>`,
-  hint: (part) => `<mark class="hint" title="Mögliche Personenangabe">${part}</mark>`,
+  hint: (part) => `<mark class="hint" title="${t('hint')}">${part}</mark>`,
   removed: (part) => `<span class="removed">${part}</span>`,
 };
 
@@ -188,7 +155,7 @@ function setLive(kind, text) {
 /** A running month says when it was fetched; a finished month needs no status. */
 function settleLive(data) {
   const at = state.cache.get(data.month)?.at || Date.now();
-  setLive('on', data.period.running ? `Live · aktualisiert ${clock(at)}` : '');
+  setLive('on', data.period.running ? t('live', { time: clock(at) }) : '');
 }
 
 function busy(on) {
@@ -196,7 +163,7 @@ function busy(on) {
   $('content').classList.toggle('stale', on && Boolean(state.data));
   if (on) {
     $('content').setAttribute('aria-busy', 'true');
-    setLive('busy', 'Lädt …');
+    setLive('busy', t('loading'));
   } else {
     $('content').removeAttribute('aria-busy');
   }
@@ -226,7 +193,7 @@ function request(month) {
     })
       .then((res) => {
         if (!res.ok) {
-          throw new Error(res.status === 403 ? 'Kein Zugriff.' : `HTTP ${res.status}`);
+          throw new Error(res.status === 403 ? 'forbidden' : `HTTP ${res.status}`);
         }
         return res.json();
       })
@@ -276,15 +243,13 @@ async function show(month) {
     }
     busy(false);
     if (hit) {
-      setLive('warn', 'Nicht aktuell · Aktualisierung fehlgeschlagen');
+      setLive('warn', t('stale'));
       schedule();
       return;
     }
     state.failed = month;
     showError(
-      error.message === 'Kein Zugriff.'
-        ? 'Kein Zugriff auf die Feedback-Daten.'
-        : `${monthLabel(month)} konnte nicht geladen werden.`,
+      error.message === 'forbidden' ? t('noAccess') : t('loadFailed', { month: monthLabel(month) }),
     );
     if (state.data) {
       state.want = state.data.month;
@@ -293,7 +258,7 @@ async function show(month) {
       settleLive(state.data);
       schedule();
     } else {
-      setLive('warn', 'Nicht geladen');
+      setLive('warn', t('notLoaded'));
     }
   }
 }
@@ -340,10 +305,7 @@ async function poll() {
     }
   } catch {
     if (state.want === month) {
-      setLive(
-        'warn',
-        `Aktualisierung fehlgeschlagen · nächster Versuch ${clock(Date.now() + REFRESH_MS)}`,
-      );
+      setLive('warn', t('pollFailed', { time: clock(Date.now() + REFRESH_MS) }));
     }
   } finally {
     if (state.want === month) {
@@ -391,7 +353,7 @@ function apply(data, live) {
   renderNav(data.month);
   if (state.open && !state.rows.some((r) => r.id === state.open.id)) {
     state.open = null;
-    toast('Der Freitext, den Sie gerade bearbeitet haben, wurde inzwischen gelöscht.');
+    toast(t('goneWhileEditing'));
   }
   renderHeader();
   renderStats();
@@ -444,10 +406,13 @@ function renderGrid() {
     cell.dataset.month = month;
     cell.disabled = !state.months.includes(month);
     let count = month > newest ? '' : '–';
-    let detail = month > newest ? 'noch nicht begonnen' : 'kein Feedback';
+    let detail = month > newest ? t('notStarted') : t('noFeedback');
     if (!cell.disabled) {
       count = int(ratingsOf(month));
-      detail = `${count} Bewertungen${month === newest ? ', läuft' : ''}`;
+      detail = ratingsOf(month) === 1 ? t('ratingsOne') : t('ratingsMany', { n: count });
+      if (month === newest) {
+        detail += `, ${t('runningTag')}`;
+      }
     }
     cell.innerHTML = `<span>${SHORT[i]}</span><small>${count}</small>`;
     cell.setAttribute('aria-label', `${name} ${state.year}, ${detail}`);
@@ -538,23 +503,13 @@ function renderNav(month) {
   $('month-button').dataset.month = month;
   $('month-title').textContent = monthLabel(month);
   const i = state.months.indexOf(month);
-  setStep(
-    $('prev'),
-    i < 0 ? '' : state.months[i + 1],
-    'Vorheriger Monat',
-    'Kein früherer Monat mit Feedback',
-  );
-  setStep(
-    $('next'),
-    i > 0 ? state.months[i - 1] : '',
-    'Nächster Monat',
-    'Kein späterer Monat mit Feedback',
-  );
+  setStep($('prev'), i < 0 ? '' : state.months[i + 1], t('prevMonth'), t('noEarlier'));
+  setStep($('next'), i > 0 ? state.months[i - 1] : '', t('nextMonth'), t('noLater'));
 }
 
 /** The brand and the reviewer are written into the page by the server; only the month changes. */
 function renderHeader() {
-  document.title = `${state.data.label} · ${$('app').textContent} Feedback`;
+  document.title = `${monthLabel(state.data.month)} · ${$('app').textContent} Feedback`;
 }
 
 function renderStats() {
@@ -564,27 +519,28 @@ function renderStats() {
   const before = MONTHS[monthOf(p.from) - 1];
   // A month without feedback, such as one before the store existed, is no comparison.
   const compare = d.months.includes(p.from.slice(0, 7));
-  let scope = `Keine Vormonatswerte, im ${before} gab es kein Feedback.`;
+  let scope = t('scopeNone', { month: before });
   if (compare) {
     scope = d.period.running
-      ? `Vormonatswerte für denselben Zeitraum (${days(p.to)} ${before}).`
-      : `Vormonatswerte für den ganzen ${before}.`;
+      ? t('scopeSame', { span: days(p.to), month: before })
+      : t('scopeWhole', { month: before });
   }
   $('period').textContent = d.period.running
-    ? `Laufender Monat, Stand ${dayOf(d.period.to)}. ${MONTHS[monthOf(d.period.from) - 1]}. ${scope}`
-    : `Abgeschlossener Monat. ${scope}`;
-  const vs = (value) => (compare ? `Vormonat: ${value}` : '');
+    ? t('periodRunning', {
+        date: T.longDate(dayOf(d.period.to), monthOf(d.period.from)),
+        scope,
+      })
+    : t('periodClosed', { scope });
+  const vs = (value) => (compare ? t('previous', { value }) : '');
   $('k-rated').textContent = int(c.rated);
   $('p-rated').textContent = vs(int(p.rated));
   const positive = share(c.up, num(c.rated));
   $('k-positive').textContent = positive ?? '–';
-  $('p-positive').textContent = positive
-    ? vs(share(p.up, num(p.rated)) ?? '–')
-    : 'Erst ab 10 Bewertungen';
+  $('p-positive').textContent = positive ? vs(share(p.up, num(p.rated)) ?? '–') : t('fromTen');
   $('k-down').textContent = int(c.down);
   $('p-down').textContent = vs(int(p.down));
   $('k-texts').textContent = int(c.texts);
-  $('p-texts').textContent = [`${int(state.rows.length)} in der Liste`, vs(int(p.texts))]
+  $('p-texts').textContent = [t('inList', { n: int(state.rows.length) }), vs(int(p.texts))]
     .filter(Boolean)
     .join(' · ');
 }
@@ -618,34 +574,35 @@ function renderChart() {
     const from = left + last * step;
     svg += `<rect class="future" x="${from}" y="${y1}" width="${right - from}" height="${y0 - y1}" rx="6"/>`;
     if (right - from > 160) {
-      svg += `<text x="${(from + right) / 2}" y="${(y0 + y1) / 2 + 4}" text-anchor="middle">Rest des Monats</text>`;
+      svg += `<text x="${(from + right) / 2}" y="${(y0 + y1) / 2 + 4}" text-anchor="middle">${t('restOfMonth')}</text>`;
     }
   }
   values.forEach(([up, down], i) => {
     const x = left + i * step + 3;
     const width = Math.max(2, step - 6);
     if (i < last) {
-      const title = `<title>${i + 1}. ${SHORT[month - 1]}: ${up} hoch, ${down} runter</title>`;
+      const title = `<title>${t('dayTip', { date: T.shortDate(i + 1, month), up, down })}</title>`;
       const hu = y0 - y(up);
       const hd = y0 - y(down);
       svg += `<g>${title}<rect class="up" x="${x}" y="${y0 - hu}" width="${width}" height="${hu}" rx="3"/>`;
       svg += `<rect class="down" x="${x}" y="${y0 - hu - hd - (hd ? 2 : 0)}" width="${width}" height="${hd}" rx="3"/></g>`;
     }
     if (i === 0 || (i + 1) % 5 === 0) {
-      svg += `<text x="${x + width / 2}" y="210" text-anchor="middle">${i + 1}.</text>`;
+      svg += `<text x="${x + width / 2}" y="210" text-anchor="middle">${T.axisDay(i + 1)}</text>`;
     }
   });
   if (!values.slice(0, last).some(([up, down]) => up + down)) {
-    svg += `<text class="empty" x="${(left + right) / 2}" y="${(y0 + y1) / 2}" text-anchor="middle">Noch keine Bewertungen in diesem Zeitraum</text>`;
+    svg += `<text class="empty" x="${(left + right) / 2}" y="${(y0 + y1) / 2}" text-anchor="middle">${t('noRatingsYet')}</text>`;
   }
   $('chart').innerHTML = svg;
   $('chart-table').innerHTML =
-    '<caption>Bewertungen pro Tag</caption><tr><th>Tag</th><th>Daumen hoch</th><th>Daumen runter</th></tr>' +
+    `<caption>${t('perDay')}</caption>` +
+    `<tr><th>${t('day')}</th><th>${t('thumbsUp')}</th><th>${t('thumbsDown')}</th></tr>` +
     values
       .slice(0, last)
       .map(
         ([up, down], i) =>
-          `<tr><td>${i + 1}. ${SHORT[month - 1]}</td><td>${up}</td><td>${down}</td></tr>`,
+          `<tr><td>${T.shortDate(i + 1, month)}</td><td>${up}</td><td>${down}</td></tr>`,
       )
       .join('');
 }
@@ -664,11 +621,11 @@ function renderReasons() {
       ? rows
           .map(
             ([key, n]) =>
-              `<li><span>${esc(REASONS[key] || key)}</span><span class="num"><b>${int(n)}</b> · ${Math.round((100 * n) / total)} %</span>` +
+              `<li><span>${esc(REASONS[key] || key)}</span><span class="num"><b>${int(n)}</b> · ${percent(n / total, 0)}</span>` +
               `<span class="track" aria-hidden="true"><i style="width:${Math.round((100 * n) / rows[0][1])}%;background:${color}"></i></span></li>`,
           )
           .join('')
-      : '<li class="empty">Keine Bewertungen</li>';
+      : `<li class="empty">${t('noRatings')}</li>`;
   }
 }
 
@@ -687,20 +644,20 @@ function rowElement(r, query) {
   const li = document.createElement('li');
   li.className = state.arrived.has(r.id) ? 'row arrived' : 'row';
   li.dataset.id = r.id;
-  const when = `vom ${dm(r.date)}`;
+  const date = dm(r.date);
   const tags = [
     `<span class="badge">${esc(REASONS[r.reason] || r.reason)}</span>`,
-    r.hints.length ? '<span class="badge hint">Prüfen</span>' : '',
-    r.cleaned ? '<span class="badge cleaned">Bereinigt</span>' : '',
-    r.today ? `<span class="badge" title="${TODAY_NOTE}">Heute</span>` : '',
+    r.hints.length ? `<span class="badge hint">${t('check')}</span>` : '',
+    r.cleaned ? `<span class="badge cleaned">${t('cleanedTag')}</span>` : '',
+    r.today ? `<span class="badge" title="${t('todayNote')}">${t('today')}</span>` : '',
   ].join('');
   li.innerHTML =
-    `<div class="date"><time datetime="${r.date}">${dm(r.date)}</time>${r.isNew ? '<br><span class="badge new">Neu</span>' : ''}</div>` +
+    `<div class="date"><time datetime="${r.date}">${dm(r.date)}</time>${r.isNew ? `<br><span class="badge new">${t('newTag')}</span>` : ''}</div>` +
     `<div class="rating">${ICON[r.rating] || ''}</div>` +
     `<div class="body"><p class="text">${highlight(r.text, query, r.hints)}</p><div class="tags">${tags}</div></div>` +
     '<div class="actions">' +
-    `<button type="button" class="ghost" data-act="clean" aria-label="Freitext ${when} bereinigen">${ICON.clean}<span>Bereinigen</span></button>` +
-    `<button type="button" class="ghost danger" data-act="delete" aria-label="Freitext ${when} löschen">${ICON.trash}<span>Löschen</span></button>` +
+    `<button type="button" class="ghost" data-act="clean" aria-label="${t('cleanOne', { date })}">${ICON.clean}<span>${t('clean')}</span></button>` +
+    `<button type="button" class="ghost danger" data-act="delete" aria-label="${t('deleteOne', { date })}">${ICON.trash}<span>${t('delete')}</span></button>` +
     '</div>';
   return li;
 }
@@ -728,8 +685,8 @@ function renderTexts() {
     const empty = document.createElement('li');
     empty.className = 'empty-state';
     empty.innerHTML = state.rows.length
-      ? '<p>Keine Freitexte passen zu Ihrer Auswahl.</p><button type="button" class="btn" data-reset>Auswahl zurücksetzen</button>'
-      : `<p>Noch keine Freitexte in diesem Monat.</p>${state.data.period.running ? '<p>Neue erscheinen hier automatisch.</p>' : ''}`;
+      ? `<p>${t('noMatch')}</p><button type="button" class="btn" data-reset>${t('reset')}</button>`
+      : `<p>${t('noTexts')}</p>${state.data.period.running ? `<p>${t('comeAutomatically')}</p>` : ''}`;
     fragment.append(empty);
   }
   list.replaceChildren(fragment);
@@ -737,7 +694,7 @@ function renderTexts() {
 
   renderPager(rows.length, pages);
   renderIncoming();
-  $('t-count').textContent = `${int(state.rows.length)} in der Liste`;
+  $('t-count').textContent = t('inList', { n: int(state.rows.length) });
   const hinted = state.rows.filter((r) => r.hints.length > 0).length;
   $('hints-count').textContent = `(${int(hinted)})`;
 
@@ -775,21 +732,21 @@ function renderPager(total, pages) {
     .map((p) =>
       p === '…'
         ? '<span class="gap" aria-hidden="true">…</span>'
-        : `<button type="button" data-page="${p}" aria-label="Seite ${p}"` +
+        : `<button type="button" data-page="${p}" aria-label="${t('page', { n: p })}"` +
           `${p === state.page ? ' aria-current="page"' : ''}>${p}</button>`,
     )
     .join('');
   $('list-foot').innerHTML =
-    '<nav class="pager" aria-label="Seiten der Freitexte">' +
-    `<p class="pager-range" aria-live="polite">${from}–${to} von ${int(total)}</p>` +
-    `<div class="pager-pages">${step('prev', state.page - 1, 'Vorherige Seite')}${numbers}` +
-    `${step('next', state.page + 1, 'Nächste Seite')}</div></nav>`;
+    `<nav class="pager" aria-label="${t('pages')}">` +
+    `<p class="pager-range" aria-live="polite">${t('range', { from, to, total: int(total) })}</p>` +
+    `<div class="pager-pages">${step('prev', state.page - 1, t('prevPage'))}${numbers}` +
+    `${step('next', state.page + 1, t('nextPage'))}</div></nav>`;
 }
 
 function renderIncoming() {
   const n = state.held.size;
   $('incoming').hidden = n === 0;
-  $('incoming-text').textContent = n === 1 ? '1 neuer Freitext' : `${int(n)} neue Freitexte`;
+  $('incoming-text').textContent = n === 1 ? t('incomingOne') : t('incomingMany', { n: int(n) });
 }
 
 function goToPage(page) {
@@ -820,25 +777,23 @@ function openWork(id, mode) {
     return;
   }
   state.open = { id, mode };
-  const when = `vom ${dm(r.date)}`;
+  const date = dm(r.date);
   const panel = document.createElement('div');
   panel.className = mode === 'delete' ? 'work confirm' : 'work';
   if (mode === 'clean') {
     const draft = state.drafts.get(id);
     panel.innerHTML =
-      `<label class="sr-only" for="edit-${id}">Bereinigter Freitext ${when}</label>` +
+      `<label class="sr-only" for="edit-${id}">${t('cleanedText', { date })}</label>` +
       `<textarea id="edit-${id}" maxlength="500" aria-describedby="edit-hint-${id}"></textarea>` +
-      `<p class="hint-line" id="edit-hint-${id}">Personenangaben markieren und durch ${MARKER} ersetzen. Im Zweifel den ganzen Text ersetzen.</p>` +
-      (r.today ? `<p class="today">${TODAY_NOTE}</p>` : '') +
-      (draft !== undefined
-        ? '<p class="hint-line">Ihr Entwurf von vorhin ist wiederhergestellt.</p>'
-        : '') +
+      `<p class="hint-line" id="edit-hint-${id}">${t('cleanHelp', { marker: MARKER })}</p>` +
+      (r.today ? `<p class="today">${t('todayNote')}</p>` : '') +
+      (draft !== undefined ? `<p class="hint-line">${t('draftBack')}</p>` : '') +
       '<div class="work-actions">' +
-      '<button type="button" class="btn" data-work="mark">Markierung ersetzen</button>' +
-      '<button type="button" class="btn" data-work="all">Ganzen Text ersetzen</button>' +
+      `<button type="button" class="btn" data-work="mark">${t('replaceMarked')}</button>` +
+      `<button type="button" class="btn" data-work="all">${t('replaceAll')}</button>` +
       '<span class="grow"></span>' +
-      '<button type="button" class="btn" data-work="cancel">Abbrechen</button>' +
-      '<button type="button" class="btn submit" data-work="save">Speichern</button>' +
+      `<button type="button" class="btn" data-work="cancel">${t('cancel')}</button>` +
+      `<button type="button" class="btn submit" data-work="save">${t('save')}</button>` +
       '</div><p class="error" role="alert"></p>';
     li.querySelector('.body').append(panel);
     const area = panel.querySelector('textarea');
@@ -849,11 +804,11 @@ function openWork(id, mode) {
     panel.setAttribute('role', 'group');
     panel.setAttribute('aria-labelledby', `confirm-${id}`);
     panel.innerHTML =
-      `<p id="confirm-${id}"><strong>Diesen Freitext löschen?</strong> Die Bewertung bleibt gezählt, und die Aktion wird mit Ihrer Kennung protokolliert. Ein Versehen kann der Betrieb zwei Tage lang rückgängig machen.</p>` +
-      (r.today ? `<p class="today">${TODAY_NOTE}</p>` : '') +
+      `<p id="confirm-${id}"><strong>${t('confirmTitle')}</strong> ${t('confirmText')}</p>` +
+      (r.today ? `<p class="today">${t('todayNote')}</p>` : '') +
       '<div class="work-actions">' +
-      '<button type="button" class="btn" data-work="cancel">Abbrechen</button>' +
-      `<button type="button" class="btn destructive" data-work="delete">Freitext ${when} löschen</button>` +
+      `<button type="button" class="btn" data-work="cancel">${t('cancel')}</button>` +
+      `<button type="button" class="btn destructive" data-work="delete">${t('deleteOne', { date })}</button>` +
       '</div><p class="error" role="alert"></p>';
     li.querySelector('.body').append(panel);
     panel.querySelector('[data-work="cancel"]').focus();
@@ -904,11 +859,9 @@ async function post(id, action, body) {
 
 function failure(error, action) {
   if (error.status === 409) {
-    return action === 'clean'
-      ? 'Noch nicht möglich: Der Text ist erst vor Kurzem eingegangen. Bitte in etwa 90 Minuten erneut speichern; Ihr Entwurf bleibt erhalten, solange diese Seite offen ist.'
-      : 'Noch nicht möglich: Der Text ist erst vor Kurzem eingegangen. Bitte in etwa 90 Minuten erneut löschen.';
+    return action === 'clean' ? t('tooSoonClean') : t('tooSoonDelete');
   }
-  return 'Das hat nicht geklappt. Bitte erneut versuchen.';
+  return t('failed');
 }
 
 async function run(button, action) {
@@ -923,7 +876,7 @@ async function run(button, action) {
   });
   button.setAttribute('aria-busy', 'true');
   panel.querySelector('.error').textContent = '';
-  const when = `vom ${dm(r.date)}`;
+  const date = dm(r.date);
   try {
     const result = await post(id, action, action === 'clean' ? { text } : undefined);
     state.open = null;
@@ -939,7 +892,7 @@ async function run(button, action) {
       renderTexts();
       renderStats();
       (next ? liOf(next)?.querySelector('[data-act="delete"]') : $('texts-title'))?.focus();
-      toast(`Freitext ${when} gelöscht.`);
+      toast(t('deleted', { date }));
     } else {
       Object.assign(r, {
         text: result.text,
@@ -951,7 +904,7 @@ async function run(button, action) {
       );
       renderTexts();
       liOf(id)?.querySelector('[data-act="clean"]')?.focus();
-      toast(`Freitext ${when} bereinigt.`);
+      toast(t('cleaned', { date }));
     }
   } catch (error) {
     if (error.status === 404) {
@@ -959,7 +912,7 @@ async function run(button, action) {
       state.rows = state.rows.filter((row) => row.id !== id);
       patchCached(r.date, (texts) => texts.filter((t) => t.id !== id));
       renderTexts();
-      toast('Dieser Freitext ist schon gelöscht.');
+      toast(t('goneAlready'));
       $('texts-title').focus();
       return;
     }
@@ -1006,8 +959,7 @@ $('list').addEventListener('click', (event) => {
     case 'mark': {
       const { selectionStart: start, selectionEnd: end } = area;
       if (start === end) {
-        panel.querySelector('.error').textContent =
-          'Markieren Sie zuerst den Teil, der ersetzt werden soll.';
+        panel.querySelector('.error').textContent = t('markFirst');
         area.focus();
         break;
       }
@@ -1135,6 +1087,16 @@ document.addEventListener('visibilitychange', () => {
     poll();
   }
 });
+
+// The server writes the page in the chosen language, so a switch is a reload with the new choice.
+document.querySelectorAll('.lang button').forEach((b) =>
+  b.addEventListener('click', () => {
+    if (b.getAttribute('aria-pressed') !== 'true') {
+      document.cookie = `${LANG_COOKIE}=${b.dataset.lang}; Path=/feedback; Max-Age=31536000; SameSite=Lax; Secure`;
+      location.reload();
+    }
+  }),
+);
 
 // Same switch as LibreChat: a .dark class on <html>, set before the first paint by theme.js.
 const system = matchMedia('(prefers-color-scheme: dark)');
