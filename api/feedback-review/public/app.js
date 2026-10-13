@@ -553,14 +553,22 @@ function niceMax(max) {
   return (Math.ceil((max / step) * 2) * step) / 2;
 }
 
+/** The days so far: a running month ends at today, so its bars fill the width as it goes. */
 function renderChart() {
   const d = state.data;
   const month = monthOf(d.period.from);
   const last = d.period.running ? dayOf(d.period.to) : d.days.length;
-  const values = d.days.map(([up, down]) => [num(up), num(down)]);
-  const top = niceMax(Math.max(0, ...values.slice(0, last).map(([up, down]) => up + down)));
+  const values = d.days.slice(0, last).map(([up, down]) => [num(up), num(down)]);
+  const top = niceMax(Math.max(0, ...values.map(([up, down]) => up + down)));
   const [left, right, y0, y1] = [44, 996, 186, 12];
   const step = (right - left) / values.length;
+  // Early in a month a few bars would each take a large share of the width.
+  const width = Math.min(64, Math.max(2, step - 6));
+  const labels = new Set([1, ...values.map((_, i) => i + 1).filter((day) => day % 5 === 0)]);
+  // Today gets a label too, unless it would crowd the one before it.
+  if ((last - Math.max(...labels)) * step >= 60) {
+    labels.add(last);
+  }
   const y = (v) => y0 - (v / top) * (y0 - y1);
   let svg = [0, top / 2, top]
     .map(
@@ -569,29 +577,19 @@ function renderChart() {
         `<text x="${left - 8}" y="${y(v) + 4}" text-anchor="end">${int(v)}</text>`,
     )
     .join('');
-  // The rest of a running month is one quiet area, not a row of empty days.
-  if (last < values.length) {
-    const from = left + last * step;
-    svg += `<rect class="future" x="${from}" y="${y1}" width="${right - from}" height="${y0 - y1}" rx="6"/>`;
-    if (right - from > 160) {
-      svg += `<text x="${(from + right) / 2}" y="${(y0 + y1) / 2 + 4}" text-anchor="middle">${t('restOfMonth')}</text>`;
-    }
-  }
   values.forEach(([up, down], i) => {
-    const x = left + i * step + 3;
-    const width = Math.max(2, step - 6);
-    if (i < last) {
-      const title = `<title>${t('dayTip', { date: T.shortDate(i + 1, month), up, down })}</title>`;
-      const hu = y0 - y(up);
-      const hd = y0 - y(down);
-      svg += `<g>${title}<rect class="up" x="${x}" y="${y0 - hu}" width="${width}" height="${hu}" rx="3"/>`;
-      svg += `<rect class="down" x="${x}" y="${y0 - hu - hd - (hd ? 2 : 0)}" width="${width}" height="${hd}" rx="3"/></g>`;
-    }
-    if (i === 0 || (i + 1) % 5 === 0) {
-      svg += `<text x="${x + width / 2}" y="210" text-anchor="middle">${T.axisDay(i + 1)}</text>`;
+    const center = left + (i + 0.5) * step;
+    const x = center - width / 2;
+    const title = `<title>${t('dayTip', { date: T.shortDate(i + 1, month), up, down })}</title>`;
+    const hu = y0 - y(up);
+    const hd = y0 - y(down);
+    svg += `<g>${title}<rect class="up" x="${x}" y="${y0 - hu}" width="${width}" height="${hu}" rx="3"/>`;
+    svg += `<rect class="down" x="${x}" y="${y0 - hu - hd - (hd ? 2 : 0)}" width="${width}" height="${hd}" rx="3"/></g>`;
+    if (labels.has(i + 1)) {
+      svg += `<text x="${center}" y="210" text-anchor="middle">${T.axisDay(i + 1)}</text>`;
     }
   });
-  if (!values.slice(0, last).some(([up, down]) => up + down)) {
+  if (!values.some(([up, down]) => up + down)) {
     svg += `<text class="empty" x="${(left + right) / 2}" y="${(y0 + y1) / 2}" text-anchor="middle">${t('noRatingsYet')}</text>`;
   }
   $('chart').innerHTML = svg;
@@ -599,7 +597,6 @@ function renderChart() {
     `<caption>${t('perDay')}</caption>` +
     `<tr><th>${t('day')}</th><th>${t('thumbsUp')}</th><th>${t('thumbsDown')}</th></tr>` +
     values
-      .slice(0, last)
       .map(
         ([up, down], i) =>
           `<tr><td>${T.shortDate(i + 1, month)}</td><td>${up}</td><td>${down}</td></tr>`,

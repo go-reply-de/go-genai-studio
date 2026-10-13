@@ -772,9 +772,6 @@ textarea:focus-visible {
   stroke: var(--border-light);
   stroke-width: 1;
 }
-#chart .future {
-  fill: var(--surface-secondary);
-}
 #chart text {
   fill: var(--text-tertiary);
   font-size: 13px;
