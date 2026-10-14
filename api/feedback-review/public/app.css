@@ -443,9 +443,8 @@ textarea:focus-visible {
   cursor: pointer;
 }
 .steps button:hover:not(:disabled) {
-  background: var(--surface-primary);
+  background: var(--surface-hover);
   color: var(--text-primary);
-  box-shadow: 0 0 0 1px var(--border-medium);
 }
 .steps button:disabled {
   opacity: 0.4;
@@ -476,8 +475,8 @@ textarea:focus-visible {
 }
 .picker:hover,
 .picker[aria-expanded='true'] {
-  background: var(--surface-secondary);
-  border-color: var(--border-light);
+  background: var(--surface-hover);
+  border-color: var(--border-medium);
 }
 .picker .chevron {
   width: 18px;
@@ -565,7 +564,7 @@ textarea:focus-visible {
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
-.month-grid button:hover:not(:disabled) {
+.month-grid button:hover:not(:disabled):not([aria-current='true']) {
   background: var(--surface-hover);
 }
 .month-grid button:disabled {
@@ -576,6 +575,10 @@ textarea:focus-visible {
 .month-grid button[aria-current='true'] {
   background: var(--text-primary);
   color: var(--surface-primary);
+}
+/* The chosen month keeps its colours on hover, a shade lighter. */
+.month-grid button[aria-current='true']:hover {
+  background: var(--text-secondary);
 }
 .month-grid button[aria-current='true'] small {
   color: inherit;
