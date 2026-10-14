@@ -1,0 +1,53 @@
+# Quarterly terms re-acceptance: clears termsAccepted for every user, so the
+# terms modal comes back on each user's next page load.
+#
+# Applied only where TERMS_RESET_ENABLED=true; the "Deploy terms reset" step in
+# cloudbuild.yaml removes it everywhere else.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  labels:
+    app: terms-reset
+  name: terms-reset
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  # Midnight Berlin time on 1 January, April, July and October.
+  schedule: "0 0 1 1,4,7,10 *"
+  timeZone: Europe/Berlin
+  concurrencyPolicy: Forbid
+  # A run missed at midnight (node upgrade, controller restart) still starts
+  # within six hours instead of waiting for the next quarter.
+  startingDeadlineSeconds: 21600
+  # A year of runs stays visible in `kubectl get jobs`.
+  successfulJobsHistoryLimit: 4
+  failedJobsHistoryLimit: 4
+  jobTemplate:
+    spec:
+      # Retries with growing delays ride out a Mongo restart of about ten minutes.
+      backoffLimit: 6
+      template:
+        metadata:
+          labels:
+            app: terms-reset
+        spec:
+          restartPolicy: Never
+          # Talks to Mongo only; no Kubernetes or Google API access needed.
+          automountServiceAccountToken: false
+          containers:
+            - name: terms-reset
+              # Same build as the api, so it always runs the deployed script.
+              image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
+              command: ["/bin/sh", "-c"]
+              # The script asks for confirmation on stdin.
+              args: ["printf 'y\\n' | node /app/config/reset-terms.js"]
+              env:
+                - name: MONGO_URI
+                  valueFrom:
+                    configMapKeyRef:
+                      key: MONGO_URI
+                      name: env
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 1Gi
