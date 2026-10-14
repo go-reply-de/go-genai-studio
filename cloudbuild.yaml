@@ -437,6 +437,25 @@ steps:
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
 - name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy terms reset'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      # Deleted rather than skipped when off: the job writes to every user, so
+      # switching it off has to stop it.
+      TERMS_RESET_ENABLED=$(sed -n 's/^TERMS_RESET_ENABLED=//p' /workspace/render-vars.env)
+      if [ "$$TERMS_RESET_ENABLED" != "true" ]; then
+        echo "TERMS_RESET_ENABLED is '$$TERMS_RESET_ENABLED' for profile '${_PROFILE}', removing any terms reset schedule."
+        kubectl delete cronjob terms-reset --namespace=${_GKE_NAMESPACE} --ignore-not-found
+        exit 0
+      fi
+      kubectl apply -f ./k8s/terms-reset.yaml --namespace=${_GKE_NAMESPACE}
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+- name: "gcr.io/cloud-builders/kubectl"
   id: 'Deploy Admin Panel'
   entrypoint: bash
   args:
