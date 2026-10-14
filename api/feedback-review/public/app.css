@@ -757,10 +757,22 @@ textarea:focus-visible {
 }
 
 /* Chart. */
+/* The chart fills its panel down to the panel's bottom, as high as the reasons next to it. */
+.chart-panel {
+  display: flex;
+  flex-direction: column;
+}
+.chart-box {
+  position: relative;
+  flex: 1;
+  min-height: 220px;
+}
 #chart {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
 }
 #chart .up {
   fill: var(--up);
@@ -787,12 +799,12 @@ textarea:focus-visible {
 }
 #chart text {
   fill: var(--text-tertiary);
-  font-size: 13px;
+  font-size: 12px;
   font-family: inherit;
 }
 #chart .empty {
   fill: var(--text-secondary);
-  font-size: 15px;
+  font-size: 14px;
 }
 
 /* Reasons. */
@@ -1242,8 +1254,5 @@ mark.hint {
   }
   .row .actions {
     grid-column: 3;
-  }
-  #chart text {
-    font-size: 26px;
   }
 }

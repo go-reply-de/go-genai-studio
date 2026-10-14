@@ -553,17 +553,24 @@ function niceMax(max) {
   return (Math.ceil((max / step) * 2) * step) / 2;
 }
 
-/** The whole month; in a running month a thin line marks today and the days after stay empty. */
+/**
+ * The whole month; in a running month a thin line marks today and the days after stay empty.
+ * Drawn at the box's own size in pixels, so it fills its panel and the text reads the same everywhere.
+ */
 function renderChart() {
   const d = state.data;
+  const box = $('chart-box').getBoundingClientRect();
+  const [w, h] = [Math.round(box.width) || 1000, Math.round(box.height) || 220];
   const month = monthOf(d.period.from);
   const last = d.period.running ? dayOf(d.period.to) : d.days.length;
   const values = d.days.map(([up, down]) => [num(up), num(down)]);
   const top = niceMax(Math.max(0, ...values.slice(0, last).map(([up, down]) => up + down)));
-  const [left, right, y0, y1] = [44, 996, 186, 12];
+  const [left, right, y0, y1] = [40, w - 4, h - 30, 10];
   const step = (right - left) / values.length;
-  const width = Math.max(2, step - 6);
+  const width = Math.max(2, step * 0.72);
+  const radius = Math.min(3, width / 2);
   const y = (v) => y0 - (v / top) * (y0 - y1);
+  $('chart').setAttribute('viewBox', `0 0 ${w} ${h}`);
   let svg = [0, top / 2, top]
     .map(
       (v) =>
@@ -573,11 +580,11 @@ function renderChart() {
     .join('');
   // Today sits on the date axis: a tag in the row of day numbers, the line rising from it.
   const marker = last < values.length ? left + last * step : null;
-  const tagWidth = t('today').length * 7.5 + 18;
+  const tagWidth = t('today').length * 7 + 16;
   if (marker !== null) {
-    svg += `<line class="today-line" x1="${marker}" x2="${marker}" y1="${y1}" y2="196"/>`;
-    svg += `<rect class="today-tag" x="${marker - tagWidth / 2}" y="196" width="${tagWidth}" height="22" rx="11"/>`;
-    svg += `<text class="today-label" x="${marker}" y="211" text-anchor="middle">${t('today')}</text>`;
+    svg += `<line class="today-line" x1="${marker}" x2="${marker}" y1="${y1}" y2="${y0 + 8}"/>`;
+    svg += `<rect class="today-tag" x="${marker - tagWidth / 2}" y="${y0 + 8}" width="${tagWidth}" height="20" rx="10"/>`;
+    svg += `<text class="today-label" x="${marker}" y="${y0 + 22}" text-anchor="middle">${t('today')}</text>`;
   }
   values.forEach(([up, down], i) => {
     const center = left + (i + 0.5) * step;
@@ -586,12 +593,12 @@ function renderChart() {
       const title = `<title>${t('dayTip', { date: T.shortDate(i + 1, month), up, down })}</title>`;
       const hu = y0 - y(up);
       const hd = y0 - y(down);
-      svg += `<g>${title}<rect class="up" x="${x}" y="${y0 - hu}" width="${width}" height="${hu}" rx="3"/>`;
-      svg += `<rect class="down" x="${x}" y="${y0 - hu - hd - (hd ? 2 : 0)}" width="${width}" height="${hd}" rx="3"/></g>`;
+      svg += `<g>${title}<rect class="up" x="${x}" y="${y0 - hu}" width="${width}" height="${hu}" rx="${radius}"/>`;
+      svg += `<rect class="down" x="${x}" y="${y0 - hu - hd - (hd ? 2 : 0)}" width="${width}" height="${hd}" rx="${radius}"/></g>`;
     }
-    const clear = marker === null || Math.abs(center - marker) > tagWidth / 2 + 26;
+    const clear = marker === null || Math.abs(center - marker) > tagWidth / 2 + 14;
     if ((i === 0 || (i + 1) % 5 === 0) && clear) {
-      svg += `<text x="${center}" y="210" text-anchor="middle">${T.axisDay(i + 1)}</text>`;
+      svg += `<text x="${center}" y="${y0 + 22}" text-anchor="middle">${T.axisDay(i + 1)}</text>`;
     }
   });
   if (!values.slice(0, last).some(([up, down]) => up + down)) {
@@ -1090,6 +1097,13 @@ document.addEventListener('visibilitychange', () => {
     poll();
   }
 });
+
+// The chart is drawn at its box's size, so it follows the box.
+new ResizeObserver(() => {
+  if (state.data) {
+    renderChart();
+  }
+}).observe($('chart-box'));
 
 // The server writes the page in the chosen language, so a switch is a reload with the new choice.
 document.querySelectorAll('.lang button').forEach((b) =>
