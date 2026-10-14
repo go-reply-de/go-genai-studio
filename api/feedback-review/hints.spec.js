@@ -9,6 +9,15 @@ describe('possible personal data in a free text', () => {
     expect(marked('Laut Pat. Muster fehlte der Hinweis.')).toEqual(['Pat. Muster']);
   });
 
+  it('marks names after an English title too', () => {
+    expect(marked('Mr. Example asked, Mrs Sample agreed and Ms. Muster wrote it down.')).toEqual([
+      'Mr. Example',
+      'Mrs Sample',
+      'Ms. Muster',
+    ]);
+    expect(marked('Bei MS fehlte der Hinweis für Patienten.')).toEqual([]);
+  });
+
   it('marks placeholders, partial dates, keywords and short numbers', () => {
     expect(marked('Ruf [Nummer] an, Termin am 12.3. auf Station 4b, Fallnummer 4711.')).toEqual([
       '[Nummer]',

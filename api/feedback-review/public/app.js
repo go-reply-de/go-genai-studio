@@ -27,6 +27,8 @@ const ICON = {
     '<svg class="i small" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>',
   trash:
     '<svg class="i small" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>',
+  check:
+    '<svg class="i small" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>',
 };
 
 const $ = (id) => document.getElementById(id);
@@ -141,10 +143,14 @@ function enrich(text, data) {
     ...text,
     hints: findHints(text.text),
     cleaned: text.text.includes(MARKER),
+    reviewed: text.reviewed === true,
     isNew: !seen.has(text.id),
     today: data.period.running && text.date === data.period.to,
   };
 }
+
+/** Possible personal data that no reviewer has marked as checked yet. */
+const flagged = (r) => r.hints.length > 0 && !r.reviewed;
 
 function setLive(kind, text) {
   $('live').hidden = !text;
@@ -645,8 +651,25 @@ function visibleRows(query) {
       r.id === state.open?.id ||
       (!state.held.has(r.id) &&
         (!state.rating || r.rating === state.rating) &&
-        (!state.hintsOnly || r.hints.length > 0) &&
+        (!state.hintsOnly || flagged(r)) &&
         (!query || r.text.toLowerCase().includes(query))),
+  );
+}
+
+/** "Prüfen" with a button that marks the text as checked for everyone, or "Geprüft" with one to undo it. */
+function reviewTags(r, date) {
+  if (r.reviewed) {
+    return (
+      `<span class="badge reviewed" title="${t('reviewedNote')}">${ICON.check}${t('reviewedTag')}</span>` +
+      `<button type="button" class="text-btn" data-review="false" aria-label="${t('withdrawReviewOne', { date })}">${t('withdrawReview')}</button>`
+    );
+  }
+  if (!r.hints.length) {
+    return '';
+  }
+  return (
+    `<span class="badge hint">${t('check')}</span>` +
+    `<button type="button" class="text-btn" data-review="true" aria-label="${t('markReviewedOne', { date })}">${t('markReviewed')}</button>`
   );
 }
 
@@ -657,14 +680,14 @@ function rowElement(r, query) {
   const date = dm(r.date);
   const tags = [
     `<span class="badge">${esc(REASONS[r.reason] || r.reason)}</span>`,
-    r.hints.length ? `<span class="badge hint">${t('check')}</span>` : '',
+    reviewTags(r, date),
     r.cleaned ? `<span class="badge cleaned">${t('cleanedTag')}</span>` : '',
     r.today ? `<span class="badge" title="${t('todayNote')}">${t('today')}</span>` : '',
   ].join('');
   li.innerHTML =
     `<div class="date"><time datetime="${r.date}">${dm(r.date)}</time>${r.isNew ? `<br><span class="badge new">${t('newTag')}</span>` : ''}</div>` +
     `<div class="rating">${ICON[r.rating] || ''}</div>` +
-    `<div class="body"><p class="text">${highlight(r.text, query, r.hints)}</p><div class="tags">${tags}</div></div>` +
+    `<div class="body"><p class="text">${highlight(r.text, query, r.reviewed ? [] : r.hints)}</p><div class="tags">${tags}</div></div>` +
     '<div class="actions">' +
     `<button type="button" class="ghost" data-act="clean" aria-label="${t('cleanOne', { date })}">${ICON.clean}<span>${t('clean')}</span></button>` +
     `<button type="button" class="ghost danger" data-act="delete" aria-label="${t('deleteOne', { date })}">${ICON.trash}<span>${t('delete')}</span></button>` +
@@ -681,7 +704,10 @@ function renderTexts() {
   const list = $('list');
   const active = document.activeElement;
   const focusRow = active?.closest?.('.row')?.dataset.id;
-  const focusAct = active?.dataset?.act;
+  // A redraw keeps keyboard focus on the same button of the same text.
+  const focusButton = active?.dataset?.review
+    ? '[data-review]'
+    : active?.dataset?.act && `[data-act="${active.dataset.act}"]`;
   const openRow = state.open ? list.querySelector(`[data-id="${state.open.id}"]`) : null;
 
   const rows = visibleRows(query);
@@ -705,13 +731,11 @@ function renderTexts() {
   renderPager(rows.length, pages);
   renderIncoming();
   $('t-count').textContent = t('inList', { n: int(state.rows.length) });
-  const hinted = state.rows.filter((r) => r.hints.length > 0).length;
+  const hinted = state.rows.filter(flagged).length;
   $('hints-count').textContent = `(${int(hinted)})`;
 
-  if (focusRow && focusAct) {
-    list
-      .querySelector(`[data-id="${focusRow}"] [data-act="${focusAct}"]`)
-      ?.focus({ preventScroll: true });
+  if (focusRow && focusButton) {
+    list.querySelector(`[data-id="${focusRow}"] ${focusButton}`)?.focus({ preventScroll: true });
   }
 }
 
@@ -919,11 +943,7 @@ async function run(button, action) {
   } catch (error) {
     if (error.status === 404) {
       state.open = null;
-      state.rows = state.rows.filter((row) => row.id !== id);
-      patchCached(r.date, (texts) => texts.filter((t) => t.id !== id));
-      renderTexts();
-      toast(t('goneAlready'));
-      $('texts-title').focus();
+      forget(r);
       return;
     }
     if (action === 'clean') {
@@ -937,6 +957,43 @@ async function run(button, action) {
       updateSave(panel, r);
     }
     button.removeAttribute('aria-busy');
+  }
+}
+
+/** A text another reviewer has deleted in the meantime leaves the list. */
+function forget(r) {
+  state.rows = state.rows.filter((row) => row.id !== r.id);
+  patchCached(r.date, (texts) => texts.filter((t) => t.id !== r.id));
+  renderTexts();
+  toast(t('goneAlready'));
+  $('texts-title').focus();
+}
+
+/** Marks a text as checked for every reviewer, or takes that back; its marks hide or return. */
+async function review(button, id, reviewed) {
+  const r = rowOf(id);
+  if (!r) {
+    return;
+  }
+  closeWork(false);
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  const date = dm(r.date);
+  try {
+    await post(id, 'review', { reviewed });
+    r.reviewed = reviewed;
+    patchCached(r.date, (texts) => texts.map((t) => (t.id === id ? { ...t, reviewed } : t)));
+    renderTexts();
+    (liOf(id)?.querySelector('[data-review]') || $('texts-title')).focus();
+    toast(reviewed ? t('reviewedDone', { date }) : t('reviewWithdrawn', { date }));
+  } catch (error) {
+    if (error.status === 404) {
+      forget(r);
+      return;
+    }
+    button.disabled = false;
+    button.removeAttribute('aria-busy');
+    toast(error.status === 409 ? t('tooSoonReview') : t('failed'));
   }
 }
 
@@ -956,6 +1013,10 @@ $('list').addEventListener('click', (event) => {
     return;
   }
   const id = target.closest('.row')?.dataset.id;
+  if (target.dataset.review) {
+    review(target, id, target.dataset.review === 'true');
+    return;
+  }
   if (target.dataset.act) {
     openWork(id, target.dataset.act);
     return;

@@ -4,8 +4,8 @@
  * Runs from the API image under its own Kubernetes service account, which may read the
  * feedback tables and clean texts; the API itself may only add rows. Only the load balancer
  * reaches this pod (see k8s/feedback-review.yaml), so the reviewer's e-mail in IAP's header can
- * be trusted. Deletes and cleans are logged with that e-mail and the row id, never with the
- * text, and filtering happens in the browser, so no search term reaches BigQuery's audit log.
+ * be trusted. Deletes, cleans and reviews are logged with that e-mail and the row id, never with
+ * the text, and filtering happens in the browser, so no search term reaches BigQuery's audit log.
  */
 const fs = require('fs');
 const http = require('http');
@@ -26,7 +26,7 @@ const CACHE_MS = 5 * 60 * 1000;
 /** Requests this close together share the running month, such as the page and its first data. */
 const RECENT_MS = 5000;
 const MAX_VIEWS = 48;
-const ACTION = new RegExp(`^${PREFIX}/api/texts/([^/]+)/(delete|clean)$`);
+const ACTION = new RegExp(`^${PREFIX}/api/texts/([^/]+)/(delete|clean|review)$`);
 const STATIC = {
   '/theme.js': ['theme.js', 'text/javascript; charset=utf-8'],
   '/i18n.js': ['i18n.js', 'text/javascript; charset=utf-8'],
@@ -65,6 +65,7 @@ const day = (y, m, d) => `${y}-${pad(m)}-${pad(d)}`;
 const daysIn = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
 const dateParam = (value) => ({ type: 'DATE', value });
 const stringParam = (value) => ({ type: 'STRING', value });
+const boolParam = (value) => ({ type: 'BOOL', value: String(value) });
 const berlinDay = (date) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' }).format(date);
 const LANG_COOKIE = /(?:^|;\s*)feedback-lang=(de|en)(?:;|$)/;
@@ -212,7 +213,7 @@ function createReview({
         { first: dateParam(day(py, pm, 1)), last: dateParam(last) },
       ),
       query(
-        `SELECT id, date, rating, reason, text FROM ${await table('texts')} ` +
+        `SELECT id, date, rating, reason, text, reviewed FROM ${await table('texts')} ` +
           'WHERE date BETWEEN @first AND @last ORDER BY date DESC, id',
         { first: dateParam(first), last: dateParam(last) },
       ),
@@ -247,12 +248,13 @@ function createReview({
         reasons[rating][reason] = (reasons[rating][reason] || 0) + ratings;
       }
     }
-    const texts = rows.map(([id, date, rating, reason, text]) => ({
+    const texts = rows.map(([id, date, rating, reason, text, reviewed]) => ({
       id,
       date,
       rating,
       reason,
       text,
+      reviewed: reviewed === 'true',
     }));
     return {
       month: `${y}-${pad(m)}`,
@@ -358,15 +360,19 @@ function createReview({
     );
   }
 
-  async function changeText(action, id, text) {
+  /** Deletes a text, saves its cleaned version, or records whether a reviewer has checked it. */
+  async function changeText(action, id, value) {
     const texts = await table('texts');
-    const { changed } =
-      action === 'delete'
-        ? await query(`DELETE FROM ${texts} WHERE id = @id`, { id: stringParam(id) })
-        : await query(`UPDATE ${texts} SET text = @text WHERE id = @id`, {
-            id: stringParam(id),
-            text: stringParam(text),
-          });
+    const params = { id: stringParam(id) };
+    let sql = `DELETE FROM ${texts} WHERE id = @id`;
+    if (action === 'clean') {
+      sql = `UPDATE ${texts} SET text = @text WHERE id = @id`;
+      params.text = stringParam(value);
+    } else if (action === 'review') {
+      sql = `UPDATE ${texts} SET reviewed = @reviewed WHERE id = @id`;
+      params.reviewed = boolParam(value);
+    }
+    const { changed } = await query(sql, params);
     views.clear();
     return changed;
   }
@@ -413,15 +419,21 @@ function createReview({
     }
     const [, id, action] = match;
     let text;
+    let reviewed;
     try {
+      const body = action === 'delete' ? {} : JSON.parse((await readBody(req)) || '{}');
       if (action === 'clean') {
-        const body = JSON.parse((await readBody(req)) || '{}');
         text =
-          String(body.text ?? '')
+          String(body?.text ?? '')
             .trim()
             .slice(0, MAX_TEXT_LENGTH) || REMOVED;
+      } else if (action === 'review') {
+        reviewed = body?.reviewed;
+        if (typeof reviewed !== 'boolean') {
+          return send(res, 400, { error: 'body' });
+        }
       }
-      if (!(await changeText(action, id, text))) {
+      if (!(await changeText(action, id, action === 'review' ? reviewed : text))) {
         return send(res, 404, { error: 'not found' });
       }
     } catch (error) {
@@ -437,11 +449,12 @@ function createReview({
       });
       return send(res, status, { error: error.message });
     }
-    log('NOTICE', action === 'delete' ? 'feedback text deleted' : 'feedback text cleaned', {
-      id,
-      by: reviewer,
-    });
-    return send(res, 200, { ok: true, text });
+    let message = action === 'delete' ? 'feedback text deleted' : 'feedback text cleaned';
+    if (action === 'review') {
+      message = reviewed ? 'feedback text reviewed' : 'feedback text review withdrawn';
+    }
+    log('NOTICE', message, { id, by: reviewer });
+    return send(res, 200, { ok: true, text, reviewed });
   }
 
   async function handle(req, res) {

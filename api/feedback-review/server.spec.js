@@ -11,6 +11,7 @@ const ENV = { FEEDBACK_DATASET: 'feedback', APP_TITLE: 'DiMeAs', ENVIRONMENT: 's
 const REVIEWER = { 'X-Goog-Authenticated-User-Email': 'accounts.google.com:reviewer@example.org' };
 const ACTION = { ...REVIEWER, 'X-Feedback-Review': '1', 'Content-Type': 'application/json' };
 const ID = '3f1c2a9e-1111-4a6b-9c1d-000000000001';
+const OTHER = '3f1c2a9e-1111-4a6b-9c1d-000000000002';
 
 const cells = (...values) => ({ f: values.map((v) => ({ v: String(v) })) });
 const MONTHS_QUERY = 'SELECT FORMAT_DATE';
@@ -219,7 +220,11 @@ describe('feedback review server', () => {
           cells('2026-09-30', 'thumbsUp', 'accurate_reliable', 7, 2),
           cells('2026-10-02', 'unknown', 'unknown', 3, 0),
         ],
-        texts: [cells(ID, '2026-10-01', 'thumbsDown', 'inaccurate', 'zu lang')],
+        texts: [
+          cells(ID, '2026-10-01', 'thumbsDown', 'inaccurate', 'zu lang', true),
+          // A text no reviewer has marked yet: BigQuery answers NULL.
+          { f: [...cells(OTHER, '2026-10-01', 'thumbsUp', 'other', 'gut').f, { v: null }] },
+        ],
       }),
     );
     const res = await app.request('/api/month?m=2026-10', { headers: REVIEWER });
@@ -232,7 +237,15 @@ describe('feedback review server', () => {
       previous: { to: '2026-09-30', rated: 7, up: 7, down: 0, texts: 2 },
       reasons: { thumbsUp: { accurate_reliable: 5 }, thumbsDown: { inaccurate: 2, other: 1 } },
       texts: [
-        { id: ID, date: '2026-10-01', rating: 'thumbsDown', reason: 'inaccurate', text: 'zu lang' },
+        {
+          id: ID,
+          date: '2026-10-01',
+          rating: 'thumbsDown',
+          reason: 'inaccurate',
+          text: 'zu lang',
+          reviewed: true,
+        },
+        { id: OTHER, text: 'gut', reviewed: false },
       ],
     });
     expect(data.days).toHaveLength(31);
@@ -253,7 +266,9 @@ describe('feedback review server', () => {
       { name: 'first', parameterType: { type: 'DATE' }, parameterValue: { value: '2026-09-01' } },
       { name: 'last', parameterType: { type: 'DATE' }, parameterValue: { value: '2026-10-31' } },
     ]);
-    expect(texts.query).toContain('`synthetic-project.feedback.texts`');
+    expect(texts.query).toContain(
+      'SELECT id, date, rating, reason, text, reviewed FROM `synthetic-project.feedback.texts`',
+    );
     expect(texts.queryParameters.map((p) => p.parameterValue.value)).toEqual([
       '2026-10-01',
       '2026-10-31',
@@ -413,6 +428,48 @@ describe('feedback review server', () => {
       'UPDATE `synthetic-project.feedback.texts` SET text = @text WHERE id = @id',
     );
     expect(JSON.stringify(lines)).not.toContain('Kontraindikation');
+  });
+
+  it('marks a text as checked for everyone and takes that back, logged without the text', async () => {
+    app = await start(() => Response.json({ jobComplete: true, numDmlAffectedRows: '1' }));
+    const review = (body) =>
+      app.request(`/api/texts/${ID}/review`, {
+        method: 'POST',
+        headers: ACTION,
+        body: JSON.stringify(body),
+      });
+    const lines = await stdoutLines(async () => {
+      expect((await review({ reviewed: true })).status).toBe(200);
+      expect(await (await review({ reviewed: false })).json()).toEqual({
+        ok: true,
+        reviewed: false,
+      });
+      expect((await review({ reviewed: 'yes' })).status).toBe(400);
+      expect((await review({})).status).toBe(400);
+    });
+    expect(app.queries).toHaveLength(2);
+    expect(app.queries[0].query).toBe(
+      'UPDATE `synthetic-project.feedback.texts` SET reviewed = @reviewed WHERE id = @id',
+    );
+    const flag = (value) => ({
+      name: 'reviewed',
+      parameterType: { type: 'BOOL' },
+      parameterValue: { value },
+    });
+    const id = { name: 'id', parameterType: { type: 'STRING' }, parameterValue: { value: ID } };
+    expect(app.queries.map((q) => q.queryParameters)).toEqual([
+      [id, flag('true')],
+      [id, flag('false')],
+    ]);
+    expect(lines).toEqual([
+      { severity: 'NOTICE', message: 'feedback text reviewed', id: ID, by: 'reviewer@example.org' },
+      {
+        severity: 'NOTICE',
+        message: 'feedback text review withdrawn',
+        id: ID,
+        by: 'reviewer@example.org',
+      },
+    ]);
   });
 
   it('turns away actions without the page header, with a bad id or for a missing row', async () => {
