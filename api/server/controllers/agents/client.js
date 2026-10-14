@@ -184,6 +184,7 @@ const {
   isAgentRunCancellation,
   markCompactionOutcome,
   resolvePersistableCodeEnvironmentDecision,
+  overloadErrorText,
 } = require('@librechat/api');
 const {
   Run,
@@ -5181,6 +5182,7 @@ class AgentClient extends BaseClient {
           type: ContentTypes.ERROR,
           [ContentTypes.ERROR]:
             videoError ??
+            overloadErrorText(err) ??
             terminalRunError.getUserFacingError(err, () =>
               getUserFacingRequestError(
                 'An error occurred while processing the request',
