@@ -127,7 +127,8 @@ const FeedbackTexts = (() => {
     cleanedTag: 'Bereinigt',
     today: 'Heute',
     newTag: 'Neu',
-    todayNote: 'Heute eingegangen: Änderungen sind oft erst nach etwa 90 Minuten möglich.',
+    todayNote:
+      'Heute eingegangen: Ein ganz neuer Freitext lässt sich erst etwa 6 Minuten nach dem Eingang ändern.',
     clean: 'Bereinigen',
     delete: 'Löschen',
     cleanOne: 'Freitext vom {date} bereinigen',
@@ -145,11 +146,11 @@ const FeedbackTexts = (() => {
       'Die Bewertung bleibt gezählt, und die Aktion wird mit Ihrer Kennung protokolliert. Ein Versehen kann der Betrieb zwei Tage lang rückgängig machen.',
     markFirst: 'Markieren Sie zuerst den Teil, der ersetzt werden soll.',
     tooSoonClean:
-      'Noch nicht möglich: Der Text ist erst vor Kurzem eingegangen. Bitte in etwa 90 Minuten erneut speichern; Ihr Entwurf bleibt erhalten, solange diese Seite offen ist.',
+      'Noch nicht möglich: Der Text ist erst vor Kurzem eingegangen. Bitte in etwa 6 Minuten erneut speichern; Ihr Entwurf bleibt erhalten, solange diese Seite offen ist.',
     tooSoonDelete:
-      'Noch nicht möglich: Der Text ist erst vor Kurzem eingegangen. Bitte in etwa 90 Minuten erneut löschen.',
+      'Noch nicht möglich: Der Text ist erst vor Kurzem eingegangen. Bitte in etwa 6 Minuten erneut löschen.',
     tooSoonReview:
-      'Noch nicht möglich: Der Text ist erst vor Kurzem eingegangen. Bitte in etwa 90 Minuten erneut versuchen.',
+      'Noch nicht möglich: Der Text ist erst vor Kurzem eingegangen. Bitte in etwa 6 Minuten erneut versuchen.',
     failed: 'Das hat nicht geklappt. Bitte erneut versuchen.',
     deleted: 'Freitext vom {date} gelöscht.',
     cleaned: 'Freitext vom {date} bereinigt.',
@@ -273,7 +274,8 @@ const FeedbackTexts = (() => {
     cleanedTag: 'Cleaned',
     today: 'Today',
     newTag: 'New',
-    todayNote: 'Received today: changes are often only possible after about 90 minutes.',
+    todayNote:
+      'Received today: a brand-new comment can only be changed about 6 minutes after it arrives.',
     clean: 'Clean',
     delete: 'Delete',
     cleanOne: 'Clean comment from {date}',
@@ -291,11 +293,11 @@ const FeedbackTexts = (() => {
       'The rating stays counted, and the action is logged with your ID. Operations can undo a mistake for two days.',
     markFirst: 'Select the part to replace first.',
     tooSoonClean:
-      'Not possible yet: this comment arrived only recently. Save again in about 90 minutes; your draft stays while this page is open.',
+      'Not possible yet: this comment arrived only recently. Save again in about 6 minutes; your draft stays while this page is open.',
     tooSoonDelete:
-      'Not possible yet: this comment arrived only recently. Delete it again in about 90 minutes.',
+      'Not possible yet: this comment arrived only recently. Delete it again in about 6 minutes.',
     tooSoonReview:
-      'Not possible yet: this comment arrived only recently. Try again in about 90 minutes.',
+      'Not possible yet: this comment arrived only recently. Try again in about 6 minutes.',
     failed: "That didn't work. Try again.",
     deleted: 'Comment from {date} deleted.',
     cleaned: 'Comment from {date} cleaned.',

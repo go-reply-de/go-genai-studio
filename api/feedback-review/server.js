@@ -155,7 +155,7 @@ function createReview({
       return res.json();
     }
     const detail = await res.text();
-    // DML cannot touch rows still in the streaming buffer, up to about 90 minutes after they arrive.
+    // DML cannot touch a row while it is in the streaming buffer, about six minutes after it arrives.
     if (detail.includes('streaming buffer')) {
       throw new QueryError(409, 'streaming buffer');
     }
