@@ -6,7 +6,8 @@ jest.mock('@librechat/data-schemas', () => ({
   logger: { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() },
 }));
 
-const OVERLOAD_INFO = 'Der KI-Dienst ist gerade ausgelastet – bitte in einer Minute erneut senden.';
+const OVERLOAD_INFO =
+  'Die Server des KI-Anbieters sind gerade überlastet. Bitte versuchen Sie es in einer Minute erneut.';
 
 /** How LangChain's Google client reports a refused request. */
 const langchainError = (status: number): Error =>
