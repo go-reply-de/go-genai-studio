@@ -518,6 +518,7 @@ spec:
                 configMapKeyRef:
                   key: REDIS_URI
                   name: env
+                  optional: true
             - name: REDIS_RETRY_MAX_ATTEMPTS
               valueFrom:
                 configMapKeyRef:
