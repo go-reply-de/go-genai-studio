@@ -7,6 +7,8 @@ const {
   countTokens,
   sendFeedbackScore,
   traceIdForMessage,
+  feedbackBefore,
+  saveFeedback,
 } = require('@librechat/api');
 const { findAllArtifacts, replaceArtifactContent } = require('~/server/services/Artifacts/update');
 const { requireJwtAuth, validateMessageReq } = require('~/server/middleware');
@@ -387,6 +389,7 @@ router.put('/:conversationId/:messageId/feedback', validateMessageReq, async (re
     const { conversationId, messageId } = req.params;
     const { feedback } = req.body;
 
+    const previous = await feedbackBefore(() => db.getMessage({ user: req?.user?.id, messageId }));
     const updatedMessage = await db.updateMessage(
       req?.user?.id,
       {
@@ -395,6 +398,7 @@ router.put('/:conversationId/:messageId/feedback', validateMessageReq, async (re
       },
       { context: 'updateFeedback' },
     );
+    void saveFeedback(previous, updatedMessage.feedback);
 
     // Best-effort: Assistants messages do not have deterministic AgentRun traces.
     if (!isAssistantsEndpoint(updatedMessage.endpoint)) {
