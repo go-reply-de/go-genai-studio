@@ -598,8 +598,8 @@ substitutions:
   _REGIONAL_IP_NAME: ""
   _REGIONAL_SSL_POLICY_NAME: ""
   _IAP_CLIENT_ID: ""
-  # The regional load balancer's proxy-only subnet, the only source the feedback
-  # review page's NetworkPolicy admits besides health checks.
+  # The regional load balancer's proxy-only subnet, the only source the monitoring
+  # page's NetworkPolicy admits besides health checks.
   _PROXY_ONLY_CIDR: ""
   # Appended to the api pod's claimName: empty selects the ReadWriteOnce claims,
   # "-rwx" selects the ReadWriteMany ones.
