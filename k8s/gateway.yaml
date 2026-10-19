@@ -51,6 +51,20 @@ spec:
     # No listener hostname: SNI matches the certificate's own SANs, so one
     # listener serves every name it covers. Hostnames live on the routes.
 ---
+apiVersion: networking.gke.io/v1
+kind: GCPGatewayPolicy
+metadata:
+  name: genai-studio-regional-###ENVIRONMENT###
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  default:
+    # Regional SSL policy from terraform: TLS 1.2 or later, AEAD ciphers only.
+    sslPolicy: ###_REGIONAL_SSL_POLICY_NAME###
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: genai-studio-regional-###ENVIRONMENT###
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:

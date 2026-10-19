@@ -250,6 +250,7 @@ describe('startHardening', () => {
   it('registers nothing and reads nothing while its env is unset', async () => {
     delete process.env.STRICT_BROWSER_EGRESS;
     delete process.env.SPEECH_LOCAL_ONLY;
+    delete process.env.FEEDBACK_DATASET;
     delete process.env.ROLE_PERMISSION_CAPS;
     delete process.env.RETENTION_WEEKLY_RESET;
     const app = express();
@@ -269,6 +270,7 @@ describe('startHardening', () => {
   it('turns each piece on with its env', async () => {
     process.env.STRICT_BROWSER_EGRESS = 'true';
     process.env.SPEECH_LOCAL_ONLY = 'true';
+    process.env.FEEDBACK_DATASET = 'feedback';
     const app = express();
 
     await startHardening({ app, methods: methods() });
@@ -279,6 +281,7 @@ describe('startHardening', () => {
       appTitle: 'Synthetic',
       strictBrowserEgress: true,
       speechLocalOnly: true,
+      feedbackTexts: true,
     });
     expect(config.headers['content-security-policy']).toBe(STRICT_EGRESS_POLICY);
     expect(config.headers['permissions-policy']).toBe(STRICT_PERMISSIONS_POLICY);

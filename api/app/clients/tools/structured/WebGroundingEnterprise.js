@@ -4,7 +4,14 @@ const { Tool } = require('@librechat/agents/langchain/tools');
 const { VertexAI } = require('@google-cloud/vertexai');
 const { Tools } = require('librechat-data-provider');
 const { logger } = require('@librechat/data-schemas');
-const { errorStatus, withOverloadRetry, isRetryableStatus } = require('@librechat/api');
+const {
+  errorStatus,
+  withOverloadRetry,
+  isRetryableStatus,
+  getBalanceConfig,
+  getTransactionsConfig,
+} = require('@librechat/api');
+const { spendTokens } = require('~/models');
 const { extractGroundingResponse } = require('../util/vertexGrounding');
 const {
   parsePolicyConfig,
@@ -88,6 +95,8 @@ class WebGroundingEnterprise extends Tool {
 
     /* Used to initialize the Tool without necessary variables. */
     this.override = fields.override ?? false;
+    this.req = fields.req;
+    this.userId = fields.userId;
     this.policy = loadPolicy();
     this.geminiModel = process.env.WEB_GROUNDING_MODEL || fields.geminiModel || 'gemini-2.5-flash';
     /** Thinking past LOW makes Gemini Flash search in rounds and return no attributable chunks. */
@@ -177,20 +186,51 @@ class WebGroundingEnterprise extends Tool {
   }
 
   /** One search call, retried on overload while the search's budget lasts. */
-  _generate(request, deadline) {
-    return withOverloadRetry(() => this.generativeModel.generateContent(request), { deadline });
+  async _generate(request, deadline, config) {
+    const result = await withOverloadRetry(() => this.generativeModel.generateContent(request), {
+      deadline,
+    });
+    void this._recordUsage(result.response?.usageMetadata, config);
+    return result;
+  }
+
+  /** The agent's own usage leaves out this call, so it is recorded as its own transaction context. */
+  async _recordUsage(usage, config) {
+    const promptTokens = (usage?.promptTokenCount ?? 0) + (usage?.toolUsePromptTokenCount ?? 0);
+    const completionTokens = (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0);
+    if (!this.userId || (!promptTokens && !completionTokens)) {
+      return;
+    }
+    try {
+      await spendTokens(
+        {
+          user: this.userId,
+          model: this.geminiModel,
+          conversationId: config?.configurable?.thread_id,
+          messageId: config?.configurable?.run_id ?? config?.configurable?.requestBody?.messageId,
+          context: 'web_grounding',
+          balance: getBalanceConfig(this.req?.config),
+          transactions: getTransactionsConfig(this.req?.config),
+        },
+        { promptTokens, completionTokens },
+      );
+    } catch (error) {
+      logger.error('Web Grounding for Enterprise could not record its token usage', error);
+    }
   }
 
   /** An empty result leaves nothing to cite, so it earns exactly one more attempt. */
-  async _search(query) {
+  async _search(query, config) {
     const request = contentsOf(buildGroundingPrompt(query));
     const deadline = Date.now() + RETRY_BUDGET_MS;
-    const first = extractGroundingResponse((await this._generate(request, deadline)).response);
+    const first = extractGroundingResponse(
+      (await this._generate(request, deadline, config)).response,
+    );
     if (resultDomains(first.chunks).length) {
       return first;
     }
     logger.info('Web grounding returned no attributable results; retrying once.');
-    return extractGroundingResponse((await this._generate(request, deadline)).response);
+    return extractGroundingResponse((await this._generate(request, deadline, config)).response);
   }
 
   /** Tells the agent the search did not run, so it says so instead of answering unsourced. */
@@ -203,7 +243,7 @@ class WebGroundingEnterprise extends Tool {
     const { query } = data;
 
     try {
-      const { text, chunks, supports } = await this._search(query);
+      const { text, chunks, supports } = await this._search(query, config);
       const { sources } = parseSourceBlock(text);
       const { entries, dropped, numbering } = mergeSources({ sources, chunks, supports });
       const turn = config?.toolCall?.turn ?? 0;

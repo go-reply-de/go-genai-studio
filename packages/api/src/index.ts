@@ -111,6 +111,7 @@ export * from './cache';
 /* Cluster */
 export * from './cluster';
 export * from './hardening';
+export * from './feedback';
 /* Shared Links */
 export * from './shared-links/access';
 export * from './shared-links/service';

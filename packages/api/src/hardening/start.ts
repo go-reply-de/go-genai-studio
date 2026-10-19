@@ -6,6 +6,7 @@ import type { StartupConfigFlags } from './config';
 import { createStrictBrowserEgress, isStrictBrowserEgress } from './egress';
 import { createSpeechAccessGate, isSpeechLocalOnly } from './speech';
 import { startRetentionMaintenance } from '~/retention';
+import { isFeedbackStoreEnabled } from '~/feedback';
 import { createStartupConfigFlags } from './config';
 import { applyRolePermissionCaps } from './caps';
 import { deleteRagFile } from '~/files/rag';
@@ -50,6 +51,7 @@ export async function startHardening<R extends CappedRole>({
   const flags: StartupConfigFlags = {
     ...(strictBrowserEgress && { strictBrowserEgress: true }),
     ...(speechLocalOnly && { speechLocalOnly: true }),
+    ...(isFeedbackStoreEnabled() && { feedbackTexts: true }),
   };
   if (Object.keys(flags).length > 0) {
     app.use('/api/config', createStartupConfigFlags(flags));

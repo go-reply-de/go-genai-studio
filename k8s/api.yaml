@@ -245,6 +245,11 @@ spec:
                 configMapKeyRef:
                   key: ENABLE_INSIGHTS
                   name: env
+            - name: FEEDBACK_DATASET
+              valueFrom:
+                configMapKeyRef:
+                  key: FEEDBACK_DATASET
+                  name: env
             - name: FILE_RETENTION_SWEEP_INTERVAL_MS
               valueFrom:
                 configMapKeyRef:
@@ -517,6 +522,7 @@ spec:
                 configMapKeyRef:
                   key: REDIS_URI
                   name: env
+                  optional: true
             - name: REDIS_RETRY_MAX_ATTEMPTS
               valueFrom:
                 configMapKeyRef:

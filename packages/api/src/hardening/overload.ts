@@ -21,7 +21,8 @@ export interface OverloadRetryOptions {
 const STATUS_IN_MESSAGE = /(?:status code|got status:)\s*(\d{3})\b/;
 const RETRYABLE_CLIENT_STATUSES = new Set([408, 429]);
 const OVERLOAD_STATUSES = new Set([429, 503]);
-const OVERLOAD_INFO = 'Der KI-Dienst ist gerade ausgelastet – bitte in einer Minute erneut senden.';
+const OVERLOAD_INFO =
+  'Die Server des KI-Anbieters sind gerade überlastet. Bitte versuchen Sie es in einer Minute erneut.';
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 

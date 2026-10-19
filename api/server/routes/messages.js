@@ -27,6 +27,8 @@ const {
   mergeUserSubmittedMessageFieldPaths,
   isContentFilterError,
   withoutTraceRefs,
+  feedbackBefore,
+  saveFeedback,
 } = require('@librechat/api');
 const subagentThreadTaskStore = require('~/server/services/Endpoints/agents/subagentThreadStore');
 const { findAllArtifacts, replaceArtifactContent } = require('~/server/services/Artifacts/update');
@@ -706,6 +708,9 @@ router.put(
         return res.status(400).json({ error: 'Invalid feedback' });
       }
 
+      const previous = await feedbackBefore(() =>
+        db.getMessage({ user: req?.user?.id, messageId }),
+      );
       const updatedMessage = await db.updateMessage(
         req?.user?.id,
         {
@@ -714,6 +719,7 @@ router.put(
         },
         { context: 'updateFeedback' },
       );
+      void saveFeedback(previous, updatedMessage.feedback);
 
       // Best-effort: Assistants messages do not have deterministic AgentRun traces.
       if (!isAssistantsEndpoint(updatedMessage.endpoint)) {

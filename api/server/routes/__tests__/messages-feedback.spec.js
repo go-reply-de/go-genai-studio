@@ -14,6 +14,9 @@ jest.mock('@librechat/api', () => ({
   CHILD_THREAD_READ_ONLY_ERROR: 'Child thread is view-only.',
   isSubagentThreadWriteBlocked: jest.fn().mockResolvedValue(false),
   requireFeedbackEnabled: jest.fn((req, res, next) => next()),
+  // The fork's feedback store, as it behaves without FEEDBACK_DATASET.
+  feedbackBefore: jest.fn().mockResolvedValue(undefined),
+  saveFeedback: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock('~/server/services/Endpoints/agents/subagentThreadStore', () => ({}));
