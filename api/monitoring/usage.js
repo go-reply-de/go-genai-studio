@@ -252,7 +252,9 @@ function createUsage({ credentials, fetchFn = fetch, now = () => new Date() }) {
         },
       );
     }
-    return list.months;
+    // The list is kept for hours, so a month that has begun since then is added here.
+    const running = berlinDate.format(now()).slice(0, 7);
+    return list.months.then((all) => (all.includes(running) ? all : [running, ...all]));
   }
 
   async function load(y, m) {
@@ -449,6 +451,7 @@ function createUsage({ credentials, fetchFn = fetch, now = () => new Date() }) {
   async function interval(from, to) {
     const today = berlinDate.format(now());
     const last = to < today ? to : today;
+    const ongoing = last === today;
     const all = await months();
     const keys = all.filter((k) => k >= from.slice(0, 7) && k <= last.slice(0, 7)).reverse();
     const loaded = await Promise.all(keys.map((k) => month(...k.split('-').map(Number))));
@@ -466,7 +469,8 @@ function createUsage({ credentials, fetchFn = fetch, now = () => new Date() }) {
       const counted = part.days.flatMap((d, i) => (d ? [i + 1] : []));
       return {
         month: data.month,
-        running: data.period.running,
+        // The running month runs on only where the interval reaches today.
+        running: data.period.running && ongoing,
         firstDay: counted[0] ?? null,
         lastDay: counted.at(-1) ?? null,
         ...totals(part),
@@ -476,7 +480,7 @@ function createUsage({ credentials, fetchFn = fetch, now = () => new Date() }) {
     for (let date = from; date <= last; date = nextDay(date)) {
       days.push(byDate.get(date) ?? null);
     }
-    const period = { from, to: last, running: last === today };
+    const period = { from, to: last, running: ongoing };
     if (period.running) {
       period.through = loaded.at(-1).period.through;
     }

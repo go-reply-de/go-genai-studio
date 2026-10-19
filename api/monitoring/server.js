@@ -83,14 +83,14 @@ const isDate = (s) =>
 
 /**
  * The interval in ?from=…&to=…: undefined when none is asked, null when it is not two real
- * dates in order and at most two years apart.
+ * dates in order, at most two years apart and starting by `today`.
  */
-function askedInterval(url) {
+function askedInterval(url, today) {
   const [from, to] = ['from', 'to'].map((key) => url.searchParams.get(key));
   if (from === null && to === null) {
     return undefined;
   }
-  if (!isDate(from || '') || !isDate(to || '') || from > to) {
+  if (!isDate(from || '') || !isDate(to || '') || from > to || from > today) {
     return null;
   }
   return Date.parse(to) - Date.parse(from) > MAX_INTERVAL_DAYS * DAY_MS ? null : { from, to };
@@ -570,7 +570,7 @@ function createMonitoring({
     const route = url.pathname.startsWith(PREFIX) ? url.pathname.slice(PREFIX.length) : null;
     if (route === '/' || route === '/usage') {
       const asked = url.searchParams.get('m') || '';
-      const span = askedInterval(url) || null;
+      const span = askedInterval(url, berlinDay(now())) || null;
       let month = MONTH.test(asked) ? asked : berlinDay(now()).slice(0, 7);
       if (span) {
         month = span.to.slice(0, 7);
@@ -602,7 +602,7 @@ function createMonitoring({
       });
     }
     if (route === '/api/month') {
-      const span = askedInterval(url);
+      const span = askedInterval(url, berlinDay(now()));
       const match = MONTH.exec(url.searchParams.get('m') || '');
       if (span === null || (!span && !match)) {
         return send(res, 400, { error: span === null ? 'interval' : 'month' });
@@ -619,7 +619,7 @@ function createMonitoring({
       }
     }
     if (route === '/api/usage') {
-      const span = askedInterval(url);
+      const span = askedInterval(url, berlinDay(now()));
       const asked = url.searchParams.get('m') || '';
       if (span === null || (!span && !MONTH.test(asked))) {
         return send(res, 400, { error: span === null ? 'interval' : 'month' });

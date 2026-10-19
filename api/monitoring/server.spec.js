@@ -330,13 +330,16 @@ describe('monitoring server', () => {
     expect(data.days).toHaveLength(12);
   });
 
-  it('refuses an interval that is malformed, backwards or longer than two years', async () => {
+  it('refuses an interval that is malformed, backwards, too long or not begun', async () => {
     app = await start(bigQuery());
     for (const query of [
       'from=2026-10-05&to=2026-10-01',
       'from=2026-02-30&to=2026-03-01',
       'from=2026-10-01',
       'from=2024-01-01&to=2026-01-02',
+      // Starts after today (5 November): there is nothing to show yet.
+      'from=2026-11-06&to=2026-11-30',
+      'from=2026-12-01&to=2026-12-31',
     ]) {
       for (const api of ['month', 'usage']) {
         const res = await app.request(`/api/${api}?${query}`, { headers: REVIEWER });

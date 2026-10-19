@@ -737,10 +737,9 @@ function goToPage(page) {
 
 const rowOf = (id) => state.rows.find((r) => r.id === id);
 
-/** Keeps the month in memory in step with a deleted or cleaned text. */
-function patchCached(date, change) {
-  const entry = state.cache.get(date.slice(0, 7));
-  if (entry) {
+/** Keeps every month and interval in memory in step with a deleted, cleaned or checked text. */
+function patchCached(change) {
+  for (const entry of state.cache.values()) {
     entry.data.texts = change(entry.data.texts);
   }
 }
@@ -867,7 +866,7 @@ async function run(button, action) {
         setTimeout(resolve, matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180),
       );
       state.rows = state.rows.filter((row) => row.id !== id);
-      patchCached(r.date, (texts) => texts.filter((t) => t.id !== id));
+      patchCached((texts) => texts.filter((t) => t.id !== id));
       renderTexts();
       renderStats();
       (next ? liOf(next)?.querySelector('[data-act="delete"]') : $('texts-title'))?.focus();
@@ -878,9 +877,7 @@ async function run(button, action) {
         cleaned: result.text.includes(MARKER),
         hints: findHints(result.text),
       });
-      patchCached(r.date, (texts) =>
-        texts.map((t) => (t.id === id ? { ...t, text: result.text } : t)),
-      );
+      patchCached((texts) => texts.map((t) => (t.id === id ? { ...t, text: result.text } : t)));
       renderTexts();
       liOf(id)?.querySelector('[data-act="clean"]')?.focus();
       toast(t('cleaned', { date }));
@@ -908,7 +905,7 @@ async function run(button, action) {
 /** A text another reviewer has deleted in the meantime leaves the list. */
 function forget(r) {
   state.rows = state.rows.filter((row) => row.id !== r.id);
-  patchCached(r.date, (texts) => texts.filter((t) => t.id !== r.id));
+  patchCached((texts) => texts.filter((t) => t.id !== r.id));
   renderTexts();
   toast(t('goneAlready'));
   $('texts-title').focus();
@@ -927,7 +924,7 @@ async function review(button, id, reviewed) {
   try {
     await post(id, 'review', { reviewed });
     r.reviewed = reviewed;
-    patchCached(r.date, (texts) => texts.map((t) => (t.id === id ? { ...t, reviewed } : t)));
+    patchCached((texts) => texts.map((t) => (t.id === id ? { ...t, reviewed } : t)));
     renderTexts();
     (liOf(id)?.querySelector('[data-review]') || $('texts-title')).focus();
     toast(reviewed ? t('reviewedDone', { date }) : t('reviewWithdrawn', { date }));
@@ -1026,13 +1023,14 @@ $('incoming').addEventListener('click', () => {
 });
 
 function syncFilters() {
-  document.querySelectorAll('.seg button').forEach((b) => {
+  document.querySelectorAll('[data-rating]').forEach((b) => {
     b.setAttribute('aria-pressed', String(b.dataset.rating === state.rating));
   });
   $('hints-only').setAttribute('aria-pressed', String(state.hintsOnly));
 }
 
-document.querySelectorAll('.seg button').forEach((b) =>
+// Only the rating filter's own buttons: the header's Monat | Zeitraum switch is a .seg too.
+document.querySelectorAll('[data-rating]').forEach((b) =>
   b.addEventListener('click', () => {
     state.rating = b.dataset.rating;
     state.page = 1;

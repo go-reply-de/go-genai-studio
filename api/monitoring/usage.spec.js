@@ -429,3 +429,26 @@ describe('usage for an interval', () => {
     expect(app.calls).toHaveLength(before);
   });
 });
+
+describe('usage around the change of month', () => {
+  it('lists a new month from its first minutes, although the months list is kept for hours', async () => {
+    let at = Date.parse('2026-10-31T22:30:00Z');
+    const app = start({ messages: [[{}, always(1)]] }, () => new Date(at));
+    expect((await app.usage.view('2026-10')).months[0]).toBe('2026-10');
+    // 00:30 on 1 November in Berlin.
+    at = Date.parse('2026-10-31T23:30:00Z');
+    expect((await app.usage.view('2026-11')).months.slice(0, 2)).toEqual(['2026-11', '2026-10']);
+    const range = await app.usage.interval('2026-10-25', '2026-11-01');
+    expect(range.period).toMatchObject({ to: '2026-11-01', running: true });
+    expect(range.period.through).toBe('2026-10-31T23:30:00.000Z');
+  });
+
+  it('does not call a past interval inside the running month running', async () => {
+    const app = start({ messages: [[{}, always(1)]] }, OCT_16);
+    const view = await app.usage.interval('2026-10-01', '2026-10-10');
+    expect(view.period.running).toBe(false);
+    expect(view.trend.map((m) => [m.month, m.lastDay, m.running])).toEqual([
+      ['2026-10', 10, false],
+    ]);
+  });
+});
