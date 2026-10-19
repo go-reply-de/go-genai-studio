@@ -24,6 +24,10 @@ const METADATA = 'http://metadata.google.internal/computeMetadata/v1';
 const BIGQUERY = 'https://bigquery.googleapis.com/bigquery/v2';
 const ROW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const MONTH = /^(\d{4})-(0[1-9]|1[0-2])$/;
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const DAY_MS = 24 * 3600e3;
+/** Cloud Monitoring keeps the usage series for 24 months. */
+const MAX_INTERVAL_DAYS = 731;
 /** Finished months only change when a text is deleted or cleaned here, which clears them. */
 const CACHE_MS = 5 * 60 * 1000;
 /** Requests this close together share the running month, such as the page and its first data. */
@@ -74,6 +78,23 @@ const boolParam = (value) => ({ type: 'BOOL', value: String(value) });
 const berlinDay = (date) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' }).format(date);
 const LANG_COOKIE = /(?:^|;\s*)monitoring-lang=(de|en)(?:;|$)/;
+const isDate = (s) =>
+  DATE.test(s) && new Date(Date.parse(`${s}T00:00:00Z`) || 0).toISOString().startsWith(s);
+
+/**
+ * The interval in ?from=…&to=…: undefined when none is asked, null when it is not two real
+ * dates in order and at most two years apart.
+ */
+function askedInterval(url) {
+  const [from, to] = ['from', 'to'].map((key) => url.searchParams.get(key));
+  if (from === null && to === null) {
+    return undefined;
+  }
+  if (!isDate(from || '') || !isDate(to || '') || from > to) {
+    return null;
+  }
+  return Date.parse(to) - Date.parse(from) > MAX_INTERVAL_DAYS * DAY_MS ? null : { from, to };
+}
 
 /** The reviewer's choice from the page's switch, else the browser's first of German and English. */
 function language(req) {
@@ -204,6 +225,16 @@ function createMonitoring({
     return { rows, changed: Number(data.numDmlAffectedRows || 0) };
   }
 
+  const textRows = (rows) =>
+    rows.map(([id, date, rating, reason, text, reviewed]) => ({
+      id,
+      date,
+      rating,
+      reason,
+      text,
+      reviewed: reviewed === 'true',
+    }));
+
   const table = async (name) => `\`${(await credentials()).project}.${dataset}.${name}\``;
 
   /**
@@ -260,14 +291,7 @@ function createMonitoring({
         reasons[rating][reason] = (reasons[rating][reason] || 0) + ratings;
       }
     }
-    const texts = rows.map(([id, date, rating, reason, text, reviewed]) => ({
-      id,
-      date,
-      rating,
-      reason,
-      text,
-      reviewed: reviewed === 'true',
-    }));
+    const texts = textRows(rows);
     return {
       month: `${y}-${pad(m)}`,
       period: { from: first, to: day(y, m, until), running },
@@ -279,17 +303,58 @@ function createMonitoring({
     };
   }
 
+  /** The counts and texts of the days from `from` to `to`, up to today; nothing to compare with. */
+  async function intervalView(from, to) {
+    const today = berlinDay(now());
+    const last = to < today ? to : today;
+    const params = { first: dateParam(from), last: dateParam(last) };
+    const [{ rows: counts }, { rows }] = await Promise.all([
+      query(
+        `SELECT date, rating, reason, SUM(ratings), SUM(texts) FROM ${await table('counts')} ` +
+          'WHERE date BETWEEN @first AND @last GROUP BY date, rating, reason',
+        params,
+      ),
+      query(
+        `SELECT id, date, rating, reason, text, reviewed FROM ${await table('texts')} ` +
+          'WHERE date BETWEEN @first AND @last ORDER BY date DESC, id',
+        params,
+      ),
+    ]);
+    const current = { rated: 0, up: 0, down: 0, texts: 0 };
+    const index = (date) => Math.round((Date.parse(date) - Date.parse(from)) / DAY_MS);
+    const days = Array.from({ length: index(last) + 1 }, () => [0, 0]);
+    const reasons = { thumbsDown: {}, thumbsUp: {} };
+    for (const [date, rating, reason, ratingsValue, textsValue] of counts) {
+      const ratings = Number(ratingsValue);
+      current.texts += Number(textsValue);
+      if (rating in reasons) {
+        const up = rating === 'thumbsUp';
+        current[up ? 'up' : 'down'] += ratings;
+        current.rated += ratings;
+        days[index(date)][up ? 0 : 1] += ratings;
+        reasons[rating][reason] = (reasons[rating][reason] || 0) + ratings;
+      }
+    }
+    return {
+      period: { from, to: last, running: last === today },
+      current,
+      previous: null,
+      days,
+      reasons,
+      texts: textRows(rows),
+    };
+  }
+
   /**
    * A month's view, shared by requests that ask while it loads. A text that changes clears all
    * of them, so a result still loading then is not kept.
    */
-  async function cachedMonthView(y, m) {
-    const key = `${y}-${pad(m)}`;
+  async function cachedView(key, load) {
     const hit = views.get(key);
     if (hit && at() < hit.expires) {
       return hit.view;
     }
-    const entry = { view: monthView(y, m), expires: Infinity };
+    const entry = { view: load(), expires: Infinity };
     views.delete(key);
     views.set(key, entry);
     if (views.size > MAX_VIEWS) {
@@ -306,6 +371,10 @@ function createMonitoring({
       throw error;
     }
   }
+
+  const cachedMonthView = (y, m) => cachedView(`${y}-${pad(m)}`, () => monthView(y, m));
+  const cachedIntervalView = ({ from, to }) =>
+    cachedView(`${from}_${to}`, () => intervalView(from, to));
 
   /** Months with feedback and their ratings, newest first; the running month is always one. */
   async function feedbackMonths() {
@@ -346,7 +415,7 @@ function createMonitoring({
   }
 
   /** A tab with its header written in, so it is complete before any data arrives. */
-  function renderPage(page, reviewer, month, lang) {
+  function renderPage(page, reviewer, month, lang, span) {
     const texts = TEXTS[lang];
     const app = env.APP_TITLE?.trim() || 'Monitoring';
     const values = {
@@ -363,7 +432,13 @@ function createMonitoring({
         .slice(0, 2)
         .toUpperCase(),
       MONTH: month,
-      MONTH_LABEL: `${texts.months[Number(month.slice(5)) - 1]} ${month.slice(0, 4)}`,
+      MONTH_LABEL: span
+        ? texts.dateRange(span.from, span.to)
+        : `${texts.months[Number(month.slice(5)) - 1]} ${month.slice(0, 4)}`,
+      MODE_MONTH: String(!span),
+      MODE_RANGE: String(Boolean(span)),
+      FROM: span?.from || '',
+      TO: span?.to || '',
       SPLIT: split,
     };
     // {{t:signedInAs}} is a text in the page's language, {{USER}} a value; both escaped.
@@ -495,16 +570,26 @@ function createMonitoring({
     const route = url.pathname.startsWith(PREFIX) ? url.pathname.slice(PREFIX.length) : null;
     if (route === '/' || route === '/usage') {
       const asked = url.searchParams.get('m') || '';
-      const month = MONTH.test(asked) ? asked : berlinDay(now()).slice(0, 7);
+      const span = askedInterval(url) || null;
+      let month = MONTH.test(asked) ? asked : berlinDay(now()).slice(0, 7);
+      if (span) {
+        month = span.to.slice(0, 7);
+      }
       // The page asks for this month as soon as it has loaded; by then the queries are running.
-      const loading =
-        route === '/'
-          ? Promise.all([feedbackMonths(), cachedMonthView(...month.split('-').map(Number))])
-          : usage.view(month);
+      let loading;
+      if (route === '/') {
+        loading = Promise.all([
+          feedbackMonths(),
+          span ? cachedIntervalView(span) : cachedMonthView(...month.split('-').map(Number)),
+        ]);
+      } else {
+        loading = span ? usage.interval(span.from, span.to) : usage.view(month);
+      }
       loading.catch(() => {});
       const lang = language(req);
       const page = route === '/' ? 'feedback' : 'usage';
-      return send(res, 200, renderPage(page, reviewer, month, lang), 'text/html; charset=utf-8', {
+      const html = renderPage(page, reviewer, month, lang, span);
+      return send(res, 200, html, 'text/html; charset=utf-8', {
         'Content-Language': lang,
       });
     }
@@ -517,14 +602,15 @@ function createMonitoring({
       });
     }
     if (route === '/api/month') {
+      const span = askedInterval(url);
       const match = MONTH.exec(url.searchParams.get('m') || '');
-      if (!match) {
-        return send(res, 400, { error: 'month' });
+      if (span === null || (!span && !match)) {
+        return send(res, 400, { error: span === null ? 'interval' : 'month' });
       }
       try {
         const [list, view] = await Promise.all([
           feedbackMonths(),
-          cachedMonthView(Number(match[1]), Number(match[2])),
+          span ? cachedIntervalView(span) : cachedMonthView(Number(match[1]), Number(match[2])),
         ]);
         return send(res, 200, { ...view, ...list });
       } catch (error) {
@@ -533,12 +619,14 @@ function createMonitoring({
       }
     }
     if (route === '/api/usage') {
+      const span = askedInterval(url);
       const asked = url.searchParams.get('m') || '';
-      if (!MONTH.test(asked)) {
-        return send(res, 400, { error: 'month' });
+      if (span === null || (!span && !MONTH.test(asked))) {
+        return send(res, 400, { error: span === null ? 'interval' : 'month' });
       }
       try {
-        return send(res, 200, { ...(await usage.view(asked)), split });
+        const view = span ? await usage.interval(span.from, span.to) : await usage.view(asked);
+        return send(res, 200, { ...view, split });
       } catch (error) {
         log('ERROR', 'usage query failed', { detail: error.message });
         return send(res, error.status || 500, { error: error.message });

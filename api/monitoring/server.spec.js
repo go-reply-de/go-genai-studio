@@ -283,6 +283,89 @@ describe('monitoring server', () => {
     ]);
   });
 
+  it('sums the counts of an interval and lists its texts, with nothing to compare', async () => {
+    app = await start(
+      bigQuery({
+        months: ['2026-10', '2026-09'],
+        counts: [
+          cells('2026-09-30', 'thumbsUp', 'accurate_reliable', 2, 0),
+          cells('2026-10-02', 'thumbsDown', 'other', 1, 1),
+        ],
+        texts: [cells(ID, '2026-10-02', 'thumbsDown', 'other', 'zu kurz', false)],
+      }),
+    );
+    const res = await app.request('/api/month?from=2026-09-29&to=2026-10-03', {
+      headers: REVIEWER,
+    });
+    const data = await res.json();
+    expect(data).toMatchObject({
+      period: { from: '2026-09-29', to: '2026-10-03', running: false },
+      current: { rated: 3, up: 2, down: 1, texts: 1 },
+      previous: null,
+      reasons: { thumbsUp: { accurate_reliable: 2 }, thumbsDown: { other: 1 } },
+      texts: [{ id: ID, text: 'zu kurz', reviewed: false }],
+      months: ['2026-11', '2026-10', '2026-09'],
+    });
+    expect(data.days).toEqual([
+      [0, 0],
+      [2, 0],
+      [0, 0],
+      [0, 1],
+      [0, 0],
+    ]);
+    const queries = app.queries.filter((q) => !q.query.startsWith(MONTHS_QUERY));
+    expect(queries.map((q) => q.queryParameters.map((p) => p.parameterValue.value))).toEqual([
+      ['2026-09-29', '2026-10-03'],
+      ['2026-09-29', '2026-10-03'],
+    ]);
+  });
+
+  it('ends an interval today', async () => {
+    app = await start(bigQuery(), { now: () => new Date('2026-10-11T22:30:00Z') });
+    const res = await app.request('/api/month?from=2026-10-01&to=2026-10-31', {
+      headers: REVIEWER,
+    });
+    const data = await res.json();
+    expect(data.period).toEqual({ from: '2026-10-01', to: '2026-10-12', running: true });
+    expect(data.days).toHaveLength(12);
+  });
+
+  it('refuses an interval that is malformed, backwards or longer than two years', async () => {
+    app = await start(bigQuery());
+    for (const query of [
+      'from=2026-10-05&to=2026-10-01',
+      'from=2026-02-30&to=2026-03-01',
+      'from=2026-10-01',
+      'from=2024-01-01&to=2026-01-02',
+    ]) {
+      for (const api of ['month', 'usage']) {
+        const res = await app.request(`/api/${api}?${query}`, { headers: REVIEWER });
+        expect([api, query, res.status]).toEqual([api, query, 400]);
+      }
+    }
+  });
+
+  it('writes an interval into the page header of both tabs', async () => {
+    app = await start(bigQuery());
+    for (const route of ['/', '/usage']) {
+      const page = await (
+        await app.request(`${route}?from=2026-01-15&to=2026-07-20`, { headers: REVIEWER })
+      ).text();
+      expect(page).toContain('<span id="month-title">15. Jan. – 20. Juli 2026</span>');
+      expect(page).toContain('data-from="2026-01-15"');
+      expect(page).toContain('data-to="2026-07-20"');
+      expect(page).toContain('data-month="2026-07"');
+    }
+    const across = await (
+      await app.request('/usage?from=2025-12-15&to=2026-01-20', { headers: REVIEWER })
+    ).text();
+    expect(across).toContain('<span id="month-title">15. Dez. 2025 – 20. Jan. 2026</span>');
+    const within = await (
+      await app.request('/usage?from=2026-10-01&to=2026-10-19', { headers: REVIEWER })
+    ).text();
+    expect(within).toContain('<span id="month-title">1.–19. Okt. 2026</span>');
+  });
+
   it('reads further result pages', async () => {
     app = await start(() => Response.json({ jobComplete: true, rows: [] }));
     app.fn.mockImplementation(async (url, init) => {
@@ -577,6 +660,18 @@ describe('Nutzung tab', () => {
       ),
     ).toBe(true);
     expect(app.queries).toEqual([]);
+  });
+
+  it('answers an interval from Cloud Monitoring, with the token split', async () => {
+    app = await start(noBigQuery);
+    const res = await app.request('/api/usage?from=2026-10-30&to=2026-11-02', {
+      headers: REVIEWER,
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.period).toMatchObject({ from: '2026-10-30', to: '2026-11-02', running: false });
+    expect(data.days).toHaveLength(4);
+    expect(data.split).toBe('model');
   });
 
   it('refuses a malformed month and reports a failing Cloud Monitoring', async () => {

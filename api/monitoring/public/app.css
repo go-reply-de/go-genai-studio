@@ -434,6 +434,7 @@ textarea:focus-visible {
 .month-nav {
   position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }
@@ -607,6 +608,115 @@ textarea:focus-visible {
   height: 6px;
   border-radius: 9999px;
   background: var(--green-500);
+}
+/* Month or interval; an interval has no steps, its title opens the interval picker. */
+.month-nav[data-span='true'] .steps {
+  display: none;
+}
+.range-ends {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.range-end {
+  display: grid;
+  gap: 1px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-medium);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.range-end small {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.range-end[aria-pressed='true'] {
+  border-color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--text-primary);
+}
+.cal-head,
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  text-align: center;
+}
+.cal-head {
+  margin-bottom: 2px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.cal-grid {
+  row-gap: 2px;
+}
+.cal-grid button {
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.cal-grid button:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+.cal-grid button:disabled {
+  color: var(--text-tertiary);
+  opacity: 0.45;
+  cursor: default;
+}
+/* The days between Von and Bis run as one band; its ends are filled like the chosen month. */
+.cal-grid .in {
+  border-radius: 0;
+  background: var(--surface-tertiary);
+}
+.cal-grid .start,
+.cal-grid .end {
+  background: var(--text-primary);
+  color: var(--surface-primary);
+}
+.cal-grid .start:hover:not(:disabled),
+.cal-grid .end:hover:not(:disabled) {
+  background: var(--text-secondary);
+}
+.cal-grid .today {
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.range-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.range-quick button {
+  padding: 4px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.range-quick button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.range-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
 }
 .live {
   display: inline-flex;
@@ -1328,6 +1438,50 @@ mark.hint {
 .stats.three .value {
   font-size: 22px;
 }
+/* The month's weeks under the users per week; the one in front is marked. */
+.weeks {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 6px;
+  align-items: end;
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--border-light);
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+}
+.weeks:empty {
+  display: none;
+}
+.weeks li {
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+}
+.weeks i {
+  width: 100%;
+  max-width: 28px;
+  margin-bottom: 3px;
+  border-radius: 2px;
+  background: var(--text-tertiary);
+}
+.weeks [aria-current='true'] i {
+  background: var(--text-primary);
+}
+.weeks .running i {
+  background: none;
+  border: 1px dashed var(--text-tertiary);
+}
+.weeks b {
+  font-size: 12px;
+  font-weight: 600;
+}
+.weeks small {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
 .day-box {
   min-height: 200px;
   border-radius: 8px;
@@ -1380,6 +1534,14 @@ mark.hint {
   stroke-width: 2;
   stroke-linejoin: round;
   pointer-events: none;
+}
+/* A week only partly inside the interval, or not over yet, reads lighter than a quiet week. */
+.day-chart .part rect:not(.hit),
+#chart .part rect {
+  fill-opacity: 0.35;
+  stroke: var(--text-tertiary);
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
 }
 .day-chart .neutral {
   fill: var(--neutral);
@@ -1654,6 +1816,10 @@ mark.hint {
   /* Brand, switches and tabs take three rows here, too tall to stay on screen. */
   .topbar {
     position: static;
+  }
+  /* An interval's dates take a row of their own under the switch. */
+  .month-nav[data-span='true'] .month-heading {
+    font-size: 18px;
   }
   .stats.three {
     grid-template-columns: minmax(0, 1fr);

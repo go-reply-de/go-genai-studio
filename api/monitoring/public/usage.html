@@ -100,7 +100,14 @@
 
       <section class="month" aria-labelledby="month-title">
         <div class="month-head">
-          <div class="month-nav" role="group" aria-label="{{t:month}}">
+          <div class="month-nav" data-span="{{MODE_RANGE}}" role="group" aria-label="{{t:month}}">
+            <div class="seg mode" role="group" aria-label="{{t:modeLabel}}">
+              <button type="button" data-mode="month" aria-pressed="{{MODE_MONTH}}">
+                {{t:modeMonth}}</button
+              ><button type="button" data-mode="range" aria-pressed="{{MODE_RANGE}}">
+                {{t:modeRange}}
+              </button>
+            </div>
             <div class="steps">
               <button type="button" id="prev" aria-label="{{t:prevMonth}}" disabled>
                 <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
@@ -119,6 +126,8 @@
                 class="picker"
                 id="month-button"
                 data-month="{{MONTH}}"
+                data-from="{{FROM}}"
+                data-to="{{TO}}"
                 aria-haspopup="dialog"
                 aria-expanded="false"
                 aria-controls="month-pop"
@@ -153,6 +162,45 @@
               </div>
               <div class="month-grid" id="month-grid"></div>
             </div>
+            <div
+              class="month-pop range-pop"
+              id="range-pop"
+              role="dialog"
+              aria-label="{{t:chooseRange}}"
+              hidden
+            >
+              <div class="range-ends">
+                <button type="button" class="range-end" id="range-from" aria-pressed="true">
+                  <small>{{t:rangeFrom}}</small><span></span>
+                </button>
+                <button type="button" class="range-end" id="range-to" aria-pressed="false">
+                  <small>{{t:rangeTo}}</small><span></span>
+                </button>
+              </div>
+              <div class="pop-year">
+                <button type="button" id="cal-prev" aria-label="{{t:prevMonth}}">
+                  <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m15 18-6-6 6-6" />
+                  </svg>
+                </button>
+                <span id="cal-label" aria-live="polite"></span>
+                <button type="button" id="cal-next" aria-label="{{t:nextMonth}}">
+                  <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                </button>
+              </div>
+              <div class="cal-head" id="cal-head" aria-hidden="true"></div>
+              <div class="cal-grid" id="cal-grid"></div>
+              <div class="range-quick">
+                <button type="button" data-quick="30">{{t:last30}}</button>
+                <button type="button" data-quick="year">{{t:thisYear}}</button>
+                <button type="button" data-quick="all">{{t:sinceStart}}</button>
+              </div>
+              <div class="range-foot">
+                <button type="button" class="btn submit" id="range-apply">{{t:apply}}</button>
+              </div>
+            </div>
           </div>
           <p class="live" id="live" role="status" aria-live="polite">
             <i class="live-dot" aria-hidden="true"></i><span id="live-text">{{t:loading}}</span>
@@ -181,6 +229,7 @@
               <dt>{{t:weeklyUsers}}</dt>
               <dd class="value" id="k-weekly"><span class="skeleton"></span></dd>
               <dd class="cmp" id="p-weekly"></dd>
+              <dd><ol class="weeks" id="w-weekly" aria-label="{{t:weekRow}}"></ol></dd>
             </div>
           </dl>
           <section class="panel chart-panel" aria-labelledby="usage-chart-title">

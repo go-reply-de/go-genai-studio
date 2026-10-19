@@ -377,3 +377,55 @@ describe('usage from Cloud Monitoring', () => {
     });
   });
 });
+
+describe('usage for an interval', () => {
+  it('adds up the days of an interval across months', async () => {
+    const app = start({ messages: [[{}, always(1)]] }, OCT_16);
+    const view = await app.usage.interval('2026-09-28', '2026-10-04');
+    expect(view.period).toEqual({ from: '2026-09-28', to: '2026-10-04', running: false });
+    expect(view.days.map((d) => d.messages)).toEqual(Array(7).fill(24));
+    expect(view.totals.messages).toBe(7 * 24);
+    expect(view.trend.map((m) => [m.month, m.firstDay, m.lastDay, m.messages])).toEqual([
+      ['2026-09', 28, 30, 3 * 24],
+      ['2026-10', 1, 4, 4 * 24],
+    ]);
+  });
+
+  it('counts the weeks whose Thursday falls in the interval, with their calendar week', async () => {
+    const app = start({ weekly: [[{}, always(2)]] }, OCT_16);
+    // Friday 2 to Thursday 15 October: the week of 28 September has its Thursday outside.
+    const view = await app.usage.interval('2026-10-02', '2026-10-15');
+    expect(view.weeks.map((w) => [w.from, w.kw, w.users])).toEqual([
+      ['2026-10-05', 41, 2],
+      ['2026-10-12', 42, 2],
+    ]);
+  });
+
+  it('ends an interval now, and leaves the days before the exporter empty', async () => {
+    const app = start({ messages: [[{}, always(1)]] }, OCT_16);
+    const view = await app.usage.interval('2026-08-01', '2026-12-31');
+    expect(view.period).toEqual({
+      from: '2026-08-01',
+      to: '2026-10-16',
+      running: true,
+      through: '2026-10-16T13:20:00.000Z',
+    });
+    expect(view.days).toHaveLength(31 + 30 + 16);
+    expect(view.days.slice(0, 4)).toEqual(Array(4).fill(null));
+    expect(view.days[4].messages).toBe(24);
+    expect(view.trend.map((m) => [m.month, m.firstDay, m.lastDay, m.running])).toEqual([
+      ['2026-08', 5, 31, false],
+      ['2026-09', 1, 30, false],
+      ['2026-10', 1, 16, true],
+    ]);
+    expect(view.months).toEqual(['2026-10', '2026-09', '2026-08']);
+  });
+
+  it('answers an interval from the months already in memory', async () => {
+    const app = start({}, OCT_16);
+    await app.usage.view('2026-10');
+    const before = app.calls.length;
+    await app.usage.interval('2026-09-15', '2026-10-15');
+    expect(app.calls).toHaveLength(before);
+  });
+});

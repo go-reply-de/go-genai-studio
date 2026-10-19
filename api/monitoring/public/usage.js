@@ -1,7 +1,21 @@
 'use strict';
 /* global MonitoringShell */
 
-const { T, t, $, storage, monthLabel, berlinMonth } = MonitoringShell;
+const {
+  T,
+  t,
+  $,
+  storage,
+  daysIn,
+  shiftDay,
+  weekSpan,
+  columnsOf,
+  spanKey,
+  spanOf,
+  query,
+  label,
+  address,
+} = MonitoringShell;
 /** The server asks Cloud Monitoring again every two minutes, so asking it more often shows nothing new. */
 const REFRESH_MS = 2 * 60 * 1000;
 const SPLIT_KEY = 'monitoring-token-split';
@@ -19,9 +33,6 @@ const percent = (v) =>
 /** A share that rounds to nothing but is not nothing reads as under one per cent. */
 const share = (part, whole) =>
   part > 0 && part / whole < 0.005 ? `< ${percent(0.01)}` : percent(part / whole);
-/** A week's average of a few users keeps its decimal; larger ones read as whole people. */
-const users = (n) =>
-  num(n).toLocaleString(T.locale, { maximumFractionDigits: num(n) < 10 ? 1 : 0 });
 const change = (now, before) => {
   if (!before) {
     return '';
@@ -51,6 +62,9 @@ const shortMonth = (month) => `${T.short[monthOf(month) - 1]} ${month.slice(0, 4
 const remembered = storage((s) => s.getItem(SPLIT_KEY));
 const state = {
   data: null,
+  key: '',
+  span: null,
+  slots: [],
   want: '',
   months: [],
   trend: [],
@@ -70,7 +84,7 @@ function setLive(kind, text) {
 
 /** A running month says when it was fetched; a finished month needs no status. */
 function settleLive(data) {
-  const at = state.cache.get(data.month)?.at || Date.now();
+  const at = state.cache.get(state.key)?.at || Date.now();
   setLive('on', data.period.running ? t('live', { time: clock(at) }) : '');
 }
 
@@ -90,10 +104,10 @@ function showError(message) {
   $('error-text').textContent = message || '';
 }
 
-/** One request per month at a time; every answer is kept for switching back. */
-function request(month) {
-  if (!state.inflight.has(month)) {
-    const pending = fetch(`api/usage?m=${encodeURIComponent(month)}`, {
+/** One request per month or interval at a time; every answer is kept for switching back. */
+function request(key) {
+  if (!state.inflight.has(key)) {
+    const pending = fetch(`api/usage${query(key)}`, {
       credentials: 'same-origin',
       headers: { Accept: 'application/json' },
     })
@@ -104,24 +118,24 @@ function request(month) {
         return res.json();
       })
       .then((data) => {
-        state.cache.set(month, { data, at: Date.now() });
+        state.cache.set(key, { data, at: Date.now() });
         return data;
       })
-      .finally(() => state.inflight.delete(month));
-    state.inflight.set(month, pending);
+      .finally(() => state.inflight.delete(key));
+    state.inflight.set(key, pending);
   }
-  return state.inflight.get(month);
+  return state.inflight.get(key);
 }
 
-/** Shows a month: at once from memory, otherwise once it has loaded. The latest choice wins. */
-async function show(month) {
-  state.want = month;
+/** Shows a month or an interval: from memory, else once loaded. The latest choice wins. */
+async function show(key) {
+  state.want = key;
   state.failed = '';
   clearTimeout(state.timer);
-  picker.renderNav(month);
-  const hit = state.cache.get(month);
+  picker.renderNav(key);
+  const hit = state.cache.get(key);
   if (hit) {
-    apply(hit.data);
+    apply(hit.data, key);
     settleLive(hit.data);
     if (Date.now() - hit.at < REFRESH_MS) {
       settle(hit.data);
@@ -131,20 +145,20 @@ async function show(month) {
     busy(true);
   }
   try {
-    const data = await request(month);
-    if (state.want !== month) {
+    const data = await request(key);
+    if (state.want !== key) {
       return;
     }
-    if (!data.months.includes(month)) {
+    if (!spanOf(key) && !data.months.includes(key)) {
       // An old link to a month without data: show the newest month instead.
       history.replaceState(null, '', location.pathname);
       show(data.months[0]);
       return;
     }
-    apply(data);
+    apply(data, key);
     settle(data);
   } catch (error) {
-    if (state.want !== month) {
+    if (state.want !== key) {
       return;
     }
     busy(false);
@@ -153,16 +167,14 @@ async function show(month) {
       schedule();
       return;
     }
-    state.failed = month;
+    state.failed = key;
     showError(
-      error.message === 'forbidden'
-        ? t('usageNoAccess')
-        : t('loadFailed', { month: monthLabel(month) }),
+      error.message === 'forbidden' ? t('usageNoAccess') : t('loadFailed', { month: label(key) }),
     );
     if (state.data) {
-      state.want = state.data.month;
-      history.replaceState(null, '', `?m=${state.data.month}`);
-      picker.renderNav(state.data.month);
+      state.want = state.key;
+      address(state.key);
+      picker.renderNav(state.key);
       settleLive(state.data);
       schedule();
     } else {
@@ -175,22 +187,22 @@ function settle(data) {
   busy(false);
   showError('');
   settleLive(data);
-  prefetchAround(data.month);
+  prefetchAround(state.key);
   schedule();
 }
 
-function navigate(month) {
-  if (!month || month === state.want) {
+function navigate(key) {
+  if (!key || key === state.want) {
     return;
   }
-  history.replaceState(null, '', `?m=${month}`);
+  address(key);
   state.hover = 0;
-  show(month);
+  show(key);
 }
 
 /** Loads the months next to this one in the background, so stepping is instant. */
 function prefetchAround(month) {
-  const i = state.months.indexOf(month);
+  const i = spanOf(month) ? -1 : state.months.indexOf(month);
   for (const next of i < 0 ? [] : [state.months[i + 1], state.months[i - 1]]) {
     if (next && !state.cache.has(next)) {
       request(next).catch(() => {});
@@ -198,25 +210,25 @@ function prefetchAround(month) {
   }
 }
 
-/** Fetches the running month again. */
+/** Fetches the running month, or an interval up to today, again. */
 async function poll() {
-  const month = state.data?.month;
-  if (!month || state.want !== month) {
+  const { key } = state;
+  if (!key || state.want !== key) {
     return;
   }
-  state.cache.delete(month);
+  state.cache.delete(key);
   try {
-    const data = await request(month);
-    if (state.want === month) {
-      apply(data);
+    const data = await request(key);
+    if (state.want === key) {
+      apply(data, key);
       settleLive(data);
     }
   } catch {
-    if (state.want === month) {
+    if (state.want === key) {
       setLive('warn', t('pollFailed', { time: clock(Date.now() + REFRESH_MS) }));
     }
   } finally {
-    if (state.want === month) {
+    if (state.want === key) {
       schedule();
     }
   }
@@ -236,13 +248,19 @@ function schedule() {
   }, REFRESH_MS);
 }
 
-function apply(data) {
+function apply(data, key) {
   state.data = data;
+  state.key = key;
+  state.span = spanOf(key);
   state.months = data.months;
-  state.trend = data.trend;
+  // The month grid counts every month; an interval's trend holds only its own months.
+  if (!state.span) {
+    state.trend = data.trend;
+  }
+  state.slots = slots();
   picker.refresh();
-  picker.renderNav(data.month);
-  document.title = `${monthLabel(data.month)} · ${$('app').textContent} ${t('usageTab')}`;
+  picker.renderNav(key);
+  document.title = `${label(key)} · ${$('app').textContent} ${t('usageTab')}`;
   renderPeriod();
   renderStats();
   renderUsageTable();
@@ -251,7 +269,32 @@ function apply(data) {
   renderCharts();
 }
 
+/** An interval's length, how fresh it is and from which day it has figures. */
+function renderSpanPeriod() {
+  const d = state.data;
+  const n = d.days.length;
+  const parts = [n === 1 ? t('rangeDay') : t('rangeDays', { n: int(n) })];
+  if (d.period.running) {
+    parts.push(t('rangeRunning', { time: clock(Date.parse(d.period.through)) }));
+  }
+  if (state.slots.weekly) {
+    parts.push(state.slots.some((s) => s.part) ? t('rangeWeeklyPart') : t('rangeWeekly'));
+  }
+  const first = d.days.findIndex(Boolean);
+  if (first > 0) {
+    const date = shiftDay(d.period.from, first);
+    parts.push(
+      t('dataSince', { date: `${T.longDate(dayOf(date), monthOf(date))} ${date.slice(0, 4)}` }),
+    );
+  }
+  $('period').textContent = `${parts.join(' · ')}.`;
+}
+
 function renderPeriod() {
+  if (state.span) {
+    renderSpanPeriod();
+    return;
+  }
   const d = state.data;
   const p = d.previous;
   const m = Number(d.month.slice(5));
@@ -282,6 +325,60 @@ const webTokens = (days) =>
     .filter(([purpose]) => purpose === 'web_grounding')
     .reduce((sum, entry) => sum + entry[2], 0);
 
+/**
+ * Users per week as whole people, the last finished week in front: chats are deleted every
+ * week, so nobody can tell whether two weeks had the same users. A long interval shows the
+ * range of its finished weeks and its busiest week instead, its weeks being in the chart.
+ */
+function renderWeeks() {
+  const weeks = state.data.weeks.filter((w) => w.users !== null);
+  const kw = (w) => t('kw', { n: w.kw });
+  if (state.span && weeks.length > 6) {
+    const done = weeks.filter((w) => !w.running);
+    const values = (done.length ? done : weeks).map((w) => w.users);
+    const [min, max] = [Math.min(...values), Math.max(...values)];
+    const busiest = weeks.reduce((a, b) => (b.users > a.users ? b : a));
+    $('k-weekly').textContent =
+      min === max ? int(min) : t('usersRange', { min: int(min), max: int(max) });
+    $('p-weekly').textContent = t('busiestWeek', { kw: `${kw(busiest)}, ${weekSpan(busiest)}` });
+    $('w-weekly').innerHTML = '';
+    return;
+  }
+  const shown = weeks.filter((w) => !w.running).at(-1) || weeks.at(-1);
+  const before = weeks[weeks.indexOf(shown) - 1];
+  $('k-weekly').textContent = shown ? int(shown.users) : '–';
+  $('p-weekly').textContent = shown
+    ? [
+        `${kw(shown)}, ${weekSpan(shown)}`,
+        shown.running && t('weekSoFar'),
+        before && t('weekBefore', { n: int(before.users) }),
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : '';
+  const top = Math.max(1, ...weeks.map((w) => w.users));
+  $('w-weekly').innerHTML =
+    weeks.length > 1
+      ? weeks
+          .map((w, i) => {
+            const spoken = `${kw(w)}, ${weekSpan(w)}${w.running ? ` (${t('weekSoFar')})` : ''}`;
+            // The first week names the unit; the others carry only their number.
+            let shortLabel = i ? String(w.kw) : kw(w);
+            if (w.running) {
+              shortLabel = t('weekSoFar');
+            }
+            return (
+              `<li${w === shown ? ' aria-current="true"' : ''}${w.running ? ' class="running"' : ''}>` +
+              `<i style="height:${Math.max(2, Math.round((14 * w.users) / top))}px" aria-hidden="true"></i>` +
+              `<span class="sr-only">${esc(spoken)}: ${int(w.users)}</span>` +
+              `<b aria-hidden="true">${int(w.users)}</b>` +
+              `<small aria-hidden="true">${esc(shortLabel)}</small></li>`
+            );
+          })
+          .join('')
+      : '';
+}
+
 function renderStats() {
   const { totals: c, previous: p } = state.data;
   const vs = (now, before, format) =>
@@ -292,13 +389,7 @@ function renderStats() {
   $('p-conversations').textContent = vs(c.conversations, p?.conversations, int);
   $('k-messages').textContent = int(c.messages);
   $('p-messages').textContent = vs(c.messages, p?.messages, int);
-  $('k-weekly').textContent = c.weekly === null ? '–' : users(c.weekly);
-  $('p-weekly').textContent = [
-    c.weekMax === null ? '' : t('busiestWeek', { n: int(c.weekMax) }),
-    p?.weekly == null ? '' : t('previous', { value: users(p.weekly) }),
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  renderWeeks();
   for (const field of ['input', 'output']) {
     $(`k-${field}`).textContent = c.recorded ? amount(c[field]) : '–';
     let cmp = c.recorded ? '' : t('notRecorded');
@@ -344,12 +435,61 @@ const tokenPair = (input, output) =>
 const inputOf = (day, key, g) =>
   day.tokens.filter((e) => key(e) === g.key).reduce((sum, e) => sum + e[2], 0);
 
-/** The Nutzung lane's day chart: conversations as bars, users per day as a line. */
-function usageChart() {
-  const d = state.data;
-  const any = d.days.some((day) => day && (day.conversations || day.messages));
+/** One week's days added up, its users as the week counted them; null without any figures. */
+function weekOf(days, counted) {
+  const any = days.filter(Boolean);
+  if (!any.length) {
+    return null;
+  }
+  const tokens = new Map();
+  for (const [purpose, model, input, output] of any.flatMap((d) => d.tokens || [])) {
+    const entry = tokens.get(`${purpose}|${model}`) || [purpose, model, 0, 0];
+    entry[2] += input;
+    entry[3] += output;
+    tokens.set(`${purpose}|${model}`, entry);
+  }
   return {
-    stacks: d.days.map((day) => (day ? [{ cls: 'neutral', v: day.conversations }] : null)),
+    conversations: any.reduce((sum, d) => sum + d.conversations, 0),
+    messages: any.reduce((sum, d) => sum + d.messages, 0),
+    users: counted ? counted.users : null,
+    tokens: any.some((d) => d.tokens) ? [...tokens.values()] : null,
+  };
+}
+
+/**
+ * The columns of both charts and their tables: a month's days, an interval's days, or its
+ * calendar weeks once it is longer than two months. Each has its figures (null without any), a
+ * label for its note and table row, and one for the axis where there is room.
+ */
+function slots() {
+  const d = state.data;
+  if (!state.span) {
+    const month = monthOf(d.period.from);
+    return d.days.map((day, i) => ({
+      day,
+      label: T.shortDate(i + 1, month),
+      axis: i === 0 || (i + 1) % 5 === 0 ? T.axisDay(i + 1) : '',
+    }));
+  }
+  const columns = columnsOf(d.period.from, d.days.length);
+  const list = columns.map((c) => ({
+    ...c,
+    day: columns.weekly
+      ? weekOf(
+          c.days.map((i) => d.days[i]),
+          d.weeks.find((w) => w.from === c.monday),
+        )
+      : d.days[c.days[0]],
+  }));
+  list.weekly = columns.weekly;
+  return list;
+}
+
+/** The Nutzung lane's chart: conversations as bars, users per day or week as a line. */
+function usageChart() {
+  const any = state.slots.some((s) => s.day && (s.day.conversations || s.day.messages));
+  return {
+    stacks: state.slots.map((s) => (s.day ? [{ cls: 'neutral', v: s.day.conversations }] : null)),
     line: (day) => day.users,
     empty: any ? '' : t('noUsageYet'),
   };
@@ -366,8 +506,8 @@ function tokensChart() {
     empty = t('noTokensYet');
   }
   return {
-    stacks: d.days.map((day) =>
-      day?.tokens ? list.map((g) => ({ cls: g.cls, v: inputOf(day, key, g) })) : null,
+    stacks: state.slots.map((s) =>
+      s.day?.tokens ? list.map((g) => ({ cls: g.cls, v: inputOf(s.day, key, g) })) : null,
     ),
     empty,
   };
@@ -378,22 +518,22 @@ function topOf({ stacks, line }) {
     Math.max(
       0,
       ...stacks.filter(Boolean).map((parts) => parts.reduce((sum, p) => sum + num(p.v), 0)),
-      ...(line ? state.data.days.filter(Boolean).map(line) : []),
+      ...(line ? state.slots.filter((s) => s.day).map((s) => num(line(s.day))) : []),
     ),
   );
 }
 
 /**
- * Bars per day for the whole month, with an optional line on the same scale; in a running month
- * a thin line marks today and the days after stay empty. Drawn at the box's own size in pixels,
- * like the Feedback tab's chart. Each day is a group the other lane's chart follows.
+ * Bars per column, with an optional line on the same scale; in a running month a thin line
+ * marks today and the days after stay empty. Drawn at the box's own size in pixels, like the
+ * Feedback tab's chart. Each column is a group the other lane's chart follows.
  */
 function drawDays(svg, box, { stacks, line, empty, top, left }) {
   const d = state.data;
   const rect = box.getBoundingClientRect();
   const [w, h] = [Math.round(rect.width) || 600, Math.round(rect.height) || 200];
-  const days = d.days;
-  const last = d.period.running ? dayOf(d.period.to) : days.length;
+  const days = state.slots;
+  const last = d.period.running && !state.span ? dayOf(d.period.to) : days.length;
   const any = stacks.some((parts) => parts?.some((p) => num(p.v) > 0));
   const [right, y0, y1] = [w - 4, h - 30, 10];
   const step = (right - left) / days.length;
@@ -418,7 +558,7 @@ function drawDays(svg, box, { stacks, line, empty, top, left }) {
     out += `<rect class="today-tag" x="${marker - tagWidth / 2}" y="${y0 + 8}" width="${tagWidth}" height="20" rx="10"/>`;
     out += `<text class="today-label" x="${marker}" y="${y0 + 22}" text-anchor="middle">${t('today')}</text>`;
   }
-  days.forEach((day, i) => {
+  days.forEach((slot, i) => {
     const center = left + (i + 0.5) * step;
     if (stacks[i]) {
       let base = y0;
@@ -430,16 +570,18 @@ function drawDays(svg, box, { stacks, line, empty, top, left }) {
           base -= height + (height > 2 ? 1 : 0);
         }
       }
-      out += `<g data-day="${i + 1}"><rect class="hit" x="${left + i * step}" y="${y1}" width="${step}" height="${y0 - y1}"/>${parts}</g>`;
+      out += `<g data-day="${i + 1}"${slot.part ? ' class="part"' : ''}><rect class="hit" x="${left + i * step}" y="${y1}" width="${step}" height="${y0 - y1}"/>${parts}</g>`;
     }
     const clear = marker === null || Math.abs(center - marker) > tagWidth / 2 + 14;
-    if ((i === 0 || (i + 1) % 5 === 0) && clear) {
-      out += `<text x="${center}" y="${y0 + 22}" text-anchor="middle">${T.axisDay(i + 1)}</text>`;
+    if (slot.axis && clear) {
+      out += `<text x="${center}" y="${y0 + 22}" text-anchor="middle">${esc(slot.axis)}</text>`;
     }
   });
   if (line) {
     const points = days
-      .map((day, i) => (day ? `${left + (i + 0.5) * step},${y(line(day))}` : null))
+      .map((s, i) =>
+        s.day && line(s.day) !== null ? `${left + (i + 0.5) * step},${y(line(s.day))}` : null,
+      )
       .filter(Boolean);
     if (points.length > 1) {
       out += `<polyline class="line" points="${points.join(' ')}"/>`;
@@ -460,6 +602,7 @@ const GUTTER =
 
 /** Both day charts on one left edge, so the same day stands at the same place in both lanes. */
 function renderCharts() {
+  $('usage-chart-title').textContent = state.slots.weekly ? t('perWeekUsage') : t('perDayUsage');
   const charts = [
     [$('usage-chart'), $('usage-box'), usageChart()],
     [$('tokens-chart'), $('tokens-box'), tokensChart()],
@@ -471,15 +614,14 @@ function renderCharts() {
 }
 
 function renderUsageTable() {
-  const d = state.data;
-  const month = monthOf(d.period.from);
+  const { weekly } = state.slots;
   $('usage-table').innerHTML =
-    `<caption>${t('perDayUsage')}</caption>` +
-    `<tr><th>${t('day')}</th><th>${t('legendConversations')}</th><th>${t('messages')}</th><th>${t('legendUsers')}</th></tr>` +
-    d.days
-      .map((day, i) =>
-        day
-          ? `<tr><td>${T.shortDate(i + 1, month)}</td><td>${int(day.conversations)}</td><td>${int(day.messages)}</td><td>${int(day.users)}</td></tr>`
+    `<caption>${weekly ? t('perWeekUsage') : t('perDayUsage')}</caption>` +
+    `<tr><th>${weekly ? t('weekCol') : t('day')}</th><th>${t('legendConversations')}</th><th>${t('messages')}</th><th>${t('legendUsers')}</th></tr>` +
+    state.slots
+      .map((s) =>
+        s.day
+          ? `<tr><td>${esc(s.label)}</td><td>${int(s.day.conversations)}</td><td>${int(s.day.messages)}</td><td>${s.day.users === null ? '–' : int(s.day.users)}</td></tr>`
           : '',
       )
       .join('');
@@ -528,18 +670,20 @@ function renderSplit() {
     b.setAttribute('aria-pressed', String(b.dataset.split === state.split));
   });
   const { key, list } = groups(state.split);
-  $('tokens-chart-title').textContent = purpose ? t('tokensByPurpose') : t('tokensByModel');
+  const { weekly } = state.slots;
+  $('tokens-chart-title').textContent = t(
+    `tokensBy${purpose ? 'Purpose' : 'Model'}${weekly ? 'Week' : ''}`,
+  );
   $('tokens-legend').innerHTML = list
     .map((g) => `<span><i class="dot ${g.cls}"></i>${esc(g.short)}</span>`)
     .join('');
-  const month = monthOf(d.period.from);
   $('tokens-table').innerHTML =
-    `<caption>${t('tokensDay')}</caption>` +
-    `<tr><th>${t('day')}</th>${list.map((g) => `<th>${esc(g.label)}</th>`).join('')}</tr>` +
-    d.days
-      .map((day, i) =>
-        day?.tokens
-          ? `<tr><td>${T.shortDate(i + 1, month)}</td>${list.map((g) => `<td>${int(inputOf(day, key, g))}</td>`).join('')}</tr>`
+    `<caption>${$('tokens-chart-title').textContent}</caption>` +
+    `<tr><th>${weekly ? t('weekCol') : t('day')}</th>${list.map((g) => `<th>${esc(g.label)}</th>`).join('')}</tr>` +
+    state.slots
+      .map((s) =>
+        s.day?.tokens
+          ? `<tr><td>${esc(s.label)}</td>${list.map((g) => `<td>${int(inputOf(s.day, key, g))}</td>`).join('')}</tr>`
           : '',
       )
       .join('');
@@ -562,9 +706,30 @@ function renderSplit() {
   $('split-foot').textContent = list.length ? foot : '';
 }
 
+/** An interval's month, with the days it covers when it is cut. */
+function spanMonthLabel(m) {
+  const short = shortMonth(m.month);
+  const [y, month] = m.month.split('-').map(Number);
+  const cutStart = m.firstDay > 1;
+  const cutEnd = !m.running && m.lastDay !== null && m.lastDay < daysIn(y, month);
+  if (m.running) {
+    return t('monthRunning', { month: short });
+  }
+  if (cutStart && cutEnd) {
+    return t('monthPart', { month: short, span: T.daySpan(m.firstDay, m.lastDay) });
+  }
+  if (cutStart) {
+    return t('monthFrom', { month: short, day: T.axisDay(m.firstDay) });
+  }
+  return cutEnd ? t('monthUntil', { month: short, day: T.axisDay(m.lastDay) }) : short;
+}
+
 function renderTrends() {
-  const newest = [...state.trend].reverse();
+  const newest = [...(state.span ? state.data.trend : state.trend)].reverse();
   const label = (m) => {
+    if (state.span) {
+      return spanMonthLabel(m);
+    }
     if (m.running) {
       return t('monthRunning', { month: shortMonth(m.month) });
     }
@@ -590,26 +755,26 @@ function renderTrends() {
     .join('');
 }
 
-/** One day lifted in both lanes, its figures written under each chart; 0 shows the whole month. */
+/** One column lifted in both lanes, its figures under each chart; 0 shows the whole period. */
 function hover(day) {
   state.hover = day;
-  const data = state.data;
-  const entry = day ? data?.days[day - 1] : null;
+  const slot = day ? state.slots[day - 1] : null;
+  const entry = slot?.day;
   $('lanes').classList.toggle('linked', Boolean(entry));
   document.querySelectorAll('#lanes [data-day]').forEach((g) => {
     g.classList.toggle('hl', Number(g.dataset.day) === day);
   });
   if (!entry) {
-    $('usage-day').textContent = t('hoverHint');
+    $('usage-day').textContent = state.slots.weekly ? t('hoverHintWeek') : t('hoverHint');
     $('tokens-day').textContent = '';
     return;
   }
-  const date = T.shortDate(day, monthOf(data.period.from));
+  const date = slot.label;
   $('usage-day').textContent = t('dayUsage', {
     date,
     conversations: int(entry.conversations),
     messages: int(entry.messages),
-    users: int(entry.users),
+    users: entry.users === null ? '–' : int(entry.users),
   });
   if (!entry.tokens) {
     $('tokens-day').textContent = t('dayNoTokens', { date });
@@ -636,6 +801,18 @@ const picker = MonitoringShell.monthPicker({
   earlier: t('noUsageEarlier'),
   later: t('noUsageLater'),
   onPick: navigate,
+});
+const range = MonitoringShell.rangePicker({
+  current: () => state.want,
+  earliest: () => `${state.months.at(-1)}-01`,
+  start: () => spanOf(state.want) || MonitoringShell.monthSpan(state.want),
+  onApply: (span) => navigate(spanKey(span)),
+});
+MonitoringShell.modeSwitch({
+  current: () => state.want,
+  months: () => state.months,
+  onMonth: navigate,
+  range,
 });
 
 // A mouse lifts the day under it; a tap pins a day until the next tap, and so do the arrow keys.
@@ -664,7 +841,7 @@ $('lanes').addEventListener('keydown', (event) => {
   if (!event.target.classList.contains('day-box') || !state.data) {
     return;
   }
-  const days = state.data.days.flatMap((d, i) => (d ? [i + 1] : []));
+  const days = state.slots.flatMap((s, i) => (s.day ? [i + 1] : []));
   const i = days.indexOf(state.hover);
   const moves = {
     ArrowRight: i < 0 ? 0 : Math.min(i + 1, days.length - 1),
@@ -700,18 +877,20 @@ $('lanes').addEventListener('click', (event) => {
   }
 });
 $('retry').addEventListener('click', () => {
-  const month = state.failed || state.want;
-  history.replaceState(null, '', `?m=${month}`);
-  show(month);
+  const key = state.failed || state.want;
+  address(key);
+  show(key);
 });
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && picker.isOpen()) {
-    event.preventDefault();
-    picker.close(true);
+  for (const pop of [picker, range]) {
+    if (event.key === 'Escape' && pop.isOpen()) {
+      event.preventDefault();
+      pop.close(true);
+    }
   }
 });
 document.addEventListener('visibilitychange', () => {
-  const at = state.data ? state.cache.get(state.data.month)?.at : 0;
+  const at = state.data ? state.cache.get(state.key)?.at : 0;
   if (!document.hidden && state.data?.period.running && Date.now() - (at || 0) >= REFRESH_MS) {
     poll();
   }
@@ -728,7 +907,8 @@ document.querySelectorAll('[data-split]').forEach((b) => {
   b.setAttribute('aria-pressed', String(b.dataset.split === state.split));
 });
 
-// The server writes the month into the page; the clock is only a fallback.
-const initial = $('month-button').dataset.month || berlinMonth();
-state.months = [initial];
+// The server writes the month or interval into the page; the clock is only a fallback.
+const initial = MonitoringShell.initialKey();
+state.months = [spanOf(initial) ? initial.slice(11, 18) : initial];
+address(initial);
 show(initial);

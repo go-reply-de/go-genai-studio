@@ -93,6 +93,12 @@ function midnight(y, m, d) {
   return utc - offset(utc - offset(utc));
 }
 
+/** The day after a date, YYYY-MM-DD. */
+function nextDay(date) {
+  const [y, m, d] = date.split('-').map(Number);
+  return isoDate(y, m, d + 1);
+}
+
 /** Mondays to Sundays whose Thursday falls in the month, as ISO weeks belong to the year of theirs. */
 function weeksOf(y, m) {
   const weekday = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
@@ -100,6 +106,8 @@ function weeksOf(y, m) {
   for (let thursday = 1 + ((11 - weekday) % 7); thursday <= daysIn(y, m); thursday += 7) {
     weeks.push({
       thursday,
+      // The calendar week: its Thursday's day of the year, in sevens.
+      kw: Math.floor((Date.UTC(y, m - 1, thursday) - Date.UTC(y, 0, 1)) / DAY / 7) + 1,
       from: isoDate(y, m, thursday - 3),
       to: isoDate(y, m, thursday + 3),
       start: midnight(y, m, thursday - 3),
@@ -434,7 +442,57 @@ function createUsage({ credentials, fetchFn = fetch, now = () => new Date() }) {
     };
   }
 
-  return { view, months };
+  /**
+   * The days from `from` to `to` (YYYY-MM-DD) up to today, from the months they fall in. A week
+   * counts when its Thursday is inside, as with months; days without figures stay null.
+   */
+  async function interval(from, to) {
+    const today = berlinDate.format(now());
+    const last = to < today ? to : today;
+    const all = await months();
+    const keys = all.filter((k) => k >= from.slice(0, 7) && k <= last.slice(0, 7)).reverse();
+    const loaded = await Promise.all(keys.map((k) => month(...k.split('-').map(Number))));
+    const byDate = new Map();
+    const weeks = [];
+    const trend = loaded.map((data) => {
+      const [y, m] = data.month.split('-').map(Number);
+      const inside = (d) => isoDate(y, m, d) >= from && isoDate(y, m, d) <= last;
+      const part = {
+        days: data.days.map((d, i) => (inside(i + 1) ? d : null)),
+        weeks: data.weeks.filter((w) => inside(w.thursday)),
+      };
+      part.days.forEach((d, i) => d && byDate.set(isoDate(y, m, i + 1), d));
+      weeks.push(...part.weeks);
+      const counted = part.days.flatMap((d, i) => (d ? [i + 1] : []));
+      return {
+        month: data.month,
+        running: data.period.running,
+        firstDay: counted[0] ?? null,
+        lastDay: counted.at(-1) ?? null,
+        ...totals(part),
+      };
+    });
+    const days = [];
+    for (let date = from; date <= last; date = nextDay(date)) {
+      days.push(byDate.get(date) ?? null);
+    }
+    const period = { from, to: last, running: last === today };
+    if (period.running) {
+      period.through = loaded.at(-1).period.through;
+    }
+    return {
+      period,
+      days,
+      weeks,
+      // Every week of the interval, whatever day of a month its Thursday is.
+      totals: totals({ days, weeks }, Infinity),
+      trend,
+      months: all,
+      models: modelOrder(loaded),
+    };
+  }
+
+  return { view, months, interval };
 }
 
 module.exports = { createUsage, UsageError };

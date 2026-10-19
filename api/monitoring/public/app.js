@@ -1,7 +1,7 @@
 'use strict';
 /* global FeedbackHints, MonitoringShell */
 
-const { T, t, $, storage, monthLabel, berlinMonth } = MonitoringShell;
+const { T, t, $, storage, columnsOf, spanKey, spanOf, query, label, address } = MonitoringShell;
 const REASONS = T.reasons;
 const MONTHS = T.months;
 const REFRESH_MS = 60000;
@@ -44,7 +44,11 @@ const esc = (s) =>
   );
 const dayOf = (iso) => Number(iso.slice(8, 10));
 const monthOf = (iso) => Number(iso.slice(5, 7));
-const dm = (iso) => T.date(dayOf(iso), monthOf(iso));
+/** A text's date, with its year once an interval runs over New Year. */
+const dm = (iso) =>
+  state.span && state.span.from.slice(0, 4) !== state.span.to.slice(0, 4)
+    ? T.dateYear(dayOf(iso), monthOf(iso), iso.slice(0, 4))
+    : T.date(dayOf(iso), monthOf(iso));
 const days = (to) => T.span(dayOf(to));
 const clock = (ms) =>
   new Date(ms).toLocaleTimeString(T.locale, { hour: '2-digit', minute: '2-digit' });
@@ -55,6 +59,8 @@ let firstVisit = seenStored === null;
 
 const state = {
   data: null,
+  key: '',
+  span: null,
   rows: [],
   rating: '',
   hintsOnly: false,
@@ -137,7 +143,7 @@ function setLive(kind, text) {
 
 /** A running month says when it was fetched; a finished month needs no status. */
 function settleLive(data) {
-  const at = state.cache.get(data.month)?.at || Date.now();
+  const at = state.cache.get(state.key)?.at || Date.now();
   setLive('on', data.period.running ? t('live', { time: clock(at) }) : '');
 }
 
@@ -167,10 +173,10 @@ function toast(message) {
   }, 4000);
 }
 
-/** One request per month at a time; every answer is kept for switching back. */
-function request(month) {
-  if (!state.inflight.has(month)) {
-    const pending = fetch(`api/month?m=${encodeURIComponent(month)}`, {
+/** One request per month or interval at a time; every answer is kept for switching back. */
+function request(key) {
+  if (!state.inflight.has(key)) {
+    const pending = fetch(`api/month${query(key)}`, {
       credentials: 'same-origin',
       headers: { Accept: 'application/json' },
     })
@@ -181,24 +187,24 @@ function request(month) {
         return res.json();
       })
       .then((data) => {
-        state.cache.set(month, { data, at: Date.now() });
+        state.cache.set(key, { data, at: Date.now() });
         return data;
       })
-      .finally(() => state.inflight.delete(month));
-    state.inflight.set(month, pending);
+      .finally(() => state.inflight.delete(key));
+    state.inflight.set(key, pending);
   }
-  return state.inflight.get(month);
+  return state.inflight.get(key);
 }
 
-/** Shows a month: at once from memory, otherwise once it has loaded. The latest choice wins. */
-async function show(month) {
-  state.want = month;
+/** Shows a month or an interval: from memory, else once loaded. The latest choice wins. */
+async function show(key) {
+  state.want = key;
   state.failed = '';
   clearTimeout(state.timer);
-  renderNav(month);
-  const hit = state.cache.get(month);
+  renderNav(key);
+  const hit = state.cache.get(key);
   if (hit) {
-    apply(hit.data, false);
+    apply(hit.data, false, key);
     settleLive(hit.data);
     if (Date.now() - hit.at < FRESH_MS) {
       settle(hit.data);
@@ -208,20 +214,20 @@ async function show(month) {
     busy(true);
   }
   try {
-    const data = await request(month);
-    if (state.want !== month) {
+    const data = await request(key);
+    if (state.want !== key) {
       return;
     }
-    if (!data.months.includes(month)) {
+    if (!spanOf(key) && !data.months.includes(key)) {
       // An old link to a month without feedback: show the newest month instead.
       history.replaceState(null, '', location.pathname);
       show(data.months[0]);
       return;
     }
-    apply(data, false);
+    apply(data, false, key);
     settle(data);
   } catch (error) {
-    if (state.want !== month) {
+    if (state.want !== key) {
       return;
     }
     busy(false);
@@ -230,14 +236,14 @@ async function show(month) {
       schedule();
       return;
     }
-    state.failed = month;
+    state.failed = key;
     showError(
-      error.message === 'forbidden' ? t('noAccess') : t('loadFailed', { month: monthLabel(month) }),
+      error.message === 'forbidden' ? t('noAccess') : t('loadFailed', { month: label(key) }),
     );
     if (state.data) {
-      state.want = state.data.month;
-      history.replaceState(null, '', `?m=${state.data.month}`);
-      renderNav(state.data.month);
+      state.want = state.key;
+      address(state.key);
+      renderNav(state.key);
       settleLive(state.data);
       schedule();
     } else {
@@ -250,23 +256,23 @@ function settle(data) {
   busy(false);
   showError('');
   settleLive(data);
-  prefetchAround(data.month);
+  prefetchAround(state.key);
   schedule();
 }
 
-function navigate(month) {
-  if (!month || month === state.want) {
+function navigate(key) {
+  if (!key || key === state.want) {
     return;
   }
   closeWork(false);
   state.page = 1;
-  history.replaceState(null, '', `?m=${month}`);
-  show(month);
+  address(key);
+  show(key);
 }
 
 /** Loads the months next to this one in the background, so stepping is instant. */
 function prefetchAround(month) {
-  const i = state.months.indexOf(month);
+  const i = spanOf(month) ? -1 : state.months.indexOf(month);
   for (const next of i < 0 ? [] : [state.months[i + 1], state.months[i - 1]]) {
     if (next && !state.cache.has(next)) {
       request(next).catch(() => {});
@@ -274,30 +280,30 @@ function prefetchAround(month) {
   }
 }
 
-/** Fetches the running month again; new texts slide in. */
+/** Fetches the running month, or an interval up to today, again; new texts slide in. */
 async function poll() {
-  const month = state.data?.month;
-  if (!month || state.want !== month) {
+  const { key } = state;
+  if (!key || state.want !== key) {
     return;
   }
   try {
-    const data = await request(month);
-    if (state.want === month) {
-      apply(data, true);
+    const data = await request(key);
+    if (state.want === key) {
+      apply(data, true, key);
       settleLive(data);
     }
   } catch {
-    if (state.want === month) {
+    if (state.want === key) {
       setLive('warn', t('pollFailed', { time: clock(Date.now() + REFRESH_MS) }));
     }
   } finally {
-    if (state.want === month) {
+    if (state.want === key) {
       schedule();
     }
   }
 }
 
-function apply(data, live) {
+function apply(data, live, key) {
   const known = new Set(state.rows.map((r) => r.id));
   if (live) {
     const target = state.page === 1 && !state.open ? state.arrived : state.held;
@@ -321,6 +327,8 @@ function apply(data, live) {
     firstVisit = false;
   }
   state.data = data;
+  state.key = key;
+  state.span = spanOf(key);
   // Texts carry a day but no time, so a text that came in while the page was open goes first in its day.
   const order = new Map(data.texts.map((t, i) => [t.id, i]));
   const arrival = (r) => state.arrivals.get(r.id) || 0;
@@ -333,7 +341,7 @@ function apply(data, live) {
         order.get(a.id) - order.get(b.id),
     );
   renderMonths(data.months, data.ratingsByMonth);
-  renderNav(data.month);
+  renderNav(key);
   if (state.open && !state.rows.some((r) => r.id === state.open.id)) {
     state.open = null;
     toast(t('goneWhileEditing'));
@@ -386,16 +394,46 @@ const picker = MonitoringShell.monthPicker({
   later: t('noLater'),
   onPick: (month) => navigate(month),
 });
-const renderNav = (month) => picker.renderNav(month);
+const renderNav = (key) => picker.renderNav(key);
+const range = MonitoringShell.rangePicker({
+  current: () => state.want,
+  earliest: () => `${state.months.at(-1)}-01`,
+  start: () => spanOf(state.want) || MonitoringShell.monthSpan(state.want),
+  onApply: (span) => navigate(spanKey(span)),
+});
+MonitoringShell.modeSwitch({
+  current: () => state.want,
+  months: () => state.months,
+  onMonth: navigate,
+  range,
+});
 
 /** The brand and the reviewer are written into the page by the server; only the month changes. */
 function renderHeader() {
-  document.title = `${monthLabel(state.data.month)} · ${$('app').textContent} Feedback`;
+  document.title = `${label(state.key)} · ${$('app').textContent} Feedback`;
 }
 
-function renderStats() {
+/** A month against the one before; an interval with its length, there being nothing to compare. */
+function renderPeriod() {
   const d = state.data;
-  const c = d.current;
+  if (state.span) {
+    const n = d.days.length;
+    const parts = [n === 1 ? t('rangeDay') : t('rangeDays', { n: int(n) })];
+    if (d.period.running) {
+      parts.push(t('rangeRunning', { time: clock(state.cache.get(state.key)?.at || Date.now()) }));
+    }
+    const cols = columns();
+    if (cols.weekly) {
+      parts.push(cols.some((c) => c.part) ? t('rangeWeeklyPart') : t('rangeWeekly'));
+    }
+    // The feedback store began later than the interval.
+    const oldest = state.months.at(-1);
+    if (oldest && `${oldest}-01` > d.period.from) {
+      parts.push(t('feedbackSince', { month: MonitoringShell.monthLabel(oldest) }));
+    }
+    $('period').textContent = `${parts.join(' · ')}.`;
+    return false;
+  }
   const p = d.previous;
   const before = MONTHS[monthOf(p.from) - 1];
   // A month without feedback, such as one before the store existed, is no comparison.
@@ -412,6 +450,15 @@ function renderStats() {
         scope,
       })
     : t('periodClosed', { scope });
+  return compare;
+}
+
+function renderStats() {
+  const d = state.data;
+  const c = d.current;
+  // An interval has nothing to compare with, so these zeros are never shown.
+  const p = d.previous || { rated: 0, up: 0, down: 0, texts: 0 };
+  const compare = renderPeriod();
   const vs = (value) => (compare ? t('previous', { value }) : '');
   $('k-rated').textContent = int(c.rated);
   $('p-rated').textContent = vs(int(p.rated));
@@ -434,17 +481,41 @@ function niceMax(max) {
   return (Math.ceil((max / step) * 2) * step) / 2;
 }
 
+/** The chart's columns: a month's days, or an interval's days or calendar weeks. */
+function columns() {
+  const d = state.data;
+  const days = d.days.map(([up, down]) => [num(up), num(down)]);
+  if (!state.span) {
+    const month = monthOf(d.period.from);
+    return days.map((v, i) => ({
+      v,
+      label: T.shortDate(i + 1, month),
+      axis: i === 0 || (i + 1) % 5 === 0 ? T.axisDay(i + 1) : '',
+    }));
+  }
+  const list = columnsOf(d.period.from, days.length);
+  const result = list.map((c) => ({
+    ...c,
+    v: c.days.reduce(([up, down], i) => [up + days[i][0], down + days[i][1]], [0, 0]),
+  }));
+  result.weekly = list.weekly;
+  return result;
+}
+
 /**
- * The whole month; in a running month a thin line marks today and the days after stay empty.
- * Drawn at the box's own size in pixels, so it fills its panel and the text reads the same everywhere.
+ * The whole month or interval; in a running month a thin line marks today and the days after
+ * stay empty. Drawn at the box's own size in pixels, so it fills its panel and the text reads
+ * the same everywhere.
  */
 function renderChart() {
   const d = state.data;
   const box = $('chart-box').getBoundingClientRect();
   const [w, h] = [Math.round(box.width) || 1000, Math.round(box.height) || 220];
-  const month = monthOf(d.period.from);
-  const last = d.period.running ? dayOf(d.period.to) : d.days.length;
-  const values = d.days.map(([up, down]) => [num(up), num(down)]);
+  const cols = columns();
+  const last = d.period.running && !state.span ? dayOf(d.period.to) : cols.length;
+  const values = cols.map((c) => c.v);
+  const unit = cols.weekly ? t('perWeek') : t('perDay');
+  $('chart-title').textContent = unit;
   const top = niceMax(Math.max(0, ...values.slice(0, last).map(([up, down]) => up + down)));
   const [left, right, y0, y1] = [40, w - 4, h - 30, 10];
   const step = (right - left) / values.length;
@@ -471,15 +542,15 @@ function renderChart() {
     const center = left + (i + 0.5) * step;
     const x = center - width / 2;
     if (i < last) {
-      const title = `<title>${t('dayTip', { date: T.shortDate(i + 1, month), up, down })}</title>`;
+      const title = `<title>${esc(t('dayTip', { date: cols[i].label, up, down }))}</title>`;
       const hu = y0 - y(up);
       const hd = y0 - y(down);
-      svg += `<g>${title}<rect class="up" x="${x}" y="${y0 - hu}" width="${width}" height="${hu}" rx="${radius}"/>`;
+      svg += `<g${cols[i].part ? ' class="part"' : ''}>${title}<rect class="up" x="${x}" y="${y0 - hu}" width="${width}" height="${hu}" rx="${radius}"/>`;
       svg += `<rect class="down" x="${x}" y="${y0 - hu - hd - (hd ? 2 : 0)}" width="${width}" height="${hd}" rx="${radius}"/></g>`;
     }
     const clear = marker === null || Math.abs(center - marker) > tagWidth / 2 + 14;
-    if ((i === 0 || (i + 1) % 5 === 0) && clear) {
-      svg += `<text x="${center}" y="${y0 + 22}" text-anchor="middle">${T.axisDay(i + 1)}</text>`;
+    if (cols[i].axis && clear) {
+      svg += `<text x="${center}" y="${y0 + 22}" text-anchor="middle">${esc(cols[i].axis)}</text>`;
     }
   });
   if (!values.slice(0, last).some(([up, down]) => up + down)) {
@@ -487,13 +558,12 @@ function renderChart() {
   }
   $('chart').innerHTML = svg;
   $('chart-table').innerHTML =
-    `<caption>${t('perDay')}</caption>` +
-    `<tr><th>${t('day')}</th><th>${t('thumbsUp')}</th><th>${t('thumbsDown')}</th></tr>` +
+    `<caption>${unit}</caption>` +
+    `<tr><th>${cols.weekly ? t('weekCol') : t('day')}</th><th>${t('thumbsUp')}</th><th>${t('thumbsDown')}</th></tr>` +
     values
       .slice(0, last)
       .map(
-        ([up, down], i) =>
-          `<tr><td>${T.shortDate(i + 1, month)}</td><td>${up}</td><td>${down}</td></tr>`,
+        ([up, down], i) => `<tr><td>${esc(cols[i].label)}</td><td>${up}</td><td>${down}</td></tr>`,
       )
       .join('');
 }
@@ -983,9 +1053,9 @@ $('filter').addEventListener('input', () => {
   }
 });
 $('retry').addEventListener('click', () => {
-  const month = state.failed || state.want;
-  history.replaceState(null, '', `?m=${month}`);
-  show(month);
+  const key = state.failed || state.want;
+  address(key);
+  show(key);
 });
 
 document.addEventListener('keydown', (event) => {
@@ -993,9 +1063,10 @@ document.addEventListener('keydown', (event) => {
   if (event.key === '/' && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault();
     $('filter').focus();
-  } else if (event.key === 'Escape' && picker.isOpen()) {
+  } else if (event.key === 'Escape' && (picker.isOpen() || range.isOpen())) {
     event.preventDefault();
     picker.close(true);
+    range.close(true);
   } else if (event.key === 'Escape' && state.open) {
     event.preventDefault();
     closeWork();
@@ -1003,7 +1074,7 @@ document.addEventListener('keydown', (event) => {
 });
 
 document.addEventListener('visibilitychange', () => {
-  const at = state.data ? state.cache.get(state.data.month)?.at : 0;
+  const at = state.data ? state.cache.get(state.key)?.at : 0;
   if (!document.hidden && state.data?.period.running && Date.now() - (at || 0) >= REFRESH_MS) {
     poll();
   }
@@ -1016,7 +1087,8 @@ new ResizeObserver(() => {
   }
 }).observe($('chart-box'));
 
-// The server writes the month into the page; the clock is only a fallback.
-const initial = $('month-button').dataset.month || berlinMonth();
-renderMonths([initial]);
+// The server writes the month or interval into the page; the clock is only a fallback.
+const initial = MonitoringShell.initialKey();
+renderMonths([spanOf(initial) ? initial.slice(11, 18) : initial]);
+address(initial);
 show(initial);
