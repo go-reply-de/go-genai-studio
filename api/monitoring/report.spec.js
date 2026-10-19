@@ -113,6 +113,17 @@ const usageOctober = {
   models: ['gemini-3.8-flash', 'gemini-3.5-flash-lite'],
 };
 
+/** 28 September to 1 November, the whole weeks of October: 10 a day, 100 in September, 1000 on 1 November. */
+const octoberWeeks = {
+  period: { from: '2026-09-28', to: '2026-11-01', running: false },
+  days: Array.from({ length: 35 }, (_, i) => {
+    if (i < 3) {
+      return day(100);
+    }
+    return day(i === 34 ? 1000 : 10);
+  }),
+};
+
 const ENV = {
   APP_TITLE: 'DiMeAs',
   ENVIRONMENT: 'sov-prod',
@@ -124,7 +135,7 @@ const ENV = {
 const NOVEMBER_1 = () => new Date('2026-11-01T05:00:00Z');
 
 function setUp({ env = ENV, now = NOVEMBER_1, feedbackMonth = october, written = 'ok' } = {}) {
-  const calls = { feedback: [], usage: [], uploads: [], logs: [] };
+  const calls = { feedback: [], usage: [], interval: [], uploads: [], logs: [] };
   const feedback = {
     monthView: async (y, m) => {
       calls.feedback.push([y, m]);
@@ -135,6 +146,10 @@ function setUp({ env = ENV, now = NOVEMBER_1, feedbackMonth = october, written =
     view: async (key) => {
       calls.usage.push(key);
       return usageOctober;
+    },
+    interval: async (from, to) => {
+      calls.interval.push([from, to]);
+      return octoberWeeks;
     },
   };
   const report = createReport({
@@ -285,36 +300,19 @@ describe('monitoring report', () => {
     expect(html).toContain('&lt; 0,1 %');
   });
 
-  it('prints every day as a number in a calendar, since a file has nothing to hover', () => {
-    const { renderReport } = require('./report');
-    // 3, 6, 9 … conversations; the 20th has no figure.
-    const days = Array.from({ length: 31 }, (_, i) => (i === 19 ? null : 3 * (i + 1)));
-    const html = renderReport(
-      {
-        key: '2026-10',
-        previousKey: '2026-09',
-        feedback: { ...october, unchecked: 0 },
-        usage: {
-          totals: usageOctober.totals,
-          previous: null,
-          days,
-          weeks: [],
-          users: null,
-          tokens: [],
-          split: 'purpose',
-        },
-      },
-      { env: ENV, created: 'heute', page: ENV.PAGE_URL },
-    );
+  it('counts conversations and users per whole week, also on days in the neighbouring months', async () => {
+    const app = setUp();
+    await app.report.run();
+    expect(app.calls.interval).toEqual([['2026-09-28', '2026-11-01']]);
+    const { html } = app.calls.uploads[0];
     expect(html).not.toContain('<svg');
-    expect(html).toContain(
-      '<th>Mo</th><th>Di</th><th>Mi</th><th>Do</th><th>Fr</th><th>Sa</th><th>So</th>',
-    );
-    // 1 October 2026 is a Thursday, in KW 40; 31 October a Saturday, in KW 44.
-    expect(html).toMatch(/KW 40<\/th>(<td><\/td>){3}<td[^>]*><small>1\.<\/small>3<\/td>/);
-    expect(html).toMatch(/<small>14\.<\/small>42<\/td>/);
-    expect(html).toMatch(/<small>20\.<\/small>–<\/td>/);
-    expect(html).toMatch(/KW 44<\/th>(<td[^>]*>.*?<\/td>){6}<td><\/td><\/tr>/);
+    expect(html).toContain('<th>Woche</th><th>Unterhaltungen</th><th>Nutzer</th>');
+    // KW 40 has three September days, KW 44 the first of November.
+    expect(html).toMatch(/KW 40<small>28\.9\.–4\.10\.<\/small><\/td><td>340<\/td><td>74<\/td>/);
+    expect(html).toMatch(/KW 41<small>[^<]*<\/small><\/td><td>70<\/td><td>77<\/td>/);
+    expect(html).toMatch(/KW 44<small>26\.10\.–1\.11\.<\/small><\/td><td>1\.060<\/td><td>79<\/td>/);
+    // Newest week first, as on the page.
+    expect(html.indexOf('KW 44<small>')).toBeLessThan(html.indexOf('KW 40<small>'));
   });
 
   it('keeps a report that already exists and sends nothing', async () => {

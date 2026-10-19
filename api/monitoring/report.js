@@ -84,12 +84,25 @@ function tokenGroups(days, split) {
   return [...groups.values()].sort((a, b) => b.input - a.input);
 }
 
+const DAY = 24 * 60 * 60 * 1000;
+
+/** A week's conversations on all seven days, also those in the neighbouring months. */
+function weekConversations(week, span) {
+  const start = Math.round((Date.parse(week.from) - Date.parse(span.period.from)) / DAY);
+  const days = span.days.slice(Math.max(0, start), start + 7).filter(Boolean);
+  return days.length ? days.reduce((sum, d) => sum + d.conversations, 0) : null;
+}
+
 /**
  * Everything the report shows, as counts. The comments are only counted here and go no further.
  */
-function figures({ key, fb, use, env }) {
-  const weeks = use.weeks.filter((w) => w.users !== null && w.users !== undefined);
-  const values = weeks.filter((w) => !w.running).map((w) => w.users);
+function figures({ key, fb, use, span, env }) {
+  const weeks = use.weeks.map((w) => ({
+    ...w,
+    users: w.users ?? null,
+    conversations: span ? weekConversations(w, span) : null,
+  }));
+  const values = weeks.filter((w) => w.users !== null && !w.running).map((w) => w.users);
   const unchecked = fb.texts.filter((c) => !c.reviewed && findHints(c.text).length > 0).length;
   return {
     key,
@@ -98,7 +111,6 @@ function figures({ key, fb, use, env }) {
     usage: {
       totals: use.totals,
       previous: use.previous,
-      days: use.days.map((d) => d?.conversations ?? null),
       weeks,
       users: values.length ? [Math.min(...values), Math.max(...values)] : null,
       tokens: use.totals.recorded ? tokenGroups(use.days, env.USAGE_TOKEN_SPLIT) : [],
@@ -145,40 +157,6 @@ function summary(data, object, page) {
   };
 }
 
-const DAY = 24 * 60 * 60 * 1000;
-/** ISO week of the week that starts on this Monday: the week of its Thursday. */
-const isoWeek = (monday) => {
-  const thursday = new Date(monday + 3 * DAY);
-  return Math.floor((thursday - Date.UTC(thursday.getUTCFullYear(), 0, 1)) / DAY / 7) + 1;
-};
-
-/** Conversations per day as a calendar with the figure in every cell: a file has nothing to hover. */
-function dayCalendar(key, days) {
-  const [y, m] = [Number(key.slice(0, 4)), Number(key.slice(5))];
-  const lead = (new Date(Date.UTC(y, m - 1, 1)).getUTCDay() + 6) % 7;
-  const top = Math.max(1, ...days.map((v) => v || 0));
-  const cells = [
-    ...Array.from({ length: lead }, () => '<td></td>'),
-    ...days.map((v, i) => {
-      const shade =
-        v > 0 ? ` style="background:rgba(89,89,89,${(0.04 + (0.2 * v) / top).toFixed(2)})"` : '';
-      return `<td${shade}><small>${i + 1}.</small>${v === null ? '–' : int(v)}</td>`;
-    }),
-  ];
-  while (cells.length % 7) {
-    cells.push('<td></td>');
-  }
-  const rows = [];
-  for (let r = 0; r < cells.length / 7; r++) {
-    const monday = Date.UTC(y, m - 1, 1 - lead + 7 * r);
-    rows.push(
-      `<tr><th>${esc(t('kw', { n: isoWeek(monday) }))}</th>${cells.slice(7 * r, 7 * r + 7).join('')}</tr>`,
-    );
-  }
-  const head = T.weekdays.map((d) => `<th>${esc(d)}</th>`).join('');
-  return `<table class="days"><thead><tr><th></th>${head}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
-}
-
 const bars = (rows) => {
   const top = Math.max(1, ...rows.map((r) => r.value));
   return rows
@@ -210,21 +188,16 @@ th:first-child, td:first-child { text-align: left; }
 td + td, .nb { white-space: nowrap; }
 th { font-weight: 600; color: #595959; }
 .bar { display: grid; grid-template-columns: 13rem minmax(0, 1fr) 3.5rem; gap: 10px; align-items: center; padding: 3px 0; font-variant-numeric: tabular-nums; }
-.bar small { color: #595959; margin-left: 6px; }
 .track { height: 7px; border-radius: 9px; background: #ececec; overflow: hidden; }
 .track i { display: block; height: 100%; border-radius: 9px; background: #595959; }
 .bar .v { text-align: right; }
-.days th, .days td { padding: 3px 2px; text-align: center; border: 2px solid #fff; }
-.days th { font-weight: 400; color: #595959; }
-.days tbody th { text-align: left; white-space: nowrap; }
-.days td { line-height: 1.2; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.days small { display: block; font-size: 10px; color: #595959; }
+.weeks small { color: #595959; margin-left: 6px; }
 .box { border: 1px solid #e3e3e3; border-radius: 10px; padding: 12px 14px; margin-top: 14px; }
 .box strong { font-variant-numeric: tabular-nums; }
 a { color: #0c66e4; }
 @media (max-width: 640px) { main { margin: 0; padding: 20px 16px; border: 0; border-radius: 0; } .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .cols { grid-template-columns: minmax(0, 1fr); gap: 0; } .bar { grid-template-columns: 8.5rem minmax(0, 1fr) 3rem; } }
 @page { size: A4; margin: 14mm; }
-@media print { body { background: #fff; font-size: 13px; } main { border: 0; margin: 0; padding: 0; max-width: none; } h2 { margin: 18px 0 8px; } .bar { padding: 1px 0; line-height: 1.3; } .days th, .days td { padding: 1px 2px; border-width: 1px; line-height: 1.1; } .days small { font-size: 9px; } }
+@media print { body { background: #fff; font-size: 13px; } main { border: 0; margin: 0; padding: 0; max-width: none; } h2 { margin: 18px 0 8px; } .bar { padding: 1px 0; line-height: 1.3; } }
 `;
 
 /** The report page itself, in German like its readers. */
@@ -242,10 +215,16 @@ function renderReport(data, { env, created, page }) {
     .filter(([, n]) => n > 0)
     .sort((a, b) => b[1] - a[1])
     .map(([key, value]) => ({ label: esc(T.reasons[key] || key), value }));
-  const weeks = [...u.weeks].reverse().map((w) => ({
-    label: `${esc(t('kw', { n: w.kw }))}<small>${esc(weekDates(w))}${w.running ? ', bisher' : ''}</small>`,
-    value: w.users,
-  }));
+  const count = (n) => (n === null ? '–' : int(n));
+  const weekRows = u.weeks.length
+    ? [...u.weeks]
+        .reverse()
+        .map(
+          (w) =>
+            `<tr><td>${esc(t('kw', { n: w.kw }))}<small>${esc(weekDates(w))}${w.running ? ', bisher' : ''}</small></td><td>${count(w.conversations)}</td><td>${count(w.users)}</td></tr>`,
+        )
+        .join('')
+    : '<tr><td colspan="3">Keine Wochenzahlen für diesen Monat.</td></tr>';
   const tokenRows = u.tokens.length
     ? u.tokens
         .map((g) => {
@@ -293,10 +272,10 @@ ${reasons.length ? bars(reasons) : '<p class="note">Keine Bewertungen mit Daumen
 </section>
 <section>
 <h2>Nutzung</h2>
-<h3>Unterhaltungen pro Tag</h3>
-${dayCalendar(data.key, u.days)}
-<h3>Nutzer je Woche</h3>
-${weeks.length ? bars(weeks) : '<p class="note">Keine Nutzerzahlen für diesen Monat.</p>'}
+<h3>Je Woche</h3>
+<table class="weeks"><thead><tr><th>Woche</th><th>Unterhaltungen</th><th>Nutzer</th></tr></thead><tbody>
+${weekRows}
+</tbody></table>
 <h2>Tokens nach ${u.split === 'model' ? 'Modell' : 'Verwendung'}</h2>
 <table><thead><tr><th>${u.split === 'model' ? 'Modell' : 'Verwendung'}</th><th>Eingabe</th><th>Ausgabe</th><th>Anteil</th></tr></thead><tbody>
 ${tokenRows}
@@ -306,7 +285,7 @@ ${tokenRows}
 
 
 <h2>Hinweise</h2>
-<p class="note">Jede Person zählt einmal pro Woche, egal wie oft sie schreibt. Die Wochen ergeben zusammen keine Gesamtzahl, weil dieselbe Person in mehreren Wochen vorkommen kann. Eine Woche über einen Monatswechsel steht bei dem Monat, in dem die meisten ihrer Tage liegen. Der Bericht enthält nur Zahlen; Freitexte bleiben auf der Monitoring-Seite.</p>
+<p class="note">Jede Person zählt einmal pro Woche, egal wie oft sie schreibt; die Wochen ergeben darum zusammen keine Nutzerzahl für den Monat. Eine Woche über einen Monatswechsel zählt mit allen sieben Tagen und steht bei dem Monat, in dem die meisten ihrer Tage liegen. Der Bericht enthält nur Zahlen; Freitexte bleiben auf der Monitoring-Seite.</p>
 </main></body></html>
 `;
 }
@@ -345,7 +324,11 @@ function createReport({ env, now = () => new Date(), feedback, usage, upload: pu
     const [y, m] = reportMonth(env.REPORT_MONTH, now());
     const key = `${y}-${pad(m)}`;
     const [fb, use] = await Promise.all([feedback.monthView(y, m), usage.view(key)]);
-    const data = figures({ key, fb, use, env });
+    // The month's whole weeks, which reach into the months around it.
+    const span = use.weeks.length
+      ? await usage.interval(use.weeks[0].from, use.weeks.at(-1).to)
+      : null;
+    const data = figures({ key, fb, use, span, env });
     const object = `reports/monatsbericht-${key}.html`;
     const page = env.PAGE_URL || '';
     const created = `${berlin(now(), { day: 'numeric', month: 'long', year: 'numeric' })}, ${berlin(now(), { hour: '2-digit', minute: '2-digit' })} Uhr`;
