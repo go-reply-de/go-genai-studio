@@ -1,12 +1,9 @@
 'use strict';
-/* global FeedbackHints, FeedbackTexts */
+/* global FeedbackHints, MonitoringShell */
 
-// The page's language, which the server writes into <html lang> from the reviewer's choice.
-const T = FeedbackTexts[document.documentElement.lang === 'en' ? 'en' : 'de'];
-const t = (key, values = {}) => T[key].replace(/\{(\w+)\}/g, (_, name) => values[name] ?? '');
+const { T, t, $, storage, monthLabel, berlinMonth } = MonitoringShell;
 const REASONS = T.reasons;
 const MONTHS = T.months;
-const SHORT = T.short;
 const REFRESH_MS = 60000;
 /** A month shown from memory is checked again in the background once it is this old. */
 const FRESH_MS = 60000;
@@ -15,8 +12,6 @@ const PAGE_SIZE = 10;
 const MARKER = '[entfernt]';
 const SEEN_KEY = 'feedback-seen';
 const SEEN_MAX = 5000;
-const THEME_KEY = 'feedback-theme';
-const LANG_COOKIE = 'feedback-lang';
 
 const ICON = {
   prev: '<svg class="i small" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>',
@@ -31,7 +26,6 @@ const ICON = {
     '<svg class="i small" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>',
 };
 
-const $ = (id) => document.getElementById(id);
 // Possible personal data, marked only in this browser (hints.js).
 const { findHints } = FeedbackHints;
 const num = (n) => Math.max(0, Number(n) || 0);
@@ -54,22 +48,6 @@ const dm = (iso) => T.date(dayOf(iso), monthOf(iso));
 const days = (to) => T.span(dayOf(to));
 const clock = (ms) =>
   new Date(ms).toLocaleTimeString(T.locale, { hour: '2-digit', minute: '2-digit' });
-const monthLabel = (month) => `${MONTHS[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`;
-const berlinMonth = () =>
-  new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Berlin',
-    year: 'numeric',
-    month: '2-digit',
-  }).format(new Date());
-
-function storage(read) {
-  try {
-    return read(localStorage);
-  } catch {
-    return null;
-  }
-}
-
 // Texts seen in an earlier visit; anything else is marked new. A first visit marks nothing.
 const seenStored = storage((s) => s.getItem(SEEN_KEY));
 const seen = new Set(storage(() => JSON.parse(seenStored || '[]')) || []);
@@ -90,7 +68,6 @@ const state = {
   arrived: new Set(),
   months: [],
   ratings: {},
-  year: 0,
   want: '',
   failed: '',
   cache: new Map(),
@@ -387,131 +364,29 @@ function schedule() {
 function renderMonths(months, ratings = {}) {
   state.months = months;
   state.ratings = ratings;
-  if (!$('month-pop').hidden) {
-    renderGrid();
-  }
+  picker.refresh();
 }
 
 /** A loaded month knows its ratings best; for the running month that is the latest poll. */
 const ratingsOf = (month) =>
   state.cache.get(month)?.data.current.rated ?? state.ratings[month] ?? 0;
 
-/** One year as a grid; only months with feedback can be opened. */
-function renderGrid() {
-  const focused = document.activeElement?.closest?.('#month-grid button')?.dataset.month;
-  const newest = state.months[0] || state.want;
-  const years = state.months.map((month) => Number(month.slice(0, 4)));
-  $('year-label').textContent = state.year;
-  $('year-prev').disabled = state.year <= Math.min(...years);
-  $('year-next').disabled = state.year >= Math.max(...years);
-  const cells = MONTHS.map((name, i) => {
-    const month = `${state.year}-${String(i + 1).padStart(2, '0')}`;
-    const cell = document.createElement('button');
-    cell.type = 'button';
-    cell.tabIndex = -1;
-    cell.dataset.month = month;
-    cell.disabled = !state.months.includes(month);
-    let count = month > newest ? '' : '–';
-    let detail = month > newest ? t('notStarted') : t('noFeedback');
-    if (!cell.disabled) {
-      count = int(ratingsOf(month));
-      detail = ratingsOf(month) === 1 ? t('ratingsOne') : t('ratingsMany', { n: count });
-      if (month === newest) {
-        detail += `, ${t('runningTag')}`;
-      }
-    }
-    cell.innerHTML = `<span>${SHORT[i]}</span><small>${count}</small>`;
-    cell.setAttribute('aria-label', `${name} ${state.year}, ${detail}`);
-    cell.classList.toggle('running', month === newest);
-    if (month === state.want) {
-      cell.setAttribute('aria-current', 'true');
-    }
-    return cell;
-  });
-  $('month-grid').replaceChildren(...cells);
-  const target =
-    cells.find((c) => c.dataset.month === focused && !c.disabled) ||
-    cells.find((c) => c.hasAttribute('aria-current')) ||
-    cells.find((c) => !c.disabled);
-  if (target) {
-    target.tabIndex = 0;
-    if (focused) {
-      target.focus();
-    }
-  }
-}
-
-function openPicker() {
-  state.year = Number(state.want.slice(0, 4));
-  $('month-pop').hidden = false;
-  $('month-button').setAttribute('aria-expanded', 'true');
-  renderGrid();
-  $('month-grid').querySelector('[tabindex="0"]')?.focus();
-}
-
-function closePicker(restoreFocus) {
-  if ($('month-pop').hidden) {
-    return;
-  }
-  $('month-pop').hidden = true;
-  $('month-button').setAttribute('aria-expanded', 'false');
-  if (restoreFocus) {
-    $('month-button').focus();
-  }
-}
-
-function changeYear(step) {
-  state.year += step;
-  renderGrid();
-  // A year button that has just been disabled drops focus; keep it inside the picker.
-  if (document.activeElement === document.body || document.activeElement?.disabled) {
-    $('month-grid').querySelector('[tabindex="0"]')?.focus();
-  }
-}
-
-const GRID_KEYS = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -4, ArrowDown: 4 };
-
-/** Arrow keys move between months with feedback, Home and End jump to the first and last. */
-function moveInGrid(event) {
-  const cells = [...$('month-grid').children];
-  const open = cells.filter((c) => !c.disabled);
-  let to;
-  if (event.key in GRID_KEYS) {
-    const step = GRID_KEYS[event.key];
-    let i = cells.indexOf(document.activeElement) + step;
-    while (i >= 0 && i < cells.length && cells[i].disabled) {
-      i += step;
-    }
-    to = cells[i];
-  } else if (event.key === 'Home' || event.key === 'End') {
-    to = event.key === 'Home' ? open[0] : open[open.length - 1];
-  } else {
-    return;
-  }
-  event.preventDefault();
-  if (to) {
-    cells.forEach((c) => {
-      c.tabIndex = -1;
-    });
-    to.tabIndex = 0;
-    to.focus();
-  }
-}
-
-function setStep(button, month, label, none) {
-  button.disabled = !month;
-  button.dataset.month = month || '';
-  button.setAttribute('aria-label', month ? `${label}: ${monthLabel(month)}` : none);
-  button.title = month ? monthLabel(month) : none;
-}
-
-function renderNav(month) {
-  $('month-button').dataset.month = month;
-  $('month-title').textContent = monthLabel(month);
-  const i = state.months.indexOf(month);
-  setStep($('prev'), i < 0 ? '' : state.months[i + 1], t('prevMonth'), t('noEarlier'));
-  setStep($('next'), i > 0 ? state.months[i - 1] : '', t('nextMonth'), t('noLater'));
-}
+const picker = MonitoringShell.monthPicker({
+  months: () => state.months,
+  current: () => state.want,
+  describe: (month) => {
+    const count = int(ratingsOf(month));
+    return {
+      count,
+      detail: ratingsOf(month) === 1 ? t('ratingsOne') : t('ratingsMany', { n: count }),
+    };
+  },
+  none: t('noFeedback'),
+  earlier: t('noEarlier'),
+  later: t('noLater'),
+  onPick: (month) => navigate(month),
+});
+const renderNav = (month) => picker.renderNav(month);
 
 /** The brand and the reviewer are written into the page by the server; only the month changes. */
 function renderHeader() {
@@ -880,7 +755,7 @@ async function post(id, action, body) {
   const res = await fetch(`api/texts/${encodeURIComponent(id)}/${action}`, {
     method: 'POST',
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', 'X-Feedback-Review': '1' },
+    headers: { 'Content-Type': 'application/json', 'X-Monitoring-Page': '1' },
     body: JSON.stringify(body || {}),
   });
   if (!res.ok) {
@@ -1107,31 +982,6 @@ $('filter').addEventListener('input', () => {
     renderTexts();
   }
 });
-$('month-button').addEventListener('click', () =>
-  $('month-pop').hidden ? openPicker() : closePicker(true),
-);
-$('month-grid').addEventListener('click', (event) => {
-  const cell = event.target.closest('button');
-  if (cell && !cell.disabled) {
-    closePicker(true);
-    navigate(cell.dataset.month);
-  }
-});
-$('month-grid').addEventListener('keydown', moveInGrid);
-$('year-prev').addEventListener('click', () => changeYear(-1));
-$('year-next').addEventListener('click', () => changeYear(1));
-document.addEventListener('pointerdown', (event) => {
-  if (!event.target.closest('#month-pop, #month-button')) {
-    closePicker(false);
-  }
-});
-$('month-pop').addEventListener('focusout', (event) => {
-  if (event.relatedTarget && !event.relatedTarget.closest('#month-pop, #month-button')) {
-    closePicker(false);
-  }
-});
-$('prev').addEventListener('click', () => navigate($('prev').dataset.month));
-$('next').addEventListener('click', () => navigate($('next').dataset.month));
 $('retry').addEventListener('click', () => {
   const month = state.failed || state.want;
   history.replaceState(null, '', `?m=${month}`);
@@ -1143,9 +993,9 @@ document.addEventListener('keydown', (event) => {
   if (event.key === '/' && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault();
     $('filter').focus();
-  } else if (event.key === 'Escape' && !$('month-pop').hidden) {
+  } else if (event.key === 'Escape' && picker.isOpen()) {
     event.preventDefault();
-    closePicker(true);
+    picker.close(true);
   } else if (event.key === 'Escape' && state.open) {
     event.preventDefault();
     closeWork();
@@ -1165,38 +1015,6 @@ new ResizeObserver(() => {
     renderChart();
   }
 }).observe($('chart-box'));
-
-// The server writes the page in the chosen language, so a switch is a reload with the new choice.
-document.querySelectorAll('.lang button').forEach((b) =>
-  b.addEventListener('click', () => {
-    if (b.getAttribute('aria-pressed') !== 'true') {
-      document.cookie = `${LANG_COOKIE}=${b.dataset.lang}; Path=/feedback; Max-Age=31536000; SameSite=Lax; Secure`;
-      location.reload();
-    }
-  }),
-);
-
-// Same switch as LibreChat: a .dark class on <html>, set before the first paint by theme.js.
-const system = matchMedia('(prefers-color-scheme: dark)');
-function applyTheme() {
-  const theme = storage((s) => s.getItem(THEME_KEY));
-  document.documentElement.classList.toggle('dark', theme ? theme === 'dark' : system.matches);
-  document.querySelectorAll('.theme button').forEach((b) => {
-    b.setAttribute('aria-pressed', String(b.dataset.theme === (theme || 'system')));
-  });
-}
-document.querySelectorAll('.theme button').forEach((b) =>
-  b.addEventListener('click', () => {
-    storage((s) =>
-      b.dataset.theme === 'system'
-        ? s.removeItem(THEME_KEY)
-        : s.setItem(THEME_KEY, b.dataset.theme),
-    );
-    applyTheme();
-  }),
-);
-system.addEventListener('change', applyTheme);
-applyTheme();
 
 // The server writes the month into the page; the clock is only a fallback.
 const initial = $('month-button').dataset.month || berlinMonth();

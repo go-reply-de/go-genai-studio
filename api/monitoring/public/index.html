@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="app.css" />
     <script src="i18n.js" defer></script>
     <script src="hints.js" defer></script>
+    <script src="shell.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
@@ -17,7 +18,7 @@
       <div class="bar">
         <div class="brand">
           <span class="logo" id="logo" aria-hidden="true">{{LOGO}}</span>
-          <span class="brand-name"><b id="app">{{APP}}</b><span>Feedback</span></span>
+          <span class="brand-name"><b id="app">{{APP}}</b><span>Monitoring</span></span>
           <span class="badge" id="env">{{ENVIRONMENT}}</span>
         </div>
         <span class="grow"></span>
@@ -84,6 +85,12 @@
           <span class="sr-only" id="user-name">{{t:signedInAs}}</span>
         </span>
       </div>
+      <nav class="tabs" aria-label="{{t:tabs}}">
+        <div class="tabs-bar">
+          <a href="./" aria-current="page">{{t:feedbackTab}}</a>
+          <a href="usage">{{t:usageTab}}</a>
+        </div>
+      </nav>
     </header>
 
     <main class="content" id="content">
@@ -197,11 +204,13 @@
               <rect class="placeholder" x="44" y="12" width="952" height="174" rx="8" />
             </svg>
           </div>
-          <table class="sr-only" id="chart-table">
-            <caption>
-              {{t:perDay}}
-            </caption>
-          </table>
+          <div class="sr-only">
+            <table id="chart-table">
+              <caption>
+                {{t:perDay}}
+              </caption>
+            </table>
+          </div>
         </section>
 
         <section class="panel" aria-labelledby="reasons-title">

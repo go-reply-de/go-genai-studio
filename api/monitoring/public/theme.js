@@ -4,7 +4,7 @@
 (() => {
   let theme = null;
   try {
-    theme = localStorage.getItem('feedback-theme');
+    theme = localStorage.getItem('monitoring-theme');
   } catch {
     /* no storage: follow the system */
   }

@@ -1,42 +1,42 @@
-# Feedback review page at admin.<domain>/feedback/, on the regional load balancer
-# behind the admin panel's IAP. Applied only where FEEDBACK_REVIEW_ENABLED is true
-# (k8s/profiles). Runs the API image under its own service account, which may read
-# the feedback tables and clean texts (setup repo, module feedback_review); the API
-# itself may only add rows.
+# Monitoring page at admin.<domain>/monitoring/ (tabs Feedback and Nutzung), on the
+# regional load balancer behind the admin panel's IAP. Applied only where
+# MONITORING_ENABLED is true (k8s/profiles). Runs the API image under its own service
+# account, which may read the feedback tables, clean texts and read Cloud Monitoring
+# (setup repo, module monitoring_page); the API itself may only add rows.
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: feedback-review
+  name: monitoring
   namespace: ###_GKE_NAMESPACE###
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   labels:
-    app: feedback-review
-  name: feedback-review
+    app: monitoring
+  name: monitoring
   namespace: ###_GKE_NAMESPACE###
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: feedback-review
+      app: monitoring
   template:
     metadata:
       labels:
-        app: feedback-review
+        app: monitoring
     spec:
-      serviceAccountName: feedback-review
+      serviceAccountName: monitoring
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: review
+        - name: monitoring
           image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
-          command: ["node", "/app/api/feedback-review/server.js"]
+          command: ["node", "/app/api/monitoring/server.js"]
           ports:
             - name: http
               containerPort: 8080
@@ -52,13 +52,16 @@ spec:
                 configMapKeyRef:
                   key: FEEDBACK_DATASET
                   name: env
+            # Which split the Tokens lane opens with: purpose or model.
+            - name: USAGE_TOKEN_SPLIT
+              value: "###_USAGE_TOKEN_SPLIT###"
           readinessProbe:
             httpGet:
-              path: /feedback/healthz
+              path: /monitoring/healthz
               port: 8080
           livenessProbe:
             httpGet:
-              path: /feedback/healthz
+              path: /monitoring/healthz
               port: 8080
             periodSeconds: 30
           resources:
@@ -77,8 +80,8 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    app: feedback-review-gw
-  name: feedback-review-gw
+    app: monitoring-gw
+  name: monitoring-gw
   namespace: ###_GKE_NAMESPACE###
 spec:
   ports:
@@ -87,19 +90,19 @@ spec:
       targetPort: 8080
   type: ClusterIP
   selector:
-    app: feedback-review
+    app: monitoring
 ---
 # Only the load balancer's proxies and Google's health checks reach the pod, so no
 # other workload can skip IAP and the reviewer header it sets can be trusted.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: feedback-review
+  name: monitoring
   namespace: ###_GKE_NAMESPACE###
 spec:
   podSelector:
     matchLabels:
-      app: feedback-review
+      app: monitoring
   policyTypes:
     - Ingress
   ingress:
@@ -119,7 +122,7 @@ spec:
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: feedback-review-###ENVIRONMENT###
+  name: monitoring-###ENVIRONMENT###
   namespace: ###_GKE_NAMESPACE###
 spec:
   parentRefs:
@@ -131,27 +134,27 @@ spec:
     - matches:
         - path:
             type: PathPrefix
-            value: /feedback
+            value: /monitoring
       backendRefs:
-        - name: feedback-review-gw
+        - name: monitoring-gw
           port: 8080
 ---
 apiVersion: networking.gke.io/v1
 kind: HealthCheckPolicy
 metadata:
-  name: feedback-review-gw-###ENVIRONMENT###
+  name: monitoring-gw-###ENVIRONMENT###
   namespace: ###_GKE_NAMESPACE###
 spec:
   default:
     config:
       type: HTTP
       httpHealthCheck:
-        requestPath: /feedback/healthz
+        requestPath: /monitoring/healthz
         port: 8080
   targetRef:
     group: ""
     kind: Service
-    name: feedback-review-gw
+    name: monitoring-gw
 ---
 # Same IAP client as the admin panel; the setup repo grants the reviewers access to
 # this backend. A policy that fails to attach serves unauthenticated (see
@@ -159,7 +162,7 @@ spec:
 apiVersion: networking.gke.io/v1
 kind: GCPBackendPolicy
 metadata:
-  name: feedback-review-gw-###ENVIRONMENT###
+  name: monitoring-gw-###ENVIRONMENT###
   namespace: ###_GKE_NAMESPACE###
 spec:
   default:
@@ -172,4 +175,4 @@ spec:
   targetRef:
     group: ""
     kind: Service
-    name: feedback-review-gw
+    name: monitoring-gw

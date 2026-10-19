@@ -73,6 +73,13 @@
   --match-bg: #fde68a;
   --new: var(--green-700);
   --selection: rgba(16, 185, 129, 0.22);
+  /* Nutzung tab, each at least 3:1 against the page: answers green, web search amber, titles grey. */
+  --series-1: var(--green-700);
+  --series-2: #b45309;
+  --series-3: var(--gray-500);
+  --series-4: var(--amber-900);
+  --series-5: var(--green-600);
+  --neutral: #8a8a8a;
   color-scheme: light;
 }
 .dark {
@@ -99,6 +106,12 @@
   --hint-text: #fcd34d;
   --match-bg: rgba(250, 204, 21, 0.35);
   --new: var(--green-500);
+  --series-1: var(--green-500);
+  --series-2: var(--amber-500);
+  --series-3: var(--gray-400);
+  --series-4: #fcd34d;
+  --series-5: #6ee7b7;
+  --neutral: #6b6b6b;
   color-scheme: dark;
 }
 
@@ -1230,11 +1243,335 @@ mark.hint {
   display: none;
 }
 
+/* Tabs: Feedback and Nutzung, under the brand row of the sticky top bar. */
+.tabs-bar {
+  display: flex;
+  gap: 4px;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 12px;
+}
+.tabs-bar a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 12px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-decoration: none;
+}
+.tabs-bar a:hover {
+  color: var(--text-primary);
+}
+.tabs-bar a[aria-current='page'] {
+  color: var(--text-primary);
+  border-bottom-color: var(--text-primary);
+}
+.tabs-bar a:focus-visible {
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+
+/*
+ * Nutzung tab: two lanes, usage for the pilot report and tokens for cost. The lanes share their
+ * rows, so heading, figures and day chart start at the same height and the days line up.
+ */
+.lanes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 24px;
+}
+.lane {
+  display: grid;
+  grid-row: span 4;
+  grid-template-rows: subgrid;
+  min-width: 0;
+}
+.lane > * {
+  align-self: start;
+}
+.lane > .stats {
+  align-self: stretch;
+}
+/* Below the day charts each lane is one stack, so a short table leaves no hole. */
+.lane-rest {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  min-width: 0;
+}
+.lane-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-height: 36px;
+}
+.lane-head h2 {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.lane-head .seg {
+  align-self: center;
+  margin-left: auto;
+}
+.panel-head h3 {
+  font-size: 15px;
+  font-weight: 600;
+}
+.stats.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.stats.three .value {
+  font-size: 22px;
+}
+.day-box {
+  min-height: 200px;
+  border-radius: 8px;
+}
+.day-box:focus-visible {
+  outline-offset: 4px;
+}
+.day-chart {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.day-chart .grid {
+  stroke: var(--border-light);
+  stroke-width: 1;
+}
+.day-chart text {
+  fill: var(--text-tertiary);
+  font-size: 12px;
+  font-family: inherit;
+}
+.day-chart .today-line {
+  stroke: var(--text-tertiary);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+}
+.day-chart .today-tag {
+  fill: var(--surface-tertiary);
+}
+.day-chart text.today-label {
+  fill: var(--text-primary);
+  font-weight: 600;
+}
+.day-chart text.empty {
+  fill: var(--text-secondary);
+  font-size: 14px;
+}
+.day-chart .placeholder {
+  fill: var(--surface-secondary);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.day-chart .hit {
+  fill: transparent;
+}
+.day-chart .line {
+  fill: none;
+  stroke: var(--text-primary);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.day-chart .neutral {
+  fill: var(--neutral);
+}
+.day-chart .s1 {
+  fill: var(--series-1);
+}
+.day-chart .s2 {
+  fill: var(--series-2);
+}
+.day-chart .s3 {
+  fill: var(--series-3);
+}
+.day-chart .s4 {
+  fill: var(--series-4);
+}
+.day-chart .s5 {
+  fill: var(--series-5);
+}
+.dot.neutral {
+  background: var(--neutral);
+}
+.dot.s1 {
+  background: var(--series-1);
+}
+.dot.s2 {
+  background: var(--series-2);
+}
+.dot.s3 {
+  background: var(--series-3);
+}
+.dot.s4 {
+  background: var(--series-4);
+}
+.dot.s5 {
+  background: var(--series-5);
+}
+.dot.stroke {
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text-primary);
+  vertical-align: 3px;
+}
+/* The day under the pointer stays, the rest of both lanes steps back. */
+.day-chart [data-day] {
+  transition: opacity 150ms ease-out;
+}
+.linked .day-chart [data-day] {
+  opacity: 0.35;
+}
+.linked .day-chart [data-day].hl {
+  opacity: 1;
+}
+.day-chart [data-day].hl .hit {
+  fill: var(--surface-tertiary);
+}
+.day-note {
+  min-height: 20px;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.trend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+.trend button,
+.trend li.none {
+  display: grid;
+  grid-template-columns: 9.5rem minmax(0, 1fr) 6.5rem;
+  align-items: center;
+  gap: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.trend button {
+  width: calc(100% + 16px);
+  margin: 0 -8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.trend button:hover {
+  background: var(--surface-hover);
+}
+.trend li.none {
+  padding: 6px 0;
+}
+.trend .m {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.trend [aria-current='true'] .m {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.trend .track {
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--track);
+  overflow: hidden;
+}
+.trend .track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--text-tertiary);
+}
+.trend [aria-current='true'] .track i {
+  background: var(--text-primary);
+}
+.trend .v {
+  text-align: right;
+}
+.trend .note {
+  grid-column: 2 / -1;
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+.scroll-x {
+  overflow-x: auto;
+}
+.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.tbl th,
+.tbl td {
+  padding: 9px 10px;
+  text-align: right;
+  border-bottom: 1px solid var(--border-light);
+  white-space: nowrap;
+}
+.tbl th:first-child,
+.tbl td:first-child {
+  padding-left: 0;
+  text-align: left;
+}
+.tbl th:last-child,
+.tbl td:last-child {
+  padding-right: 0;
+}
+.tbl thead th {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.tbl tbody tr:last-child td {
+  border-bottom: 0;
+}
+.tbl td .dot {
+  margin-right: 8px;
+  vertical-align: -1px;
+}
+.tbl td.empty {
+  color: var(--text-tertiary);
+  white-space: normal;
+}
+/* The label wraps first, so the figures keep their columns on a phone. */
+.tbl td:first-child {
+  white-space: normal;
+}
+.answered {
+  margin: -4px 0 6px;
+  font-size: 13px;
+}
+.answered:empty,
+.foot:empty {
+  display: none;
+}
+.foot {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .row.arrived,
   .live.busy .live-dot,
   .skeleton,
-  #chart .placeholder {
+  #chart .placeholder,
+  .day-chart .placeholder {
     animation: none;
   }
   .row.leaving,
@@ -1242,14 +1579,24 @@ mark.hint {
   .ghost,
   .picker,
   .picker .chevron,
-  .dim {
+  .dim,
+  .day-chart [data-day] {
     transition: none;
   }
 }
 
 @media (max-width: 1000px) {
-  .split {
+  .split,
+  .lanes {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .lanes {
+    row-gap: 32px;
+  }
+  .lane {
+    grid-row: auto;
+    grid-template-rows: none;
+    gap: 16px;
   }
 }
 @media (max-width: 760px) {
@@ -1285,5 +1632,57 @@ mark.hint {
   }
   .row .actions {
     grid-column: 3;
+  }
+}
+/* Three figures stay side by side until a phone, then stack; the lanes keep their legends. */
+@media (max-width: 760px) {
+  .tabs-bar {
+    padding: 0 4px;
+  }
+  .lane .panel-head .legend {
+    display: flex;
+    flex-wrap: wrap;
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+  .stats.three .stat:nth-child(3) {
+    border-left: 1px solid var(--border-light);
+  }
+  .stats.three .stat:nth-child(n + 3) {
+    border-top: 0;
+  }
+  .stats.three {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 560px) {
+  /* Brand, switches and tabs take three rows here, too tall to stay on screen. */
+  .topbar {
+    position: static;
+  }
+  .stats.three {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .stats.three .stat,
+  .stats.three .stat:nth-child(3) {
+    border-left: 0;
+  }
+  .stats.three .stat + .stat {
+    border-top: 1px solid var(--border-light);
+  }
+  .trend button,
+  .trend li.none {
+    grid-template-columns: 7.5rem minmax(0, 1fr) auto;
+  }
+  /* Every digit of the token table still fits a phone. */
+  .tbl {
+    font-size: 13px;
+  }
+  .tbl th,
+  .tbl td {
+    padding: 8px 5px;
+  }
+  .tbl td:first-child {
+    overflow-wrap: anywhere;
   }
 }

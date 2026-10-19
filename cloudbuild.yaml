@@ -500,30 +500,30 @@ steps:
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
 - name: "gcr.io/cloud-builders/kubectl"
-  id: 'Deploy feedback review'
+  id: 'Deploy monitoring page'
   entrypoint: bash
   args:
     - -c
     - |
-      # Same FEEDBACK_REVIEW_ENABLED the profiles set. The page is a path on the
+      # Same MONITORING_ENABLED the profiles set. The page is a path on the
       # admin host of the regional load balancer, so it needs both.
-      FEEDBACK_REVIEW_ENABLED=$(sed -n 's/^FEEDBACK_REVIEW_ENABLED=//p' /workspace/render-vars.env)
-      if [ "$$FEEDBACK_REVIEW_ENABLED" != "true" ]; then
-        echo "FEEDBACK_REVIEW_ENABLED is '$$FEEDBACK_REVIEW_ENABLED' for profile '${_PROFILE}', skipping the feedback review page."
+      MONITORING_ENABLED=$(sed -n 's/^MONITORING_ENABLED=//p' /workspace/render-vars.env)
+      if [ "$$MONITORING_ENABLED" != "true" ]; then
+        echo "MONITORING_ENABLED is '$$MONITORING_ENABLED' for profile '${_PROFILE}', skipping the monitoring page."
         exit 0
       fi
       if [ "${_ENABLE_REGIONAL_LB}" != "true" ] || [ "${_ADMIN_PANEL_ENABLED}" != "true" ]; then
-        echo "ERROR: FEEDBACK_REVIEW_ENABLED needs the regional load balancer and the admin panel." >&2
+        echo "ERROR: MONITORING_ENABLED needs the regional load balancer and the admin panel." >&2
         exit 1
       fi
       # Without it the NetworkPolicy would not render; the setup repo sends it with the regional LB.
       if [ -z "${_PROXY_ONLY_CIDR}" ]; then
-        echo "ERROR: FEEDBACK_REVIEW_ENABLED is true but _PROXY_ONLY_CIDR is empty." >&2
+        echo "ERROR: MONITORING_ENABLED is true but _PROXY_ONLY_CIDR is empty." >&2
         exit 1
       fi
-      kubectl apply -f ./k8s/feedback-review.yaml --namespace=${_GKE_NAMESPACE}
+      kubectl apply -f ./k8s/monitoring.yaml --namespace=${_GKE_NAMESPACE}
       # Its first pod may wait for a new node to pull the API image.
-      kubectl rollout status deploy/feedback-review --namespace=${_GKE_NAMESPACE} --timeout=300s
+      kubectl rollout status deploy/monitoring --namespace=${_GKE_NAMESPACE} --timeout=300s
   env:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"

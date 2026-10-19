@@ -1,11 +1,11 @@
 'use strict';
 
 /**
- * The review page's words in German and English. The server writes the page with them and the
+ * The monitoring page's words in German and English. The server writes the page with them and the
  * browser everything after, so both read this one file; German stays the default. Reasons follow
  * LibreChat's own labels (client/src/locales), so they match the feedback dialog.
  */
-const FeedbackTexts = (() => {
+const MonitoringTexts = (() => {
   const pad = (n) => String(n).padStart(2, '0');
 
   const de = {
@@ -55,6 +55,7 @@ const FeedbackTexts = (() => {
     // 03.10., 1.–12., 12. Oktober, 12. Okt., 5.
     date: (d, m) => `${pad(d)}.${pad(m)}.`,
     span: (d) => (d === 1 ? '1.' : `1.–${d}.`),
+    daySpan: (from, to) => (from === to ? `${from}.` : `${from}.–${to}.`),
     longDate: (d, m) => `${d}. ${de.months[m - 1]}`,
     shortDate: (d, m) => `${d}. ${de.short[m - 1]}`,
     axisDay: (d) => `${d}.`,
@@ -167,6 +168,73 @@ const FeedbackTexts = (() => {
     nextPage: 'Nächste Seite',
     page: 'Seite {n}',
     range: '{from}–{to} von {total}',
+
+    // Tabs and the Nutzung tab.
+    tabs: 'Bereiche',
+    feedbackTab: 'Feedback',
+    usageTab: 'Nutzung',
+    skipUsage: 'Zu den Zahlen springen',
+    noUsageEarlier: 'Kein früherer Monat mit Daten',
+    noUsageLater: 'Kein späterer Monat mit Daten',
+    noUsage: 'keine Daten',
+    conversationsOne: '1 Unterhaltung',
+    conversationsMany: '{n} Unterhaltungen',
+    usageNoAccess: 'Kein Zugriff auf die Nutzungsdaten.',
+    usageRunning: 'Laufender Monat, Stand {date}, {time} Uhr. {scope}',
+    usageScopeNone: 'Keine Vormonatswerte: für den {month} gibt es keine Daten.',
+    usageScopeSpan: 'Vormonatswerte für {span} {month}.',
+    usageChartLabel: 'Nutzung pro Tag; Tage mit den Pfeiltasten wählen',
+    tokensChartLabel: 'Tokens pro Tag; Tage mit den Pfeiltasten wählen',
+    laneUsage: 'Nutzung',
+    laneUsageNote: 'für den Pilotbericht',
+    laneTokens: 'Tokens',
+    laneTokensNote: 'wie das Modell sie gezählt hat',
+    conversations: 'Unterhaltungen begonnen',
+    messages: 'Nachrichten',
+    weeklyUsers: 'Nutzer pro Woche (Ø)',
+    busiestWeek: 'höchste Woche: {n}',
+    input: 'Eingabe',
+    output: 'Ausgabe',
+    webSearch: 'Websuche',
+    shareOfInput: '{share} der Eingabe',
+    notRecorded: 'nicht erfasst',
+    perDayUsage: 'Pro Tag',
+    legendConversations: 'Unterhaltungen',
+    legendUsers: 'Nutzer',
+    noUsageYet: 'Noch keine Nutzung in diesem Zeitraum',
+    noTokensYet: 'Keine Tokens in diesem Zeitraum',
+    tokensNotRecorded: 'Für diesen Monat gibt es keine Tokendaten.',
+    hoverHint: 'Wählen Sie einen Tag, um beide Spalten für diesen Tag zu sehen.',
+    millions: '{n} Mio.',
+    dayUsage: '{date}: {conversations} Unterhaltungen · {messages} Nachrichten · {users} Nutzer',
+    dayTokens: '{date}: {input} Eingabe · {output} Ausgabe',
+    dayNoTokens: '{date}: Tokens nicht erfasst',
+    splitLabel: 'Tokens aufteilen nach',
+    splitPurpose: 'Verwendung',
+    splitModel: 'Modell',
+    tokensByPurpose: 'Eingabe pro Tag, nach Verwendung',
+    tokensByModel: 'Eingabe pro Tag, nach Modell',
+    tableByPurpose: 'Wofür die Tokens anfielen',
+    tableByModel: 'Tokens pro Modell',
+    answeredBy: 'Antworten von {models}',
+    share: 'Anteil',
+    purposeFoot:
+      'Antworten zählen alles, was das Modell dafür verarbeitet hat, mit Verlauf und Anweisungen. Websuche und Titel sind eigene Modellaufrufe.',
+    modelFoot: 'Gezählt beim Modell, das die Anfrage verarbeitet hat, auch für Websuche und Titel.',
+    purposes: {
+      chat: 'Antworten',
+      title: 'Titel der Unterhaltungen',
+      web_grounding: 'Websuche-Tool',
+    },
+    purposesShort: { chat: 'Antworten', title: 'Titel', web_grounding: 'Websuche' },
+    otherPurpose: 'Sonstiges: {name}',
+    conversationsPerMonth: 'Unterhaltungen je Monat',
+    inputPerMonth: 'Eingabe-Tokens je Monat',
+    usersNote: 'Nutzer werden pro Woche gezählt, nicht pro Monat.',
+    monthRunning: '{month} (läuft)',
+    monthFrom: '{month} (ab {day})',
+    noTokenMonth: 'Keine Tokendaten',
+    tokensDay: 'Tokens pro Tag',
   };
 
   const en = {
@@ -203,6 +271,7 @@ const FeedbackTexts = (() => {
     // 3 Oct, 1–12, 12 October, 12 Oct, 5
     date: (d, m) => `${d} ${en.short[m - 1]}`,
     span: (d) => (d === 1 ? '1' : `1–${d}`),
+    daySpan: (from, to) => (from === to ? `${from}` : `${from}–${to}`),
     longDate: (d, m) => `${d} ${en.months[m - 1]}`,
     shortDate: (d, m) => `${d} ${en.short[m - 1]}`,
     axisDay: (d) => `${d}`,
@@ -314,11 +383,74 @@ const FeedbackTexts = (() => {
     nextPage: 'Next page',
     page: 'Page {n}',
     range: '{from}–{to} of {total}',
+
+    // Tabs and the Usage tab.
+    tabs: 'Sections',
+    feedbackTab: 'Feedback',
+    usageTab: 'Usage',
+    skipUsage: 'Skip to the figures',
+    noUsageEarlier: 'No earlier month with data',
+    noUsageLater: 'No later month with data',
+    noUsage: 'no data',
+    conversationsOne: '1 conversation',
+    conversationsMany: '{n} conversations',
+    usageNoAccess: 'No access to the usage data.',
+    usageRunning: 'Running month, as of {date}, {time}. {scope}',
+    usageScopeNone: 'No previous-month figures: there is no data for {month}.',
+    usageScopeSpan: 'Previous-month figures cover {span} {month}.',
+    usageChartLabel: 'Usage per day; choose days with the arrow keys',
+    tokensChartLabel: 'Tokens per day; choose days with the arrow keys',
+    laneUsage: 'Usage',
+    laneUsageNote: 'for the pilot report',
+    laneTokens: 'Tokens',
+    laneTokensNote: 'as the model counted them',
+    conversations: 'Conversations started',
+    messages: 'Messages',
+    weeklyUsers: 'Users per week (avg.)',
+    busiestWeek: 'busiest week: {n}',
+    input: 'Input',
+    output: 'Output',
+    webSearch: 'Web search',
+    shareOfInput: '{share} of input',
+    notRecorded: 'not recorded',
+    perDayUsage: 'Per day',
+    legendConversations: 'Conversations',
+    legendUsers: 'Users',
+    noUsageYet: 'No usage in this period yet',
+    noTokensYet: 'No tokens in this period',
+    tokensNotRecorded: 'There is no token data for this month.',
+    hoverHint: 'Choose a day to see both columns for it.',
+    millions: '{n}M',
+    dayUsage: '{date}: {conversations} conversations · {messages} messages · {users} users',
+    dayTokens: '{date}: {input} input · {output} output',
+    dayNoTokens: '{date}: tokens not recorded',
+    splitLabel: 'Split tokens by',
+    splitPurpose: 'Purpose',
+    splitModel: 'Model',
+    tokensByPurpose: 'Input per day, by purpose',
+    tokensByModel: 'Input per day, by model',
+    tableByPurpose: 'What the tokens were for',
+    tableByModel: 'Tokens per model',
+    answeredBy: 'Answers by {models}',
+    share: 'Share',
+    purposeFoot:
+      'Answers count everything the model processed for them, history and instructions included. Web search and titles are model calls of their own.',
+    modelFoot: 'Counted for the model that processed the request, web search and titles included.',
+    purposes: { chat: 'Answers', title: 'Conversation titles', web_grounding: 'Web search tool' },
+    purposesShort: { chat: 'Answers', title: 'Titles', web_grounding: 'Web search' },
+    otherPurpose: 'Other: {name}',
+    conversationsPerMonth: 'Conversations per month',
+    inputPerMonth: 'Input tokens per month',
+    usersNote: 'Users are counted per week, not per month.',
+    monthRunning: '{month} (running)',
+    monthFrom: '{month} (from {day})',
+    noTokenMonth: 'No token data',
+    tokensDay: 'Tokens per day',
   };
 
   return { de, en };
 })();
 
 if (typeof module === 'object') {
-  module.exports = FeedbackTexts;
+  module.exports = MonitoringTexts;
 }

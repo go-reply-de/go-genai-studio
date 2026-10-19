@@ -1,18 +1,21 @@
 /**
- * Feedback review page: the counts and free texts of the BigQuery dataset in FEEDBACK_DATASET.
+ * Monitoring page with two tabs: Feedback, the counts and free texts of the BigQuery dataset in
+ * FEEDBACK_DATASET, and Nutzung, the metrics exporter's series in Cloud Monitoring (usage.js).
  *
- * Runs from the API image under its own Kubernetes service account, which may read the
- * feedback tables and clean texts; the API itself may only add rows. Only the load balancer
- * reaches this pod (see k8s/feedback-review.yaml), so the reviewer's e-mail in IAP's header can
- * be trusted. Deletes, cleans and reviews are logged with that e-mail and the row id, never with
- * the text, and filtering happens in the browser, so no search term reaches BigQuery's audit log.
+ * Runs from the API image under its own Kubernetes service account, which may read the feedback
+ * tables, clean texts and read Cloud Monitoring; the API itself may only add rows. Only the load
+ * balancer reaches this pod (see k8s/monitoring.yaml), so the reviewer's e-mail in IAP's header
+ * can be trusted. Deletes, cleans and reviews are logged with that e-mail and the row id, never
+ * with the text, and filtering happens in the browser, so no search term reaches BigQuery's
+ * audit log.
  */
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const TEXTS = require('./public/i18n');
+const { createUsage } = require('./usage');
 
-const PREFIX = '/feedback';
+const PREFIX = '/monitoring';
 const MAX_TEXT_LENGTH = 500;
 const MAX_BODY = 8192;
 const REMOVED = '[entfernt]';
@@ -31,7 +34,9 @@ const STATIC = {
   '/theme.js': ['theme.js', 'text/javascript; charset=utf-8'],
   '/i18n.js': ['i18n.js', 'text/javascript; charset=utf-8'],
   '/hints.js': ['hints.js', 'text/javascript; charset=utf-8'],
+  '/shell.js': ['shell.js', 'text/javascript; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/usage.js': ['usage.js', 'text/javascript; charset=utf-8'],
   '/app.css': ['app.css', 'text/css; charset=utf-8'],
 };
 /** LibreChat's own Inter, from the client build in the image or its sources in a checkout. */
@@ -68,7 +73,7 @@ const stringParam = (value) => ({ type: 'STRING', value });
 const boolParam = (value) => ({ type: 'BOOL', value: String(value) });
 const berlinDay = (date) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' }).format(date);
-const LANG_COOKIE = /(?:^|;\s*)feedback-lang=(de|en)(?:;|$)/;
+const LANG_COOKIE = /(?:^|;\s*)monitoring-lang=(de|en)(?:;|$)/;
 
 /** The reviewer's choice from the page's switch, else the browser's first of German and English. */
 function language(req) {
@@ -86,7 +91,7 @@ const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (c) => ESCAPES[c]);
 
 /** The page and its API; `fetchFn`, `env` and the clock are swapped in tests. */
-function createReview({
+function createMonitoring({
   env = process.env,
   fetchFn = fetch,
   now = () => new Date(),
@@ -94,7 +99,12 @@ function createReview({
   fontDirs = FONT_DIRS,
 } = {}) {
   const dataset = env.FEEDBACK_DATASET?.trim() || 'feedback';
-  const template = fs.readFileSync(path.join(staticDir, 'index.html'), 'utf8');
+  // Where everyone uses the same agent and nobody picks a model, tokens split by what they were for.
+  const split = env.USAGE_TOKEN_SPLIT?.trim() === 'purpose' ? 'purpose' : 'model';
+  const pages = {
+    feedback: fs.readFileSync(path.join(staticDir, 'index.html'), 'utf8'),
+    usage: fs.readFileSync(path.join(staticDir, 'usage.html'), 'utf8'),
+  };
   const files = Object.fromEntries(
     Object.entries(STATIC).map(([route, [name, type]]) => [
       route,
@@ -116,6 +126,8 @@ function createReview({
   let months = { list: null, expires: 0 };
   const views = new Map();
   const at = () => now().getTime();
+  // Cloud Monitoring is asked with the same pod token as BigQuery.
+  const usage = createUsage({ credentials, fetchFn, now });
 
   async function metadata(p) {
     const res = await fetchFn(`${METADATA}/${p}`, { headers: { 'Metadata-Flavor': 'Google' } });
@@ -333,10 +345,10 @@ function createReview({
     };
   }
 
-  /** The page with its header written in, so it is complete before any data arrives. */
-  function renderPage(reviewer, month, lang) {
+  /** A tab with its header written in, so it is complete before any data arrives. */
+  function renderPage(page, reviewer, month, lang) {
     const texts = TEXTS[lang];
-    const app = env.APP_TITLE?.trim() || 'Feedback';
+    const app = env.APP_TITLE?.trim() || 'Monitoring';
     const values = {
       LANG: lang,
       LANG_DE: String(lang === 'de'),
@@ -352,10 +364,11 @@ function createReview({
         .toUpperCase(),
       MONTH: month,
       MONTH_LABEL: `${texts.months[Number(month.slice(5)) - 1]} ${month.slice(0, 4)}`,
+      SPLIT: split,
     };
     // {{t:signedInAs}} is a text in the page's language, {{USER}} a value; both escaped.
     const text = (key) => texts[key].replace(/\{(\w+)\}/g, (_, name) => values[name.toUpperCase()]);
-    return template.replace(/\{\{(t:)?(\w+)\}\}/g, (_, isText, key) =>
+    return pages[page].replace(/\{\{(t:)?(\w+)\}\}/g, (_, isText, key) =>
       escapeHtml(isText ? text(key) : (values[key] ?? '')),
     );
   }
@@ -410,7 +423,7 @@ function createReview({
 
   async function post(req, res, reviewer, url) {
     // Only the page's own script sets this header; a form on another site cannot.
-    if (req.headers['x-feedback-review'] !== '1') {
+    if (req.headers['x-monitoring-page'] !== '1') {
       return send(res, 403, { error: 'forbidden' });
     }
     const match = ACTION.exec(url.pathname);
@@ -480,15 +493,18 @@ function createReview({
       return send(res, 405, { error: 'method' });
     }
     const route = url.pathname.startsWith(PREFIX) ? url.pathname.slice(PREFIX.length) : null;
-    if (route === '/') {
+    if (route === '/' || route === '/usage') {
       const asked = url.searchParams.get('m') || '';
       const month = MONTH.test(asked) ? asked : berlinDay(now()).slice(0, 7);
       // The page asks for this month as soon as it has loaded; by then the queries are running.
-      Promise.all([feedbackMonths(), cachedMonthView(...month.split('-').map(Number))]).catch(
-        () => {},
-      );
+      const loading =
+        route === '/'
+          ? Promise.all([feedbackMonths(), cachedMonthView(...month.split('-').map(Number))])
+          : usage.view(month);
+      loading.catch(() => {});
       const lang = language(req);
-      return send(res, 200, renderPage(reviewer, month, lang), 'text/html; charset=utf-8', {
+      const page = route === '/' ? 'feedback' : 'usage';
+      return send(res, 200, renderPage(page, reviewer, month, lang), 'text/html; charset=utf-8', {
         'Content-Language': lang,
       });
     }
@@ -512,29 +528,47 @@ function createReview({
         ]);
         return send(res, 200, { ...view, ...list });
       } catch (error) {
-        log('ERROR', 'feedback review query failed', { detail: error.message });
+        log('ERROR', 'feedback query failed', { detail: error.message });
+        return send(res, error.status || 500, { error: error.message });
+      }
+    }
+    if (route === '/api/usage') {
+      const asked = url.searchParams.get('m') || '';
+      if (!MONTH.test(asked)) {
+        return send(res, 400, { error: 'month' });
+      }
+      try {
+        return send(res, 200, { ...(await usage.view(asked)), split });
+      } catch (error) {
+        log('ERROR', 'usage query failed', { detail: error.message });
         return send(res, error.status || 500, { error: error.message });
       }
     }
     return send(res, 404, { error: 'not found' });
   }
 
-  return { handle };
+  /** The running month and every month before it, so the first visitor after a start does not wait. */
+  const warm = () => usage.view(berlinDay(now()).slice(0, 7)).catch(() => {});
+
+  return { handle, warm };
 }
 
 if (require.main === module) {
-  const review = createReview();
+  const monitoring = createMonitoring();
   const port = Number(process.env.PORT || 8080);
   http
     .createServer((req, res) => {
-      review.handle(req, res).catch((error) => {
-        log('ERROR', 'feedback review request failed', { detail: error.message });
+      monitoring.handle(req, res).catch((error) => {
+        log('ERROR', 'monitoring request failed', { detail: error.message });
         if (!res.headersSent) {
           res.writeHead(500).end();
         }
       });
     })
-    .listen(port, () => log('INFO', 'feedback review listening', { port }));
+    .listen(port, () => {
+      log('INFO', 'monitoring page listening', { port });
+      monitoring.warm();
+    });
 }
 
-module.exports = { createReview };
+module.exports = { createMonitoring };

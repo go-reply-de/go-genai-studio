@@ -2,10 +2,12 @@ const fs = require('fs');
 const path = require('path');
 const texts = require('./public/i18n');
 
-describe('review page texts', () => {
+describe('monitoring page texts', () => {
   it('has every text in German and in English', () => {
     expect(Object.keys(texts.en).sort()).toEqual(Object.keys(texts.de).sort());
-    expect(Object.keys(texts.en.reasons).sort()).toEqual(Object.keys(texts.de.reasons).sort());
+    for (const group of ['reasons', 'purposes', 'purposesShort']) {
+      expect(Object.keys(texts.en[group]).sort()).toEqual(Object.keys(texts.de[group]).sort());
+    }
     for (const lang of ['de', 'en']) {
       expect(texts[lang].months).toHaveLength(12);
       expect(texts[lang].short).toHaveLength(12);
@@ -16,18 +18,25 @@ describe('review page texts', () => {
     }
   });
 
-  it('knows every text the page and its script ask for', () => {
-    const page = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
-    const script = fs.readFileSync(path.join(__dirname, 'public', 'app.js'), 'utf8');
-    const used = [...page.matchAll(/\{\{t:(\w+)\}\}/g), ...script.matchAll(/\bt\('(\w+)'/g)].map(
-      (match) => match[1],
-    );
-    expect(used.length).toBeGreaterThan(50);
+  it('knows every text the tabs and their scripts ask for', () => {
+    const read = (name) => fs.readFileSync(path.join(__dirname, 'public', name), 'utf8');
+    const pages = ['index.html', 'usage.html'].map(read);
+    const scripts = ['shell.js', 'app.js', 'usage.js'].map(read);
+    const used = [
+      ...pages.flatMap((page) => [...page.matchAll(/\{\{t:(\w+)\}\}/g)]),
+      ...scripts.flatMap((script) => [...script.matchAll(/\bt\('(\w+)'/g)]),
+    ].map((match) => match[1]);
+    expect(used.length).toBeGreaterThan(100);
     expect(used.filter((key) => !(key in texts.de))).toEqual([]);
   });
 
   it('writes dates the way each language does', () => {
     const { de, en } = texts;
+    expect([de.daySpan(5, 31), en.daySpan(5, 31), de.daySpan(7, 7)]).toEqual([
+      '5.–31.',
+      '5–31',
+      '7.',
+    ]);
     expect([de.date(3, 10), de.span(12), de.longDate(12, 10), de.shortDate(12, 10)]).toEqual([
       '03.10.',
       '1.–12.',

@@ -2,14 +2,14 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
-const { createReview } = require('./server');
+const { createMonitoring } = require('./server');
 
 /** October 2026 has ended, so it is compared with all of September. */
 const NOVEMBER = () => new Date('2026-11-05T10:00:00Z');
 const ENV = { FEEDBACK_DATASET: 'feedback', APP_TITLE: 'DiMeAs', ENVIRONMENT: 'sov-dev' };
 
 const REVIEWER = { 'X-Goog-Authenticated-User-Email': 'accounts.google.com:reviewer@example.org' };
-const ACTION = { ...REVIEWER, 'X-Feedback-Review': '1', 'Content-Type': 'application/json' };
+const ACTION = { ...REVIEWER, 'X-Monitoring-Page': '1', 'Content-Type': 'application/json' };
 const ID = '3f1c2a9e-1111-4a6b-9c1d-000000000001';
 const OTHER = '3f1c2a9e-1111-4a6b-9c1d-000000000002';
 
@@ -29,9 +29,13 @@ const bigQuery =
     return Response.json({ jobComplete: true, numDmlAffectedRows: '1', rows });
   };
 
-/** Answers like the GKE metadata server and BigQuery would, and records every query. */
-function fakeFetch(answer) {
+const NO_SERIES = () =>
+  Response.json({ status: 'success', data: { resultType: 'matrix', result: [] } });
+
+/** Answers like the GKE metadata server, BigQuery and Cloud Monitoring would, and records every query. */
+function fakeFetch(answer, monitoring = NO_SERIES) {
   const queries = [];
+  const monitored = [];
   const fn = jest.fn(async (url, init) => {
     if (url.endsWith('/project/project-id')) {
       return new Response('synthetic-project');
@@ -39,20 +43,24 @@ function fakeFetch(answer) {
     if (url.endsWith('/service-accounts/default/token')) {
       return Response.json({ access_token: 'synthetic-token', expires_in: 3599 });
     }
+    if (url.startsWith('https://monitoring.googleapis.com/')) {
+      monitored.push({ url, auth: init.headers.Authorization, query: init.body.get('query') });
+      return monitoring();
+    }
     const body = JSON.parse(init.body);
     queries.push({ url, auth: init.headers.Authorization, ...body });
     return answer(body);
   });
-  return { fn, queries };
+  return { fn, queries, monitored };
 }
 
-/** Starts the review server on a free port; returns a fetch bound to it. */
-async function start(answer, { now = NOVEMBER, fontDirs } = {}) {
-  const fake = fakeFetch(answer);
-  const review = createReview({ env: ENV, fetchFn: fake.fn, now, ...(fontDirs && { fontDirs }) });
+/** Starts the monitoring server on a free port; returns a fetch bound to it. */
+async function start(answer, { now = NOVEMBER, fontDirs, env = ENV, monitoring } = {}) {
+  const fake = fakeFetch(answer, monitoring);
+  const review = createMonitoring({ env, fetchFn: fake.fn, now, ...(fontDirs && { fontDirs }) });
   const server = http.createServer((req, res) => review.handle(req, res));
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const base = `http://127.0.0.1:${server.address().port}/feedback`;
+  const base = `http://127.0.0.1:${server.address().port}/monitoring`;
   const request = (path, init = {}) => fetch(`${base}${path}`, { redirect: 'manual', ...init });
   return { ...fake, request, close: () => new Promise((resolve) => server.close(resolve)) };
 }
@@ -79,7 +87,7 @@ async function stdoutLines(run) {
   return lines.map((line) => JSON.parse(line));
 }
 
-describe('feedback review server', () => {
+describe('monitoring server', () => {
   let app;
   afterEach(async () => {
     await app?.close();
@@ -109,7 +117,7 @@ describe('feedback review server', () => {
     expect((await app.request('/hints.js', { headers: REVIEWER })).status).toBe(200);
     expect((await app.request('/i18n.js', { headers: REVIEWER })).status).toBe(200);
     expect((await app.request('', { headers: REVIEWER })).headers.get('location')).toBe(
-      '/feedback/',
+      '/monitoring/',
     );
   });
 
@@ -137,7 +145,7 @@ describe('feedback review server', () => {
     app = await start(bigQuery());
     const page = async (headers) =>
       (await app.request('/?m=2026-10', { headers: { ...REVIEWER, ...headers } })).text();
-    const chosen = await page({ Cookie: 'other=1; feedback-lang=en' });
+    const chosen = await page({ Cookie: 'other=1; monitoring-lang=en' });
     expect(chosen).toContain('<html lang="en">');
     expect(chosen).toContain('<span id="month-title">October 2026</span>');
     expect(chosen).toContain('Signed in as reviewer@example.org');
@@ -145,7 +153,7 @@ describe('feedback review server', () => {
     expect(chosen).not.toContain('{{');
     expect(await page({ 'Accept-Language': 'en-GB,en;q=0.9,de;q=0.8' })).toContain('lang="en"');
     expect(await page({ 'Accept-Language': 'fr-FR,de;q=0.7,en;q=0.5' })).toContain('lang="de"');
-    expect(await page({ 'Accept-Language': 'en-GB', Cookie: 'feedback-lang=de' })).toContain(
+    expect(await page({ 'Accept-Language': 'en-GB', Cookie: 'monitoring-lang=de' })).toContain(
       '<html lang="de">',
     );
     const german = await page({});
@@ -509,5 +517,95 @@ describe('feedback review server', () => {
         detail: 'streaming buffer',
       }),
     ]);
+  });
+});
+
+describe('Nutzung tab', () => {
+  let app;
+  afterEach(async () => {
+    await app?.close();
+    app = undefined;
+  });
+  const noBigQuery = () => Response.json({ jobComplete: true });
+
+  it('links both tabs and marks the open one', async () => {
+    app = await start(bigQuery());
+    const feedback = await (await app.request('/', { headers: REVIEWER })).text();
+    const usage = await (await app.request('/usage', { headers: REVIEWER })).text();
+    expect(feedback).toMatch(/<a href="\.\/" aria-current="page">Feedback<\/a>/);
+    expect(feedback).toMatch(/<a href="usage">Nutzung<\/a>/);
+    expect(usage).toMatch(/<a href="\.\/">Feedback<\/a>/);
+    expect(usage).toMatch(/<a href="usage" aria-current="page">Nutzung<\/a>/);
+  });
+
+  it('serves the tab with the month and the token split the environment chose', async () => {
+    app = await start(noBigQuery, { env: { ...ENV, USAGE_TOKEN_SPLIT: 'purpose' } });
+    const res = await app.request('/usage?m=2026-09', { headers: REVIEWER });
+    expect(res.status).toBe(200);
+    const page = await res.text();
+    expect(page).toContain('<title>September 2026 · DiMeAs Nutzung</title>');
+    expect(page).toContain('data-month="2026-09"');
+    expect(page).toContain('data-default-split="purpose"');
+    expect(page).toContain('<script src="usage.js" defer></script>');
+    expect(page).not.toContain('{{');
+    for (const file of ['/usage.js', '/shell.js']) {
+      expect((await app.request(file, { headers: REVIEWER })).status).toBe(200);
+    }
+  });
+
+  it('splits tokens by model unless the environment asks for purpose', async () => {
+    app = await start(noBigQuery, { env: { ...ENV, USAGE_TOKEN_SPLIT: 'whatever' } });
+    const page = await (await app.request('/usage', { headers: REVIEWER })).text();
+    expect(page).toContain('data-default-split="model"');
+  });
+
+  it('answers a month from Cloud Monitoring with the pod token', async () => {
+    app = await start(noBigQuery);
+    const res = await app.request('/api/usage?m=2026-10', { headers: REVIEWER });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.month).toBe('2026-10');
+    expect(data.days).toHaveLength(31);
+    expect(data.months).toEqual(['2026-11']);
+    expect(data.split).toBe('model');
+    expect(app.monitored.length).toBeGreaterThan(0);
+    expect(
+      app.monitored.every(
+        (c) =>
+          c.auth === 'Bearer synthetic-token' &&
+          c.url.startsWith('https://monitoring.googleapis.com/v1/projects/synthetic-project/'),
+      ),
+    ).toBe(true);
+    expect(app.queries).toEqual([]);
+  });
+
+  it('refuses a malformed month and reports a failing Cloud Monitoring', async () => {
+    app = await start(noBigQuery, { monitoring: () => new Response('denied', { status: 403 }) });
+    expect((await app.request('/api/usage?m=2026-13', { headers: REVIEWER })).status).toBe(400);
+    const lines = await stdoutLines(async () => {
+      const res = await app.request('/api/usage?m=2026-10', { headers: REVIEWER });
+      expect(res.status).toBe(502);
+      expect(await res.json()).toEqual({ error: 'Cloud Monitoring HTTP 403' });
+    });
+    expect(lines).toEqual([
+      expect.objectContaining({ severity: 'ERROR', message: 'usage query failed' }),
+    ]);
+  });
+
+  it('needs IAP like every other page', async () => {
+    app = await start(noBigQuery);
+    expect((await app.request('/usage')).status).toBe(403);
+    expect((await app.request('/api/usage?m=2026-10')).status).toBe(403);
+    expect(app.fn).not.toHaveBeenCalled();
+  });
+});
+
+describe('start of the monitoring page', () => {
+  it('loads the running month of the Nutzung tab before anyone asks', async () => {
+    const fake = fakeFetch(() => Response.json({ jobComplete: true }));
+    const monitoring = createMonitoring({ env: ENV, fetchFn: fake.fn, now: NOVEMBER });
+    await monitoring.warm();
+    expect(fake.monitored.length).toBeGreaterThan(0);
+    expect(fake.queries).toEqual([]);
   });
 });
