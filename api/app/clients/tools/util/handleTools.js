@@ -202,7 +202,9 @@ const loadTools = async ({
     },
     web_grounding_enterprise: async (_toolContextMap) => {
       const fields = {
-        geminiModel: agent?.model || 'gemini-2.5-pro'
+        geminiModel: agent?.model || 'gemini-2.5-pro',
+        req: options.req,
+        userId: user,
       };
       return new WebGroundingEnterprise(fields);
     },

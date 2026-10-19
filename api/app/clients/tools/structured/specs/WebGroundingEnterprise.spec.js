@@ -20,6 +20,9 @@ jest.mock('@google-cloud/vertexai', () => ({
   }),
 }));
 
+jest.mock('~/models', () => ({ spendTokens: jest.fn() }));
+
+const { spendTokens } = require('~/models');
 const WebGroundingEnterprise = require('../WebGroundingEnterprise');
 
 /** Stands in for the Vertex generative model, answering each call with the next canned response. */
@@ -278,6 +281,81 @@ describe('WebGroundingEnterprise', () => {
 
     expect(out).toMatch(/Websuche ist fehlgeschlagen/);
     expect(out).toMatch(/keine Aussage als durch eine Suche belegt/);
+  });
+});
+
+describe('WebGroundingEnterprise token usage', () => {
+  const sources = 'Bis 4,5 h [1].\n[[QUELLEN]]\n1|awmf.org|2023|S2e';
+  const usage = {
+    promptTokenCount: 120,
+    toolUsePromptTokenCount: 30,
+    candidatesTokenCount: 40,
+    thoughtsTokenCount: 8,
+  };
+  const withUsage = (response) => ({ ...response, usageMetadata: usage });
+
+  const userTool = (search) => {
+    const tool = toolWith(search);
+    tool.userId = 'user-1';
+    tool.geminiModel = 'gemini-3.8-flash';
+    return tool;
+  };
+
+  const invokeInConversation = (tool) =>
+    tool.invoke(
+      { query: QUERY },
+      {
+        toolCall: { id: 'call_1', name: 'web_grounding_enterprise', args: { query: QUERY } },
+        configurable: { thread_id: 'convo-1', run_id: 'msg-1' },
+      },
+    );
+
+  beforeEach(() => spendTokens.mockReset());
+
+  test('records the search call under its own context, tool and thinking tokens included', async () => {
+    const search = stubModel([withUsage(groundedResponse(sources, ['awmf.org']))]);
+
+    await invokeInConversation(userTool(search));
+
+    expect(spendTokens).toHaveBeenCalledTimes(1);
+    expect(spendTokens).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: 'user-1',
+        model: 'gemini-3.8-flash',
+        conversationId: 'convo-1',
+        messageId: 'msg-1',
+        context: 'web_grounding',
+      }),
+      { promptTokens: 150, completionTokens: 48 },
+    );
+  });
+
+  test('records both calls when an empty search is retried', async () => {
+    const search = stubModel([
+      withUsage(emptyResponse('Keine Treffer.')),
+      withUsage(groundedResponse(sources, ['awmf.org'])),
+    ]);
+
+    await invokeInConversation(userTool(search));
+
+    expect(spendTokens).toHaveBeenCalledTimes(2);
+  });
+
+  test('records nothing without a user to charge', async () => {
+    const search = stubModel([withUsage(groundedResponse(sources, ['awmf.org']))]);
+
+    await invokeTool(toolWith(search));
+
+    expect(spendTokens).not.toHaveBeenCalled();
+  });
+
+  test('answers even when the usage cannot be recorded', async () => {
+    spendTokens.mockRejectedValue(new Error('mongo down'));
+    const search = stubModel([withUsage(groundedResponse(sources, ['awmf.org']))]);
+
+    const { content: out } = await invokeInConversation(userTool(search));
+
+    expect(out).toContain('[awmf.org](');
   });
 });
 

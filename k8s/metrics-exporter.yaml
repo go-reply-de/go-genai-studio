@@ -30,12 +30,18 @@ spec:
               name: env
         - name: LOGGING_LEVEL
           value: "info"
-        # The groups newer than 2.1.0 stay off; ratings are counted by the API in BigQuery.
+        # Day, week and month boundaries; the default is UTC.
+        - name: METRICS_TIMEZONE
+          value: "Europe/Berlin"
+        # Token usage as the model reported it, from transactions, not just the typed text.
+        - name: ENABLE_USAGE_WINDOW_METRICS
+          value: "true"
+        - name: USAGE_METRICS_TTL
+          value: "60"
+        # Ratings are counted by the API in BigQuery.
         - name: ENABLE_RATING_METRICS
           value: "false"
         - name: ENABLE_TOOL_METRICS
-          value: "false"
-        - name: ENABLE_USAGE_WINDOW_METRICS
           value: "false"
         - name: ENABLE_BALANCE_METRICS
           value: "false"
