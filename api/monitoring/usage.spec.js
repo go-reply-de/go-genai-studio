@@ -32,27 +32,37 @@ function kind(query) {
       return name;
     }
   }
-  return query.includes('[1h]') ? 'up' : 'first';
+  return query.includes('[1d]') ? 'first' : 'up';
 }
 
 /**
- * Answers query_range like Cloud Monitoring. `series[kind]` lists [labels, value(t)] where t is
- * the end of the hour (or day) a point stands for; undefined leaves the point out.
+ * Answers query_range and instant queries like Cloud Monitoring. `series[kind]` lists
+ * [labels, value(t)] where t is the end of the hour (or day, or running hour) a point stands for;
+ * undefined leaves the point out.
  */
 function monitoring(series = {}) {
   const calls = [];
   const fn = jest.fn(async (url, init) => {
     const params = new URLSearchParams(init.body);
+    const instant = url.endsWith('/query');
+    const time = Number(params.get('time')) * 1000;
     const call = {
       url,
       auth: init.headers.Authorization,
       query: params.get('query'),
-      start: Number(params.get('start')) * 1000,
-      end: Number(params.get('end')) * 1000,
+      instant,
+      start: instant ? time : Number(params.get('start')) * 1000,
+      end: instant ? time : Number(params.get('end')) * 1000,
       step: Number(params.get('step')) * 1000,
     };
     call.kind = kind(call.query);
     calls.push(call);
+    if (instant) {
+      const result = (series[call.kind] || [])
+        .map(([metric, at]) => ({ metric, value: [time / 1000, String(at(time))] }))
+        .filter(({ value }) => value[1] !== 'undefined');
+      return Response.json({ status: 'success', data: { resultType: 'vector', result } });
+    }
     const result = (series[call.kind] || [])
       .map(([metric, at]) => {
         const values = [];
@@ -128,20 +138,65 @@ describe('usage from Cloud Monitoring', () => {
     expect(view.period).toEqual({ from: '2026-10-01', to: '2026-10-31', running: false });
   });
 
-  it('ends a running month at the last full hour and leaves the days after today empty', async () => {
-    const app = start({ messages: [[{}, always(1)]] }, OCT_16);
+  it('ends a running month with its running hour, to the minute, and leaves later days empty', async () => {
+    const app = start({ messages: [[{}, always(1)]] }, () => new Date('2026-10-16T13:20:40Z'));
     const view = await app.usage.view('2026-10');
     expect(view.period).toEqual({
       from: '2026-10-01',
       to: '2026-10-16',
       running: true,
-      through: '2026-10-16T13:00:00.000Z',
+      through: '2026-10-16T13:20:00.000Z',
     });
-    expect(app.calls.find((c) => c.kind === 'messages' && c.start === OCT_START + HOUR).end).toBe(
-      Date.parse('2026-10-16T13:00:00Z'),
+    const messages = app.calls.filter((c) => c.kind === 'messages');
+    expect(messages.find((c) => !c.instant).end).toBe(Date.parse('2026-10-16T13:00:00Z'));
+    const hour = messages.find((c) => c.instant);
+    expect(hour.url).toBe(
+      'https://monitoring.googleapis.com/v1/projects/synthetic-project/location/global/prometheus/api/v1/query',
     );
-    expect(view.days[15].messages).toBe(15);
+    expect(hour.end).toBe(Date.parse('2026-10-16T13:20:00Z'));
+    expect(hour.query).toBe(
+      'sum (sum_over_time(clamp_min(max (librechat_messages_total) - max (librechat_messages_total offset 5m), 0)[20m:5m]))',
+    );
+    expect(app.calls.find((c) => c.kind === 'up' && c.instant).query).toBe(
+      'max(max_over_time(librechat_registered_users_total[20m]))',
+    );
+    // 15 full hours since midnight in Berlin, and the one running.
+    expect(view.days[15].messages).toBe(16);
     expect(view.days.slice(16)).toEqual(Array(15).fill(null));
+  });
+
+  it('shows a day and its week from their first minutes', async () => {
+    // Monday 19 October 2026, 00:20 in Berlin.
+    const app = start(
+      { messages: [[{}, always(1)]], weekly: [[{}, always(2)]] },
+      () => new Date('2026-10-18T22:20:00Z'),
+    );
+    const view = await app.usage.view('2026-10');
+    expect(view.period.to).toBe('2026-10-19');
+    expect(view.days[18]).toMatchObject({ messages: 1 });
+    expect(view.weeks.at(-1)).toMatchObject({ from: '2026-10-19', users: 2, running: true });
+  });
+
+  it('shows a month from its first minutes', async () => {
+    // 1 November 2026, 00:20 in Berlin.
+    const app = start({ messages: [[{}, always(1)]] }, () => new Date('2026-10-31T23:20:00Z'));
+    const view = await app.usage.view('2026-11');
+    expect(view.period).toEqual({
+      from: '2026-11-01',
+      to: '2026-11-01',
+      running: true,
+      through: '2026-10-31T23:20:00.000Z',
+    });
+    expect(view.days[0]).toMatchObject({ messages: 1 });
+    // Cloud Monitoring refuses a range that ends before it starts.
+    expect(app.calls.filter((c) => c.start > c.end)).toEqual([]);
+  });
+
+  it('asks for no running hour on the full hour', async () => {
+    const app = start({}, () => new Date('2026-10-16T13:00:30Z'));
+    const view = await app.usage.view('2026-10');
+    expect(app.calls.filter((c) => c.instant)).toEqual([]);
+    expect(view.period.through).toBe('2026-10-16T13:00:00.000Z');
   });
 
   it('has no figures for days before the exporter ran', async () => {
@@ -253,18 +308,20 @@ describe('usage from Cloud Monitoring', () => {
     expect(view.trend.map((m) => [m.month, m.conversations, m.running, m.firstDay])).toEqual([
       ['2026-08', 27 * 24, false, 5],
       ['2026-09', 30 * 24, false, 1],
-      ['2026-10', 15 * 24 + 15, true, 1],
+      ['2026-10', 15 * 24 + 16, true, 1],
     ]);
   });
 
-  it('keeps finished months and asks again for the running month after five minutes', async () => {
+  it('keeps finished months and asks again for the running month after two minutes', async () => {
     let at = Date.parse('2026-10-16T13:20:00Z');
     const app = start({}, () => new Date(at));
     await app.usage.view('2026-10');
     const first = app.calls.length;
     await app.usage.view('2026-10');
+    at += 2 * 60 * 1000 - 1;
+    await app.usage.view('2026-10');
     expect(app.calls).toHaveLength(first);
-    at += 5 * 60 * 1000;
+    at += 1;
     await app.usage.view('2026-10');
     const again = app.calls.slice(first);
     expect(again.length).toBeGreaterThan(0);
@@ -286,14 +343,14 @@ describe('usage from Cloud Monitoring', () => {
     };
     const usage = createUsage({ credentials, fetchFn, now: () => new Date(at) });
     const before = await usage.view('2026-10');
-    at += 5 * 60 * 1000 + 3600e3;
+    at += 3600e3;
     hold = true;
     const stale = await usage.view('2026-10');
     expect(stale.period.through).toBe(before.period.through);
     hold = false;
     held.forEach((resolve) => resolve());
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect((await usage.view('2026-10')).period.through).toBe('2026-10-16T14:00:00.000Z');
+    expect((await usage.view('2026-10')).period.through).toBe('2026-10-16T14:20:00.000Z');
   });
 
   it('reads an answer without series, which Cloud Monitoring sends as null', async () => {

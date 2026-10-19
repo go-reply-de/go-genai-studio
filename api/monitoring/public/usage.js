@@ -2,8 +2,8 @@
 /* global MonitoringShell */
 
 const { T, t, $, storage, monthLabel, berlinMonth } = MonitoringShell;
-/** The server asks Cloud Monitoring again every five minutes, so asking it more often shows nothing new. */
-const REFRESH_MS = 5 * 60 * 1000;
+/** The server asks Cloud Monitoring again every two minutes, so asking it more often shows nothing new. */
+const REFRESH_MS = 2 * 60 * 1000;
 const SPLIT_KEY = 'monitoring-token-split';
 /** Answers keep the strongest colour; the background requests follow. */
 const PURPOSE_COLOURS = { chat: 's1', web_grounding: 's2', title: 's3' };
@@ -558,13 +558,6 @@ function renderSplit() {
         )
         .join('')
     : `<tr><td class="empty" colspan="4">${d.totals.recorded ? t('noTokensYet') : t('tokensNotRecorded')}</td></tr>`;
-  const answering = groups('model').list.filter((g) =>
-    d.days.some((day) => day?.tokens?.some((e) => e[0] === 'chat' && e[1] === g.key)),
-  );
-  $('answered-by').textContent =
-    purpose && answering.length
-      ? t('answeredBy', { models: answering.map((g) => g.key).join(', ') })
-      : '';
   const foot = purpose ? t('purposeFoot') : t('modelFoot');
   $('split-foot').textContent = list.length ? foot : '';
 }

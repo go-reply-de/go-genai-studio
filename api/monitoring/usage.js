@@ -7,10 +7,11 @@
  * reports counts only, and agents are never told apart.
  */
 const MONITORING = 'https://monitoring.googleapis.com/v1/projects';
-const HOUR = 3600e3;
+const MINUTE = 60e3;
+const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 /** A running month is asked again after this; finished months do not change. */
-const RUNNING_MS = 5 * 60 * 1000;
+const RUNNING_MS = 2 * MINUTE;
 /** The months list follows the exporter's first day, so it changes rarely. */
 const MONTHS_MS = 6 * HOUR;
 const PARALLEL = 6;
@@ -168,19 +169,13 @@ function createUsage({ credentials, fetchFn = fetch, now = () => new Date() }) {
     }
   }
 
-  /** Series as [labels, [[time in ms, value], ...]], each point standing for the step before it. */
-  async function range(query, start, end, step = HOUR) {
+  async function ask(api, params) {
     const { project, token } = await credentials();
     const res = await slot(() =>
-      fetchFn(`${MONITORING}/${project}/location/global/prometheus/api/v1/query_range`, {
+      fetchFn(`${MONITORING}/${project}/location/global/prometheus/api/v1/${api}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
-        body: new URLSearchParams({
-          query,
-          start: String(start / 1000),
-          end: String(end / 1000),
-          step: String(step / 1000),
-        }),
+        body: new URLSearchParams(params),
       }),
     );
     if (!res.ok) {
@@ -188,10 +183,27 @@ function createUsage({ credentials, fetchFn = fetch, now = () => new Date() }) {
     }
     const body = await res.json();
     // No series at all comes back as null rather than [].
-    return (body.data?.result || []).map(({ metric, values }) => [
+    return body.data?.result || [];
+  }
+
+  /** Series as [labels, [[time in ms, value], ...]], each point standing for the step before it. */
+  async function range(query, start, end, step = HOUR) {
+    const result = await ask('query_range', {
+      query,
+      start: String(start / 1000),
+      end: String(end / 1000),
+      step: String(step / 1000),
+    });
+    return result.map(({ metric, values }) => [
       metric,
       values.map(([t, v]) => [t * 1000, Number(v)]),
     ]);
+  }
+
+  /** The same for a single point in time. */
+  async function instant(query, time) {
+    const result = await ask('query', { query, time: String(time / 1000) });
+    return result.map(({ metric, value: [t, v] }) => [metric, [[t * 1000, Number(v)]]]);
   }
 
   const lastHour = () => Math.floor(now().getTime() / HOUR) * HOUR;
@@ -241,14 +253,28 @@ function createUsage({ credentials, fetchFn = fetch, now = () => new Date() }) {
     const to = midnight(y, m + 1, 1);
     const end = Math.min(to, lastHour());
     const running = end < to;
+    // A running month counts to the minute, so a new message shows before the hour is over.
+    const through = running ? Math.floor(now().getTime() / MINUTE) * MINUTE : end;
+    const minutes = (through - end) / MINUTE;
+    /** A query's full hours, then the running hour's minutes in the same window shape. */
+    const hours = (query, start, stop = end) =>
+      Promise.all([
+        start <= stop ? range(query, start, stop) : [],
+        minutes
+          ? instant(
+              query.replace('[1h:5m]', `[${minutes}m:5m]`).replace('[1h]', `[${minutes}m]`),
+              through,
+            )
+          : [],
+      ]).then((parts) => parts.flat());
     const days = Array(daysIn(y, m)).fill(null);
-    const weeks = weeksOf(y, m).filter((w) => w.start < end);
-    if (end > from) {
+    const weeks = weeksOf(y, m).filter((w) => w.start < through);
+    if (through > from) {
       const names = Object.keys(QUERIES);
       const [results, weekly] = await Promise.all([
-        Promise.all(names.map((name) => range(QUERIES[name], from + HOUR, end))),
+        Promise.all(names.map((name) => hours(QUERIES[name], from + HOUR))),
         weeks.length
-          ? range(WEEKLY, weeks[0].start + HOUR, Math.min(weeks[weeks.length - 1].end, end))
+          ? hours(WEEKLY, weeks[0].start + HOUR, Math.min(weeks[weeks.length - 1].end, end))
           : [],
       ]);
       const series = Object.fromEntries(names.map((name, i) => [name, results[i]]));
@@ -303,19 +329,19 @@ function createUsage({ credentials, fetchFn = fetch, now = () => new Date() }) {
       for (const w of weeks) {
         const points = weekly.flatMap(([, p]) => p).filter(([t]) => t > w.start && t <= w.end);
         w.users = points.length ? Math.max(...points.map(([, v]) => v)) : null;
-        if (w.end > end) {
+        if (w.end > through) {
           w.running = true;
         }
       }
     }
-    // A running month ends with the day of its last full hour.
+    // A running month ends today.
     let last = daysIn(y, m);
     if (running) {
-      last = end > from ? Number(hourDate(end).slice(8)) : 1;
+      last = through > from ? Number(hourDate(through).slice(8)) : 1;
     }
     const period = { from: isoDate(y, m, 1), to: isoDate(y, m, last), running };
     if (running) {
-      period.through = new Date(end).toISOString();
+      period.through = new Date(through).toISOString();
     }
     return {
       month: key,

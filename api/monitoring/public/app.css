@@ -1552,11 +1552,6 @@ mark.hint {
 .tbl td:first-child {
   white-space: normal;
 }
-.answered {
-  margin: -4px 0 6px;
-  font-size: 13px;
-}
-.answered:empty,
 .foot:empty {
   display: none;
 }
