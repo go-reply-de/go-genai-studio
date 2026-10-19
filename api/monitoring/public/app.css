@@ -1435,52 +1435,13 @@ mark.hint {
 .stats.three {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
-.stats.three .value {
+/* The Nutzung lane has no users card: users are only counted per week, in their own list. */
+.stats.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.stats.three .value,
+.stats.two .value {
   font-size: 22px;
-}
-/* The month's weeks under the users per week; the one in front is marked. */
-.weeks {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-  gap: 6px;
-  align-items: end;
-  margin: 8px 0 0;
-  padding: 8px 0 0;
-  border-top: 1px solid var(--border-light);
-  list-style: none;
-  font-variant-numeric: tabular-nums;
-}
-.weeks:empty {
-  display: none;
-}
-.weeks li {
-  display: grid;
-  justify-items: center;
-  gap: 1px;
-}
-.weeks i {
-  width: 100%;
-  max-width: 28px;
-  margin-bottom: 3px;
-  border-radius: 2px;
-  background: var(--text-tertiary);
-}
-.weeks [aria-current='true'] i {
-  background: var(--text-primary);
-}
-.weeks .running i {
-  background: none;
-  border: 1px dashed var(--text-tertiary);
-}
-.weeks b {
-  font-size: 12px;
-  font-weight: 600;
-}
-.weeks small {
-  font-size: 11px;
-  color: var(--text-secondary);
-  white-space: nowrap;
 }
 .day-box {
   min-height: 200px;
@@ -1614,7 +1575,8 @@ mark.hint {
   gap: 2px;
 }
 .trend button,
-.trend li.none {
+.trend li.none,
+.trend li.week {
   display: grid;
   grid-template-columns: 9.5rem minmax(0, 1fr) 6.5rem;
   align-items: center;
@@ -1636,8 +1598,26 @@ mark.hint {
 .trend button:hover {
   background: var(--surface-hover);
 }
-.trend li.none {
+.trend li.none,
+.trend li.week {
   padding: 6px 0;
+}
+/* A week's dates sit after its calendar week, quieter; the running week's bar is lighter. */
+.week-list li.week {
+  grid-template-columns: 11rem minmax(0, 1fr) 4rem;
+}
+.week-list .m small {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+.week-list .running .track i {
+  opacity: 0.45;
+}
+.text-btn.more {
+  justify-self: start;
+  margin: 2px 0 0 -6px;
 }
 .trend .m {
   color: var(--text-secondary);
@@ -1821,19 +1801,33 @@ mark.hint {
   .month-nav[data-span='true'] .month-heading {
     font-size: 18px;
   }
-  .stats.three {
+  .stats.three,
+  .stats.two {
     grid-template-columns: minmax(0, 1fr);
   }
   .stats.three .stat,
-  .stats.three .stat:nth-child(3) {
+  .stats.three .stat:nth-child(3),
+  .stats.two .stat {
     border-left: 0;
   }
-  .stats.three .stat + .stat {
+  .stats.three .stat + .stat,
+  .stats.two .stat + .stat {
     border-top: 1px solid var(--border-light);
   }
   .trend button,
   .trend li.none {
     grid-template-columns: 7.5rem minmax(0, 1fr) auto;
+  }
+  /* On a phone the dates go under the calendar week. */
+  .week-list li.week {
+    grid-template-columns: 7.5rem minmax(0, 1fr) auto;
+  }
+  .week-list .m {
+    white-space: normal;
+  }
+  .week-list .m small {
+    display: block;
+    margin-left: 0;
   }
   /* Every digit of the token table still fits a phone. */
   .tbl {

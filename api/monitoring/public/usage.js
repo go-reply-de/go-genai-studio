@@ -22,6 +22,8 @@ const SPLIT_KEY = 'monitoring-token-split';
 /** Answers keep the strongest colour; the background requests follow. */
 const PURPOSE_COLOURS = { chat: 's1', web_grounding: 's2', title: 's3' };
 const COLOURS = ['s1', 's2', 's3', 's4', 's5'];
+/** The week list shows this many weeks until all are asked for. */
+const WEEKS_SHOWN = 8;
 
 const num = (n) => Math.max(0, Number(n) || 0);
 const int = (n) => Math.round(num(n)).toLocaleString(T.locale);
@@ -65,6 +67,7 @@ const state = {
   key: '',
   span: null,
   slots: [],
+  allWeeks: false,
   want: '',
   months: [],
   trend: [],
@@ -197,6 +200,7 @@ function navigate(key) {
   }
   address(key);
   state.hover = 0;
+  state.allWeeks = false;
   show(key);
 }
 
@@ -266,6 +270,7 @@ function apply(data, key) {
   renderUsageTable();
   renderSplit();
   renderTrends();
+  renderWeekList();
   renderCharts();
 }
 
@@ -325,58 +330,32 @@ const webTokens = (days) =>
     .filter(([purpose]) => purpose === 'web_grounding')
     .reduce((sum, entry) => sum + entry[2], 0);
 
+const kw = (w) => t('kw', { n: w.kw });
+
 /**
- * Users per week as whole people, the last finished week in front: chats are deleted every
- * week, so nobody can tell whether two weeks had the same users. A long interval shows the
- * range of its finished weeks and its busiest week instead, its weeks being in the chart.
+ * Users per week as whole people, newest week first: chats are deleted every week, so nobody can
+ * tell whether two weeks had the same users and weeks are never added up.
  */
-function renderWeeks() {
+function renderWeekList() {
   const weeks = state.data.weeks.filter((w) => w.users !== null);
-  const kw = (w) => t('kw', { n: w.kw });
-  if (state.span && weeks.length > 6) {
-    const done = weeks.filter((w) => !w.running);
-    const values = (done.length ? done : weeks).map((w) => w.users);
-    const [min, max] = [Math.min(...values), Math.max(...values)];
-    const busiest = weeks.reduce((a, b) => (b.users > a.users ? b : a));
-    $('k-weekly').textContent =
-      min === max ? int(min) : t('usersRange', { min: int(min), max: int(max) });
-    $('p-weekly').textContent = t('busiestWeek', { kw: `${kw(busiest)}, ${weekSpan(busiest)}` });
-    $('w-weekly').innerHTML = '';
-    return;
-  }
-  const shown = weeks.filter((w) => !w.running).at(-1) || weeks.at(-1);
-  const before = weeks[weeks.indexOf(shown) - 1];
-  $('k-weekly').textContent = shown ? int(shown.users) : '–';
-  $('p-weekly').textContent = shown
-    ? [
-        `${kw(shown)}, ${weekSpan(shown)}`,
-        shown.running && t('weekSoFar'),
-        before && t('weekBefore', { n: int(before.users) }),
-      ]
-        .filter(Boolean)
-        .join(' · ')
-    : '';
+  const newest = [...weeks].reverse();
   const top = Math.max(1, ...weeks.map((w) => w.users));
-  $('w-weekly').innerHTML =
-    weeks.length > 1
-      ? weeks
-          .map((w, i) => {
-            const spoken = `${kw(w)}, ${weekSpan(w)}${w.running ? ` (${t('weekSoFar')})` : ''}`;
-            // The first week names the unit; the others carry only their number.
-            let shortLabel = i ? String(w.kw) : kw(w);
-            if (w.running) {
-              shortLabel = t('weekSoFar');
-            }
-            return (
-              `<li${w === shown ? ' aria-current="true"' : ''}${w.running ? ' class="running"' : ''}>` +
-              `<i style="height:${Math.max(2, Math.round((14 * w.users) / top))}px" aria-hidden="true"></i>` +
-              `<span class="sr-only">${esc(spoken)}: ${int(w.users)}</span>` +
-              `<b aria-hidden="true">${int(w.users)}</b>` +
-              `<small aria-hidden="true">${esc(shortLabel)}</small></li>`
-            );
-          })
-          .join('')
-      : '';
+  const list = state.allWeeks ? newest : newest.slice(0, WEEKS_SHOWN);
+  $('week-list').innerHTML = list.length
+    ? list
+        .map(
+          (w) =>
+            `<li class="week${w.running ? ' running' : ''}">` +
+            `<span class="m">${esc(kw(w))}<small>${esc(w.running ? t('weekSoFar') : weekSpan(w))}</small></span>` +
+            `<span class="track" aria-hidden="true"><i style="width:${Math.round((100 * w.users) / top)}%"></i></span>` +
+            `<span class="v">${int(w.users)}<span class="sr-only"> ${esc(t('legendUsers'))}</span></span></li>`,
+        )
+        .join('')
+    : `<li class="none"><span class="m">${esc(t('noUsageYet'))}</span></li>`;
+  const more = $('weeks-more');
+  more.hidden = newest.length <= WEEKS_SHOWN;
+  more.textContent = state.allWeeks ? t('fewerWeeks') : t('allWeeks', { n: int(newest.length) });
+  more.setAttribute('aria-expanded', String(state.allWeeks));
 }
 
 function renderStats() {
@@ -389,7 +368,6 @@ function renderStats() {
   $('p-conversations').textContent = vs(c.conversations, p?.conversations, int);
   $('k-messages').textContent = int(c.messages);
   $('p-messages').textContent = vs(c.messages, p?.messages, int);
-  renderWeeks();
   for (const field of ['input', 'output']) {
     $(`k-${field}`).textContent = c.recorded ? amount(c[field]) : '–';
     let cmp = c.recorded ? '' : t('notRecorded');
@@ -875,6 +853,10 @@ $('lanes').addEventListener('click', (event) => {
   if (month) {
     navigate(month.dataset.month);
   }
+});
+$('weeks-more').addEventListener('click', () => {
+  state.allWeeks = !state.allWeeks;
+  renderWeekList();
 });
 $('retry').addEventListener('click', () => {
   const key = state.failed || state.want;

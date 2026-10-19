@@ -214,7 +214,7 @@
           <div class="lane-head">
             <h2 id="usage-title" tabindex="-1">{{t:laneUsage}}</h2>
           </div>
-          <dl class="stats three">
+          <dl class="stats two">
             <div class="stat">
               <dt>{{t:conversations}}</dt>
               <dd class="value" id="k-conversations"><span class="skeleton"></span></dd>
@@ -224,12 +224,6 @@
               <dt>{{t:messages}}</dt>
               <dd class="value" id="k-messages"><span class="skeleton"></span></dd>
               <dd class="cmp" id="p-messages"></dd>
-            </div>
-            <div class="stat">
-              <dt>{{t:weeklyUsers}}</dt>
-              <dd class="value" id="k-weekly"><span class="skeleton"></span></dd>
-              <dd class="cmp" id="p-weekly"></dd>
-              <dd><ol class="weeks" id="w-weekly" aria-label="{{t:weekRow}}"></ol></dd>
             </div>
           </dl>
           <section class="panel chart-panel" aria-labelledby="usage-chart-title">
@@ -262,6 +256,16 @@
             <div class="sr-only"><table id="usage-table"></table></div>
           </section>
           <div class="lane-rest">
+            <section class="panel" aria-labelledby="usage-weeks-title">
+              <div class="panel-head">
+                <h3 id="usage-weeks-title">{{t:usersPerWeek}}</h3>
+              </div>
+              <ul class="trend week-list" id="week-list">
+                <li class="placeholder"><span class="skeleton line"></span></li>
+              </ul>
+              <button type="button" class="text-btn more" id="weeks-more" hidden></button>
+              <p class="foot">{{t:usersNote}}</p>
+            </section>
             <section class="panel" aria-labelledby="usage-months-title">
               <div class="panel-head">
                 <h3 id="usage-months-title">{{t:conversationsPerMonth}}</h3>
@@ -269,7 +273,6 @@
               <ul class="trend" id="usage-trend">
                 <li class="placeholder"><span class="skeleton line"></span></li>
               </ul>
-              <p class="foot">{{t:usersNote}}</p>
             </section>
           </div>
         </section>
