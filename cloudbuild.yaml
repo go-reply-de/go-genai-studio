@@ -393,6 +393,12 @@ steps:
         echo "ERROR: USE_REDIS is true but REDIS_URI is empty - the api container throws at boot on that combination." >&2
         exit 1
       fi
+      # Redis refuses to start without a password, and Recreate stops the
+      # running pod first: fail the build here instead, while Redis is still up.
+      if [ -z "$$(kubectl get secret librechat-credentials-env --namespace=${_GKE_NAMESPACE} -o jsonpath='{.data.REDIS_PASSWORD}')" ]; then
+        echo "ERROR: REDIS_PASSWORD is missing or empty in librechat-credentials-env - add a version to ${_LIBRECHAT_CREDENTIALS_ENV_KEYS_PREFIX}REDIS_PASSWORD." >&2
+        exit 1
+      fi
       kubectl apply -f ./k8s/redis.yaml --namespace=${_GKE_NAMESPACE}
       kubectl rollout status deploy/redis --namespace=${_GKE_NAMESPACE} --timeout=180s
   env:
