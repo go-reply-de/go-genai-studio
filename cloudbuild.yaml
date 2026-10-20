@@ -192,6 +192,7 @@ steps:
         sed -i -e "s|###_REGIONAL_IP_NAME###|${_REGIONAL_IP_NAME}|g" "$file"
         sed -i -e "s|###_REGIONAL_SSL_POLICY_NAME###|${_REGIONAL_SSL_POLICY_NAME}|g" "$file"
         sed -i -e "s|###_IAP_CLIENT_ID###|${_IAP_CLIENT_ID}|g" "$file"
+        sed -i -e "s|###_PROXY_ONLY_CIDR###|${_PROXY_ONLY_CIDR}|g" "$file"
         sed -i -e "s/###_SECURITY_POLICY###/${_SECURITY_POLICY}/g" "$file"
         sed -i -e "s/###APP_TITLE###/${_APP_TITLE}/g" "$file"
         sed -i -e "s/###_BRANDING_BUCKET_NAME###/${_BRANDING_BUCKET_NAME}/g" "$file"
@@ -530,6 +531,54 @@ steps:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
+- name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy monitoring page'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      # Same MONITORING_ENABLED the profiles set. The page is a path on the
+      # admin host of the regional load balancer, so it needs both.
+      MONITORING_ENABLED=$(sed -n 's/^MONITORING_ENABLED=//p' /workspace/render-vars.env)
+      if [ "$$MONITORING_ENABLED" != "true" ]; then
+        echo "MONITORING_ENABLED is '$$MONITORING_ENABLED' for profile '${_PROFILE}', skipping the monitoring page."
+        exit 0
+      fi
+      if [ "${_ENABLE_REGIONAL_LB}" != "true" ] || [ "${_ADMIN_PANEL_ENABLED}" != "true" ]; then
+        echo "ERROR: MONITORING_ENABLED needs the regional load balancer and the admin panel." >&2
+        exit 1
+      fi
+      # Without it the NetworkPolicy would not render; the setup repo sends it with the regional LB.
+      if [ -z "${_PROXY_ONLY_CIDR}" ]; then
+        echo "ERROR: MONITORING_ENABLED is true but _PROXY_ONLY_CIDR is empty." >&2
+        exit 1
+      fi
+      kubectl apply -f ./k8s/monitoring.yaml --namespace=${_GKE_NAMESPACE}
+      # Its first pod may wait for a new node to pull the API image.
+      kubectl rollout status deploy/monitoring --namespace=${_GKE_NAMESPACE} --timeout=300s
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+- name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy monitoring report'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      # The setup repo sets _MONITORING_REPORT with the report bucket and the job's rights. Deleted
+      # rather than skipped when off, so an environment without them stops sending reports.
+      MONITORING_ENABLED=$(sed -n 's/^MONITORING_ENABLED=//p' /workspace/render-vars.env)
+      if [ "${_MONITORING_REPORT}" != "true" ] || [ "$$MONITORING_ENABLED" != "true" ]; then
+        echo "_MONITORING_REPORT is '${_MONITORING_REPORT}', MONITORING_ENABLED is '$$MONITORING_ENABLED': removing any monitoring report schedule."
+        kubectl delete cronjob monitoring-report --namespace=${_GKE_NAMESPACE} --ignore-not-found
+        exit 0
+      fi
+      kubectl apply -f ./k8s/monitoring-report.yaml --namespace=${_GKE_NAMESPACE}
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
 # Defaults for the sovereign-inference substitutions.
 substitutions:
   # Selects k8s/profiles/<name>.env for workload sizing. "default" keeps every
@@ -568,6 +617,11 @@ substitutions:
   _REGIONAL_IP_NAME: ""
   _REGIONAL_SSL_POLICY_NAME: ""
   _IAP_CLIENT_ID: ""
+  # The regional load balancer's proxy-only subnet, the only source the monitoring
+  # page's NetworkPolicy admits besides health checks.
+  _PROXY_ONLY_CIDR: ""
+  # "true" where the setup repo keeps the report bucket and gives the monitoring report its rights.
+  _MONITORING_REPORT: "false"
   # Appended to the api pod's claimName: empty selects the ReadWriteOnce claims,
   # "-rwx" selects the ReadWriteMany ones.
   _ENABLE_SOVEREIGN_INFERENCE: "false"

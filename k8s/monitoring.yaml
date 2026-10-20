@@ -1,0 +1,178 @@
+# Monitoring page at admin.<domain>/monitoring/ (tabs Feedback and Nutzung), on the
+# regional load balancer behind the admin panel's IAP. Applied only where
+# MONITORING_ENABLED is true (k8s/profiles). Runs the API image under its own service
+# account, which may read the feedback tables, clean texts and read Cloud Monitoring
+# (setup repo, module monitoring_page); the API itself may only add rows.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: monitoring
+  namespace: ###_GKE_NAMESPACE###
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: monitoring
+  name: monitoring
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: monitoring
+  template:
+    metadata:
+      labels:
+        app: monitoring
+    spec:
+      serviceAccountName: monitoring
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: monitoring
+          image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
+          command: ["node", "/app/api/monitoring/server.js"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: ENVIRONMENT
+              value: "###ENVIRONMENT###"
+            - name: APP_TITLE
+              value: "###APP_TITLE###"
+            - name: FEEDBACK_DATASET
+              valueFrom:
+                configMapKeyRef:
+                  key: FEEDBACK_DATASET
+                  name: env
+            # Which split the Tokens lane opens with: purpose or model.
+            - name: USAGE_TOKEN_SPLIT
+              value: "###_USAGE_TOKEN_SPLIT###"
+          readinessProbe:
+            httpGet:
+              path: /monitoring/healthz
+              port: 8080
+          livenessProbe:
+            httpGet:
+              path: /monitoring/healthz
+              port: 8080
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: monitoring-gw
+  name: monitoring-gw
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
+  selector:
+    app: monitoring
+---
+# Only the load balancer's proxies and Google's health checks reach the pod, so no
+# other workload can skip IAP and the reviewer header it sets can be trusted.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  podSelector:
+    matchLabels:
+      app: monitoring
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: ###_PROXY_ONLY_CIDR###
+        - ipBlock:
+            cidr: 35.191.0.0/16
+        - ipBlock:
+            cidr: 130.211.0.0/22
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# A path on the admin panel's host, so no new certificate or DNS record; the
+# more specific prefix wins over the admin panel's catch-all route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: monitoring-###ENVIRONMENT###
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  parentRefs:
+    - name: genai-studio-regional-###ENVIRONMENT###
+      sectionName: https
+  hostnames:
+    - admin.###DOMAIN###
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /monitoring
+      backendRefs:
+        - name: monitoring-gw
+          port: 8080
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: monitoring-gw-###ENVIRONMENT###
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        requestPath: /monitoring/healthz
+        port: 8080
+  targetRef:
+    group: ""
+    kind: Service
+    name: monitoring-gw
+---
+# Same IAP client as the admin panel; the setup repo grants the reviewers access to
+# this backend. A policy that fails to attach serves unauthenticated (see
+# gateway-admin.yaml), so check it reports Attached after a first deploy.
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: monitoring-gw-###ENVIRONMENT###
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  default:
+    timeoutSec: 60
+    iap:
+      enabled: true
+      clientID: ###_IAP_CLIENT_ID###
+      oauth2ClientSecret:
+        name: iap-oauth-client-secret
+  targetRef:
+    group: ""
+    kind: Service
+    name: monitoring-gw
