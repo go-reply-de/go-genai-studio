@@ -393,6 +393,19 @@ steps:
         echo "ERROR: USE_REDIS is true but REDIS_URI is empty - the api container throws at boot on that combination." >&2
         exit 1
       fi
+      # Redis refuses to start without a password, and Recreate stops the
+      # running pod first: fail the build here instead, while Redis is still up.
+      if [ -z "$$(kubectl get secret librechat-credentials-env --namespace=${_GKE_NAMESPACE} -o jsonpath='{.data.REDIS_PASSWORD}')" ]; then
+        echo "ERROR: REDIS_PASSWORD is missing or empty in librechat-credentials-env - add a version to ${_LIBRECHAT_CREDENTIALS_ENV_KEYS_PREFIX}REDIS_PASSWORD." >&2
+        exit 1
+      fi
+      # A running Redis is changed only by 'Update Redis', once no api pod is
+      # left without the credentials the new Redis may require.
+      EXISTING=$$(kubectl get deploy redis --namespace=${_GKE_NAMESPACE} --ignore-not-found -o name) || exit 1
+      if [ -n "$$EXISTING" ]; then
+        echo "Redis is running, 'Update Redis' applies k8s/redis.yaml after the API rollout."
+        exit 0
+      fi
       kubectl apply -f ./k8s/redis.yaml --namespace=${_GKE_NAMESPACE}
       kubectl rollout status deploy/redis --namespace=${_GKE_NAMESPACE} --timeout=180s
   env:
@@ -402,6 +415,37 @@ steps:
 - name: "gcr.io/cloud-builders/kubectl"
   id: 'Deploy API'
   args: ["apply", "-f", "./k8s/api.yaml", "--namespace=${_GKE_NAMESPACE}"]
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+- name: "gcr.io/cloud-builders/kubectl"
+  id: 'Update Redis'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      # Waits until no old api pod is left, terminating ones included (they
+      # drain open streams through Redis), so none meets a Redis that requires
+      # credentials it does not send. An unchanged redis.yaml restarts nothing.
+      USE_REDIS=$(sed -n 's/^USE_REDIS=//p' /workspace/render-vars.env)
+      if [ "$$USE_REDIS" != "true" ]; then
+        echo "USE_REDIS is '$$USE_REDIS' for profile '${_PROFILE}', skipping Redis."
+        exit 0
+      fi
+      kubectl rollout status deploy/api --namespace=${_GKE_NAMESPACE} --timeout=900s || exit 1
+      for i in $$(seq 1 60); do
+        TERMINATING=$$(kubectl get pods -l app=api --namespace=${_GKE_NAMESPACE} -o jsonpath='{.items[?(@.metadata.deletionTimestamp)].metadata.name}') || exit 1
+        [ -z "$$TERMINATING" ] && break
+        echo "Waiting for terminating api pods: $$TERMINATING"
+        sleep 5
+      done
+      if [ -n "$$TERMINATING" ]; then
+        echo "ERROR: api pods still terminating after 300s: $$TERMINATING" >&2
+        exit 1
+      fi
+      kubectl apply -f ./k8s/redis.yaml --namespace=${_GKE_NAMESPACE} || exit 1
+      kubectl rollout status deploy/redis --namespace=${_GKE_NAMESPACE} --timeout=180s
   env:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
