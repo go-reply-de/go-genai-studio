@@ -524,6 +524,18 @@ spec:
                   key: REDIS_URI
                   name: env
                   optional: true
+            - name: REDIS_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  key: REDIS_USERNAME
+                  name: env
+            # Only environments that run Redis have this key.
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: REDIS_PASSWORD
+                  name: librechat-credentials-env
+                  optional: true
             - name: REDIS_RETRY_MAX_ATTEMPTS
               valueFrom:
                 configMapKeyRef:
