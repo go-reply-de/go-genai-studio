@@ -266,6 +266,11 @@ spec:
                 configMapKeyRef:
                   key: FILE_RETENTION_SWEEP_INTERVAL_MS
                   name: env
+            - name: FILE_UPLOAD_IP_MAX
+              valueFrom:
+                configMapKeyRef:
+                  key: FILE_UPLOAD_IP_MAX
+                  name: env
             - name: GCP_LOGGING
               value: "true"
             - name: GOOGLE_CALLBACK_URL
