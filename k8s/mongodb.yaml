@@ -70,6 +70,18 @@ spec:
   selector:
     app: mongodb
 ---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mongodb
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  # Driven by k8s/profiles/*.env.
+  minAvailable: ###_STORE_MIN_AVAILABLE###
+  selector:
+    matchLabels:
+      app: mongodb
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

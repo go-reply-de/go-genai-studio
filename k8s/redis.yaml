@@ -85,3 +85,15 @@ spec:
       targetPort: 6379
   selector:
     app: redis
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redis
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  # Driven by k8s/profiles/*.env.
+  minAvailable: ###_STORE_MIN_AVAILABLE###
+  selector:
+    matchLabels:
+      app: redis

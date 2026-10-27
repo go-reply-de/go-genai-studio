@@ -474,6 +474,18 @@ spec:
   selector:
     app: meilisearch
 ---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: meilisearch
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  # Driven by k8s/profiles/*.env.
+  minAvailable: ###_STORE_MIN_AVAILABLE###
+  selector:
+    matchLabels:
+      app: meilisearch
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

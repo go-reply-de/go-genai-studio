@@ -66,6 +66,18 @@ spec:
   selector:
     app: vectordb-###ENVIRONMENT###
 ---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: vectordb
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  # Driven by k8s/profiles/*.env.
+  minAvailable: ###_STORE_MIN_AVAILABLE###
+  selector:
+    matchLabels:
+      app: vectordb-###ENVIRONMENT###
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
