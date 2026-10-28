@@ -26,7 +26,7 @@ spec:
         - args:
             - mongod
             - --noauth
-          image: mongo:8.0
+          image: "###_MONGO_IMAGE###"
           resources:
             # Driven by k8s/profiles/*.env
             requests:
@@ -69,6 +69,18 @@ spec:
       targetPort: 27017
   selector:
     app: mongodb
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mongodb
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  # Driven by k8s/profiles/*.env.
+  minAvailable: ###_STORE_MIN_AVAILABLE###
+  selector:
+    matchLabels:
+      app: mongodb
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -136,13 +148,15 @@ data:
     # Created only once the corresponding feature is used; absence is normal in
     # a fresh environment and is not an error.
     OPTIONAL="accessroles aclentries actions agentapikeys agentcategories
-              balances banners chatprojects configs groups mcpservers
+              balances banners configs groups mcpservers
               promptgroups prompts skillfiles skills systemgrants"
 
     # Asserted after the fact as defence in depth. The allow-list is the
-    # control; this catches an accidental addition to it.
+    # control; this catches an accidental addition to it. Every collection the
+    # weekly reset deletes belongs here, or a Backup would outlive it.
     FORBIDDEN="conversations messages files sharedlinks conversationtags
-               memoryentries toolcalls presets sessions tokens transactions"
+               memoryentries toolcalls presets sessions tokens transactions
+               chatprojects"
 
     # Never backed up either: their records must not outlive their delete date,
     # and restoring any of them would desynchronise the export to the audit bucket.

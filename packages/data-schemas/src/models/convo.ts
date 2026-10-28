@@ -1,6 +1,7 @@
 import { Model } from 'mongoose';
 import type * as t from '~/types';
 import { applyTenantIsolation } from '~/models/plugins/tenantIsolation';
+import { applyWeeklyRetention } from '~/models/plugins/weeklyRetention';
 import mongoMeili from '~/models/plugins/mongoMeili';
 import convoSchema from '~/schema/convo';
 
@@ -8,6 +9,7 @@ export function createConversationModel(
   mongoose: typeof import('mongoose'),
 ): Model<t.IConversation> {
   applyTenantIsolation(convoSchema);
+  applyWeeklyRetention(convoSchema);
   if (process.env.MEILI_HOST && process.env.MEILI_MASTER_KEY) {
     convoSchema.plugin(mongoMeili, {
       mongoose,

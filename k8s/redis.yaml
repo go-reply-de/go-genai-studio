@@ -27,6 +27,13 @@ spec:
       containers:
         - name: redis
           image: redis:7.4-alpine
+          # An empty requirepass turns auth off, and a secret without a version
+          # arrives here as "": refuse to start instead.
+          command:
+            - sh
+            - -c
+            - '[ -n "$REDIS_PASSWORD" ] || { echo "REDIS_PASSWORD is empty, refusing to start without auth" >&2; exit 1; }; exec docker-entrypoint.sh "$@" --requirepass "$REDIS_PASSWORD"'
+            - redis
           args:
             - redis-server
             # No persistence: stream jobs hold generated answer text, which is
@@ -36,12 +43,6 @@ spec:
             - ""
             - --appendonly
             - "no"
-            # Reached only through its ClusterIP Service. Without this, Redis
-            # with no bind directive and no password answers loopback only and
-            # every api pod fails to connect. Same in-cluster posture as
-            # mongodb's --noauth - add --requirepass here if that changes.
-            - --protected-mode
-            - "no"
             # The headroom below the memory request is what keeps eviction from
             # ever running: allkeys-lru is the safety valve, and if it does run
             # it drops a live stream. Alert on evicted_keys, not on memory.
@@ -49,6 +50,17 @@ spec:
             - "###_REDIS_MAXMEMORY###"
             - --maxmemory-policy
             - allkeys-lru
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: REDIS_PASSWORD
+                  name: librechat-credentials-env
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  key: REDIS_PASSWORD
+                  name: librechat-credentials-env
           resources:
             # Driven by k8s/profiles/*.env
             requests:
@@ -56,20 +68,43 @@ spec:
               memory: "###_REDIS_MEMORY###"
           ports:
             - containerPort: 6379
+          # redis-cli exits 0 on a NOAUTH reply too, so check for the answer.
           readinessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["sh", "-c", "redis-cli ping | grep -q PONG"]
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 3
           livenessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["sh", "-c", "redis-cli ping | grep -q PONG"]
             initialDelaySeconds: 15
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 6
       restartPolicy: Always
+---
+# Only the api pods reach Redis. It holds answer text while it streams and the
+# ban and rate-limit counters, so no other workload may read or reset them.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api
+      ports:
+        - protocol: TCP
+          port: 6379
 ---
 apiVersion: v1
 kind: Service
@@ -85,3 +120,15 @@ spec:
       targetPort: 6379
   selector:
     app: redis
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redis
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  # Driven by k8s/profiles/*.env.
+  minAvailable: ###_STORE_MIN_AVAILABLE###
+  selector:
+    matchLabels:
+      app: redis

@@ -4,6 +4,14 @@ const { Tool } = require('@librechat/agents/langchain/tools');
 const { VertexAI } = require('@google-cloud/vertexai');
 const { Tools } = require('librechat-data-provider');
 const { logger } = require('@librechat/data-schemas');
+const {
+    errorStatus,
+    withOverloadRetry,
+    isRetryableStatus,
+    getBalanceConfig,
+    getTransactionsConfig,
+} = require('@librechat/api');
+const { spendTokens } = require('~/models');
 const { extractGroundingResponse } = require('../util/vertexGrounding');
 const {
     parsePolicyConfig,
@@ -27,6 +35,17 @@ const VERTEX_MULTI_REGION_ENDPOINTS = {
     us: 'aiplatform.us.rep.googleapis.com',
     global: 'aiplatform.googleapis.com',
 };
+
+/** Overload retries stop starting once a search has run this long, the retry on an empty result included. */
+const RETRY_BUDGET_MS = 20000;
+
+const SEARCH_UNAVAILABLE =
+    'WARNUNG: Die Websuche ist gerade nicht verfügbar, es liegen keine Suchergebnisse vor. ' +
+    'Sag dem Nutzer, dass die Suche fehlgeschlagen ist und in einer Minute erneut versucht werden kann. ' +
+    'Gib keine Aussage als durch eine Suche belegt aus.';
+const SEARCH_FAILED =
+    'WARNUNG: Die Websuche ist fehlgeschlagen, es liegen keine Suchergebnisse vor. ' +
+    'Sag dem Nutzer, dass die Suche fehlgeschlagen ist. Gib keine Aussage als durch eine Suche belegt aus.';
 
 const warned = new Set();
 function warnOnce(message) {
@@ -76,8 +95,12 @@ class WebGroundingEnterprise extends Tool {
 
         /* Used to initialize the Tool without necessary variables. */
         this.override = fields.override ?? false;
+        this.req = fields.req;
+        this.userId = fields.userId;
         this.policy = loadPolicy();
         this.geminiModel = process.env.WEB_GROUNDING_MODEL || fields.geminiModel || 'gemini-2.5-flash';
+        /** Searched with once the main model stays overloaded; Google's overloads hit one model's pool. */
+        this.fallbackModel = process.env.WEB_GROUNDING_FALLBACK_MODEL;
         /** Thinking past LOW makes Gemini Flash search in rounds and return no attributable chunks. */
         this.thinkingLevel = process.env.WEB_GROUNDING_THINKING_LEVEL;
 
@@ -149,13 +172,18 @@ class WebGroundingEnterprise extends Tool {
                 ...(multiRegionEndpoint ? { apiEndpoint: multiRegionEndpoint } : {}),
             });
 
-            this.generativeModel = this.vertexAI.preview.getGenerativeModel({
-                model: this.geminiModel,
-                tools: [{ enterpriseWebSearch: { excludeDomains: this.policy.excludeDomains } }],
-                ...(this.thinkingLevel
-                    ? { generationConfig: { thinkingConfig: { thinkingLevel: this.thinkingLevel } } }
-                    : {}),
-            });
+            const searchModel = (model) =>
+                this.vertexAI.preview.getGenerativeModel({
+                    model,
+                    tools: [{ enterpriseWebSearch: { excludeDomains: this.policy.excludeDomains } }],
+                    ...(this.thinkingLevel
+                        ? { generationConfig: { thinkingConfig: { thinkingLevel: this.thinkingLevel } } }
+                        : {}),
+                });
+            this.generativeModel = searchModel(this.geminiModel);
+            if (this.fallbackModel && this.fallbackModel !== this.geminiModel) {
+                this.fallbackGenerativeModel = searchModel(this.fallbackModel);
+            }
 
         } catch (error) {
             logger.error('Error initializing Vertex AI client:', error);
@@ -165,15 +193,74 @@ class WebGroundingEnterprise extends Tool {
         }
     }
 
+    /**
+     * One search call, retried on overload while the search's budget lasts. With a fallback model
+     * the main one gets a single retry, so an overloaded pool is left after about 2 s, not 6 s.
+     */
+    async _generate(request, deadline, config) {
+        let model = this.geminiModel;
+        let result;
+        try {
+            result = await withOverloadRetry(() => this.generativeModel.generateContent(request), {
+                deadline,
+                ...(this.fallbackGenerativeModel ? { attempts: 2 } : {}),
+            });
+        } catch (error) {
+            const status = errorStatus(error);
+            if (!this.fallbackGenerativeModel || !isRetryableStatus(status)) {
+                throw error;
+            }
+            logger.warn(`[WebGroundingEnterprise] ${model} returned ${status}; searching with ${this.fallbackModel}`);
+            model = this.fallbackModel;
+            result = await withOverloadRetry(
+                () => this.fallbackGenerativeModel.generateContent(request),
+                { deadline },
+            );
+        }
+        void this._recordUsage(result.response?.usageMetadata, model, config);
+        return result;
+    }
+
+    /** The agent's own usage leaves out this call, so it is recorded as its own transaction context. */
+    async _recordUsage(usage, model, config) {
+        const promptTokens = (usage?.promptTokenCount ?? 0) + (usage?.toolUsePromptTokenCount ?? 0);
+        const completionTokens = (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0);
+        if (!this.userId || (!promptTokens && !completionTokens)) {
+            return;
+        }
+        try {
+            await spendTokens(
+                {
+                    user: this.userId,
+                    model,
+                    conversationId: config?.configurable?.thread_id,
+                    messageId: config?.configurable?.run_id ?? config?.configurable?.requestBody?.messageId,
+                    context: 'web_grounding',
+                    balance: getBalanceConfig(this.req?.config),
+                    transactions: getTransactionsConfig(this.req?.config),
+                },
+                { promptTokens, completionTokens },
+            );
+        } catch (error) {
+            logger.error('Web Grounding for Enterprise could not record its token usage', error);
+        }
+    }
+
     /** An empty result leaves nothing to cite, so it earns exactly one more attempt. */
-    async _search(query) {
+    async _search(query, config) {
         const request = contentsOf(buildGroundingPrompt(query));
-        const first = extractGroundingResponse((await this.generativeModel.generateContent(request)).response);
+        const deadline = Date.now() + RETRY_BUDGET_MS;
+        const first = extractGroundingResponse((await this._generate(request, deadline, config)).response);
         if (resultDomains(first.chunks).length) {
             return first;
         }
         logger.info('Web grounding returned no attributable results; retrying once.');
-        return extractGroundingResponse((await this.generativeModel.generateContent(request)).response);
+        return extractGroundingResponse((await this._generate(request, deadline, config)).response);
+    }
+
+    /** Tells the agent the search did not run, so it says so instead of answering unsourced. */
+    _failure(error) {
+        return isRetryableStatus(errorStatus(error)) ? SEARCH_UNAVAILABLE : SEARCH_FAILED;
     }
 
     /** The text is what the agent reads; the artifact feeds LibreChat's Sources panel. */
@@ -181,7 +268,7 @@ class WebGroundingEnterprise extends Tool {
         const { query } = data;
 
         try {
-            const { text, chunks, supports } = await this._search(query);
+            const { text, chunks, supports } = await this._search(query, config);
             const { sources } = parseSourceBlock(text);
             const { entries, dropped, numbering } = mergeSources({ sources, chunks, supports });
             const turn = config?.toolCall?.turn ?? 0;
@@ -198,7 +285,7 @@ class WebGroundingEnterprise extends Tool {
             return [answer, { [Tools.web_search]: { turn, organic: toOrganicSources(entries) } }];
         } catch (error) {
             logger.error('Web Grounding for Enterprise request failed', error);
-            return ['There was an error with the Web Grounding for Enterprise Search.', undefined];
+            return [this._failure(error), undefined];
         }
     }
 }

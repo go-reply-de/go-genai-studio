@@ -52,6 +52,7 @@ const {
   hasUrlContextTool,
   appendYouTubeVideoParts,
   resolveYouTubeInjectionConfig,
+  overloadErrorText,
 } = require('@librechat/api');
 const {
   Callback,
@@ -1501,7 +1502,9 @@ class AgentClient extends BaseClient {
         );
         this.contentParts.push({
           type: ContentTypes.ERROR,
-          [ContentTypes.ERROR]: `An error occurred while processing the request${err?.message ? `: ${err.message}` : ''}`,
+          [ContentTypes.ERROR]:
+            overloadErrorText(err) ??
+            `An error occurred while processing the request${err?.message ? `: ${err.message}` : ''}`,
         });
       }
     } finally {

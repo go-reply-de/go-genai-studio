@@ -42,6 +42,7 @@ const { startExpiredFileSweep } = require('./services/Files/process');
 const { startMeiliRetentionSweep } = require('./services/Search/meiliRetentionSweep');
 const { createAdminRequestAudit } = require('./services/AuditLog/adminRequestAudit');
 const { startAuditExport } = require('./services/AuditLog/auditExport');
+const { startHardening } = require('@librechat/api');
 const { initializeGitHubSkillSync } = require('./services/Skills/sync');
 const { jwtLogin, ldapLogin, passportLogin } = require('~/strategies');
 const { checkMigrations } = require('./services/start/migration');
@@ -133,6 +134,7 @@ const startServer = async () => {
     await performStartupChecks(appConfig);
     await updateInterfacePermissions({ appConfig, getRoleByName, updateAccessPermissions });
   });
+  await startHardening({ app, appConfig, methods: require('~/models') });
 
   const indexPath = path.join(appConfig.paths.dist, 'index.html');
   let indexHTML = fs.readFileSync(indexPath, 'utf8');

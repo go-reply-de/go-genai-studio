@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: admin
-          image: registry.librechat.ai/clickhouse/librechat-admin-panel:latest
+          image: "###_ADMIN_PANEL_IMAGE###"
           imagePullPolicy: Always
           env:
             - name: PORT

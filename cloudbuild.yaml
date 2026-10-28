@@ -68,13 +68,11 @@ steps:
   args:
     - '-c'
     - |
-      # Determine the version string: use tag if present, otherwise use short SHA.
+      # The version (e.g. v0.7.8) from the tag, else the short SHA.
       VERSION_STRING=""
       if [ -n "${TAG_NAME}" ]; then
         echo "Git tag found: ${TAG_NAME}. Extracting version..."
-        # Extract just the version (e.g., v0.7.8) from the full git tag.
         VERSION_STRING=$(echo "${TAG_NAME}" | sed -E 's/.*(v[0-9]+(\.[0-9]+)*(-rc[0-9]+)?).*/\1/')
-        # If grep finds nothing, fall back to the full tag name.
         if [ -z "$${VERSION_STRING}" ]; then
           VERSION_STRING="${TAG_NAME}"
         fi
@@ -84,13 +82,8 @@ steps:
       fi
       echo "Version string set to: $${VERSION_STRING}"
 
-      # Workload sizing comes from k8s/profiles/*.env, not substitutions:
-      # default.env is the baseline, ${_PROFILE}.env layers on top and wins
-      # (awk keeps the last assignment). Adding a tunable is one line in a
-      # profile, with no new substitution or Terraform variable. _PROFILE may
-      # name several, space separated, applied left to right.
-      # In /workspace rather than a mktemp, so later steps can read back the
-      # same rendered values the manifests got - see "Deploy Redis".
+      # Sizing comes from k8s/profiles: default.env, then each name in _PROFILE
+      # on top, last one wins. In /workspace so later steps read the same values.
       RENDER_VARS=/workspace/render-vars.env
       PROFILE_FILES="./k8s/profiles/default.env"
       for p in ${_PROFILE}; do
@@ -106,8 +99,7 @@ steps:
       echo "Rendering with profile '${_PROFILE}' ($$(wc -l < "$${RENDER_VARS}") values):"
       sort "$${RENDER_VARS}" | sed 's/^/  /'
 
-      # Which of api.yaml's two volume pairs survives. rwx needs the bucket name
-      # in the same step, so validate it here rather than at apply time.
+      # Checked here: rwx needs the bucket name to render api.yaml.
       case "${_API_FILES_MODE}" in
         rwo) ;;
         rwx) [ -n "${_API_FILES_BUCKET_NAME}" ] || {
@@ -118,11 +110,8 @@ steps:
       esac
       echo "api file volumes: mode=${_API_FILES_MODE}"
 
-      # Ingress TLS. Comes from terraform (self_managed_tls), NOT from a
-      # profile: only terraform knows whether the Secret has actually been
-      # published, and a name rendered in an environment where it has not points
-      # the Ingress at a Secret that is not there. Empty deletes the line
-      # instead, the same shape as an unset GPU reservation below.
+      # From terraform, not a profile: only terraform knows the Secret exists.
+      # Empty deletes the line rather than point the Ingress at nothing.
       TLS_SECRET_NAME="${_TLS_SECRET_NAME}"
       if [ -z "$${TLS_SECRET_NAME}" ]; then
         echo "ingress TLS: ManagedCertificate only"
@@ -130,38 +119,45 @@ steps:
         echo "ingress TLS: ManagedCertificate + Secret '$${TLS_SECRET_NAME}'"
       fi
 
-      # Regional load balancer. Fails loudly rather than deploying a Gateway
-      # that would 403 everyone or serve no certificate.
+      # Fail rather than deploy a Gateway that 403s everyone or has no certificate.
       if [ "${_ENABLE_REGIONAL_LB}" = "true" ]; then
         if [ -z "${_REGIONAL_IP_NAME}" ]; then
           echo "ERROR: _ENABLE_REGIONAL_LB is true but _REGIONAL_IP_NAME is empty - terraform has not reserved the regional address." >&2
+          exit 1
+        fi
+        # The SSL policy enforces TLS 1.2 or later on the Gateway.
+        if [ -z "${_REGIONAL_SSL_POLICY_NAME}" ]; then
+          echo "ERROR: _ENABLE_REGIONAL_LB is true but _REGIONAL_SSL_POLICY_NAME is empty - terraform has not created the regional SSL policy." >&2
           exit 1
         fi
         if [ -z "$${TLS_SECRET_NAME}" ]; then
           echo "ERROR: _ENABLE_REGIONAL_LB is true but no TLS Secret is published. A regional load balancer cannot use a ManagedCertificate - set self_managed_tls = \"serving\" in terraform." >&2
           exit 1
         fi
-        # Only one of clientID/oauth2ClientSecret means Google-managed OAuth,
-        # silently, which is not what the Ingress does.
+        # A secret without clientID silently means Google-managed OAuth.
         if [ -z "${_IAP_CLIENT_ID}" ]; then
           echo "ERROR: _ENABLE_REGIONAL_LB is true but _IAP_CLIENT_ID is empty." >&2
           exit 1
         fi
-        echo "regional LB: address=${_REGIONAL_IP_NAME} tls=$${TLS_SECRET_NAME}"
+        echo "regional LB: address=${_REGIONAL_IP_NAME} tls=$${TLS_SECRET_NAME} ssl_policy=${_REGIONAL_SSL_POLICY_NAME}"
       fi
 
+      # Empty REDIS_URI is dropped: new URL('') throws at api load, even with Redis off.
+      RENDERED_REDIS_URI=$$(sed -n 's/^REDIS_URI=//p' "$${RENDER_VARS}")
+      # Escaped, because sed reads & in a query string as the whole match.
+      HELP_URL=$$(printf '%s' "${_HELP_AND_FAQ_URL}" | sed 's/[&|\\]/\\&/g')
+
       find ./k8s -name "*.yaml" -print0 | while IFS= read -r -d $'\0' file; do
-        # Delete the line when nothing is published, rather than render a
-        # dangling reference; substitute explicitly otherwise.
         if [ -z "$${TLS_SECRET_NAME}" ]; then
           sed -i -e "/###_TLS_SECRET_NAME###/d" "$file"
         else
           sed -i -e "s|###_TLS_SECRET_NAME###|$${TLS_SECRET_NAME}|g" "$file"
         fi
+        if [ -z "$${RENDERED_REDIS_URI}" ]; then
+          sed -i -e "/###_REDIS_URI###/d" "$file"
+        fi
 
-        # Profile-driven values first. Keys are plain uppercase identifiers, so a
-        # literal | in a value is the only thing that would break this delimiter -
-        # none of the sizing values contain one.
+        # Profile values go in unescaped; none of them contains | or &.
         while IFS='=' read -r k v; do
           sed -i -e "s|###_$${k}###|$${v}|g" "$file"
         done < "$${RENDER_VARS}"
@@ -178,21 +174,21 @@ steps:
         sed -i -e "s/###DOMAIN###/${_DOMAIN}/g" "$file"
         sed -i -e "s/###IP_ADDRESS_ID###/${_IP_ADDRESS_ID}/g" "$file"
         sed -i -e "s|###_REGIONAL_IP_NAME###|${_REGIONAL_IP_NAME}|g" "$file"
+        sed -i -e "s|###_REGIONAL_SSL_POLICY_NAME###|${_REGIONAL_SSL_POLICY_NAME}|g" "$file"
         sed -i -e "s|###_IAP_CLIENT_ID###|${_IAP_CLIENT_ID}|g" "$file"
+        sed -i -e "s|###_PROXY_ONLY_CIDR###|${_PROXY_ONLY_CIDR}|g" "$file"
         sed -i -e "s/###_SECURITY_POLICY###/${_SECURITY_POLICY}/g" "$file"
         sed -i -e "s/###APP_TITLE###/${_APP_TITLE}/g" "$file"
+        sed -i -e "s|###_HELP_AND_FAQ_URL###|$${HELP_URL}|g" "$file"
         sed -i -e "s/###_BRANDING_BUCKET_NAME###/${_BRANDING_BUCKET_NAME}/g" "$file"
         sed -i -e "s|###_API_FILES_BUCKET_NAME###|${_API_FILES_BUCKET_NAME}|g" "$file"
-        # Drop the pair this mode does not use, then strip the marker from the
-        # survivors - a leftover marker would land inside a YAML value.
+        # Drop the unused volume pair, then the marker, which would end up in a YAML value.
         if [ "${_API_FILES_MODE}" = "rwx" ]; then
           sed -i -e "/###_RWO_ONLY###/d" -e "s|[[:space:]]*###_RWX_ONLY###||g" "$file"
         else
           sed -i -e "/###_RWX_ONLY###/d" -e "s|[[:space:]]*###_RWO_ONLY###||g" "$file"
         fi
-        # An empty name DELETES both nodeSelector lines rather than rendering
-        # them blank: affinity "specific" with no reservation leaves the pod
-        # Pending forever, with no fallback to on-demand.
+        # No reservation deletes both lines: "specific" without one leaves the pod Pending.
         if [ -z "${_GPU_RESERVATION_NAME}" ]; then
           sed -i -e "/###_RESERVATION_AFFINITY###/d" -e "/###_GPU_RESERVATION_NAME###/d" "$file"
         else
@@ -209,20 +205,15 @@ steps:
         sed -i -e "s|###_RAG_OPENAI_API_KEY###|${_RAG_OPENAI_API_KEY}|g" "$file"
         sed -i -e "s~###_CUSTOM_FOOTER###~${_APP_TITLE} - $${VERSION_STRING}${_CUSTOM_FOOTER}~g" "$file"
         sed -i -e "s|###_VERTEX_AI_DATASTORE_ID###|${_VERTEX_AI_DATASTORE_ID}|g" "$file"
-        # Sovereign inference placeholders. Cloud Build resolves ${_FOO} itself
-        # before bash ever runs, so bash default syntax (${_FOO:-x}) is NOT
-        # valid here - it is rejected as an invalid substitution at submit time.
-        # Defaults live in the substitutions: block at the bottom of this file.
+        # Sovereign inference. Cloud Build rejects bash defaults (:-) on substitutions
+        # at submit time; the defaults live in substitutions: below.
         sed -i -e "s|###_MODELS_BUCKET_NAME###|${_MODELS_BUCKET_NAME}|g" "$file"
         sed -i -e "s|###_ACCELERATOR_TYPE###|${_ACCELERATOR_TYPE}|g" "$file"
         sed -i -e "s|###_GEMMA_MODEL_NAME###|${_GEMMA_MODEL_NAME}|g" "$file"
         sed -i -e "s|###_GEMMA_SERVED_NAME###|${_GEMMA_MODEL_NAME}|g" "$file"
         sed -i -e "s|###_GPU_COUNT###|${_GPU_COUNT}|g" "$file"
-        # NOTE: quantization, max-model-len, max-num-seqs and the TEI model name
-        # are deliberately NOT substitutions. They are literal values in
-        # k8s/env.yaml, read by the inference pods as env vars, so they can be
-        # retuned without a Terraform apply. See the checksum step below, which
-        # is what makes such an edit actually roll the pods.
+        # Quantization, max-model-len, max-num-seqs and the TEI model are literals in
+        # env.yaml, so no terraform apply; the checksum below rolls the pods.
         sed -i -e "s|###_GEMMA_CPU###|${_GEMMA_CPU}|g" "$file"
         sed -i -e "s|###_GEMMA_MEMORY###|${_GEMMA_MEMORY}|g" "$file"
         sed -i -e "s|###_GEMMA_MIN_REPLICAS###|${_GEMMA_MIN_REPLICAS}|g" "$file"
@@ -233,9 +224,7 @@ steps:
         sed -i -e "s|###_TEI_MAX_REPLICAS###|${_TEI_MAX_REPLICAS}|g" "$file"
       done
 
-      # rag.yaml is in here because its image tag is fixed: without the
-      # annotation an embeddings model or region change would reach the
-      # ConfigMap but never reach the running pod.
+      # rag.yaml too: its image tag is fixed, so only this rolls it on an embeddings change.
       ENV_CHECKSUM=$(grep -E '^  (VLLM_|TEI_|EMBEDDINGS_|RAG_OPENAI_|GOOGLE_CLOUD_)' ./k8s/env.yaml \
         | sha256sum | cut -c1-16)
       echo "Inference config checksum: $${ENV_CHECKSUM}"
@@ -255,6 +244,23 @@ steps:
     kubectl create secret generic gcp-service-account --from-file=key.json=./key.json --namespace=${_GKE_NAMESPACE}
 
     ### Secret 2: "librechat-credentials-env"
+    # Checked before the delete: without this key in the k8s secret, Redis
+    # cannot restart and new api pods cannot authenticate.
+    use_redis=$(sed -n 's/^USE_REDIS=//p' /workspace/render-vars.env)
+    if [ "${use_redis}" = "true" ]; then
+      redis_secret_id="${_LIBRECHAT_CREDENTIALS_ENV_KEYS_PREFIX}REDIS_PASSWORD"
+      case ",${_LIBRECHAT_CREDENTIALS_ENV_KEYS}," in
+        *",${redis_secret_id},"*) ;;
+        *) echo "ERROR: USE_REDIS is true but ${redis_secret_id} is not in _LIBRECHAT_CREDENTIALS_ENV_KEYS - apply the setup repo's terraform." >&2
+           exit 1 ;;
+      esac
+      redis_password=$(gcloud secrets versions access latest --secret="${redis_secret_id}" --format='get(payload.data)' | tr '_-' '/+' | base64 -d | tr -d '[:space:]')
+      if [ -z "${redis_password}" ]; then
+        echo "ERROR: ${redis_secret_id} has no enabled version or an empty value - add one." >&2
+        exit 1
+      fi
+    fi
+
     kubectl delete secret librechat-credentials-env -n ${_GKE_NAMESPACE} || true
     kubectl create secret generic librechat-credentials-env -n ${_GKE_NAMESPACE}
 
@@ -379,6 +385,13 @@ steps:
         echo "ERROR: USE_REDIS is true but REDIS_URI is empty - the api container throws at boot on that combination." >&2
         exit 1
       fi
+      # A running Redis is changed only by 'Update Redis', once no api pod is
+      # left without the credentials the new Redis may require.
+      EXISTING=$$(kubectl get deploy redis --namespace=${_GKE_NAMESPACE} --ignore-not-found -o name) || exit 1
+      if [ -n "$$EXISTING" ]; then
+        echo "Redis is running, 'Update Redis' applies k8s/redis.yaml after the API rollout."
+        exit 0
+      fi
       kubectl apply -f ./k8s/redis.yaml --namespace=${_GKE_NAMESPACE}
       kubectl rollout status deploy/redis --namespace=${_GKE_NAMESPACE} --timeout=180s
   env:
@@ -388,6 +401,37 @@ steps:
 - name: "gcr.io/cloud-builders/kubectl"
   id: 'Deploy API'
   args: ["apply", "-f", "./k8s/api.yaml", "--namespace=${_GKE_NAMESPACE}"]
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+- name: "gcr.io/cloud-builders/kubectl"
+  id: 'Update Redis'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      # Waits until no old api pod is left, terminating ones included (they
+      # drain open streams through Redis), so none meets a Redis that requires
+      # credentials it does not send. An unchanged redis.yaml restarts nothing.
+      USE_REDIS=$(sed -n 's/^USE_REDIS=//p' /workspace/render-vars.env)
+      if [ "$$USE_REDIS" != "true" ]; then
+        echo "USE_REDIS is '$$USE_REDIS' for profile '${_PROFILE}', skipping Redis."
+        exit 0
+      fi
+      kubectl rollout status deploy/api --namespace=${_GKE_NAMESPACE} --timeout=900s || exit 1
+      for i in $$(seq 1 60); do
+        TERMINATING=$$(kubectl get pods -l app=api --namespace=${_GKE_NAMESPACE} -o jsonpath='{.items[?(@.metadata.deletionTimestamp)].metadata.name}') || exit 1
+        [ -z "$$TERMINATING" ] && break
+        echo "Waiting for terminating api pods: $$TERMINATING"
+        sleep 5
+      done
+      if [ -n "$$TERMINATING" ]; then
+        echo "ERROR: api pods still terminating after 300s: $$TERMINATING" >&2
+        exit 1
+      fi
+      kubectl apply -f ./k8s/redis.yaml --namespace=${_GKE_NAMESPACE} || exit 1
+      kubectl rollout status deploy/redis --namespace=${_GKE_NAMESPACE} --timeout=180s
   env:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
@@ -432,6 +476,25 @@ steps:
       fi
       kubectl apply -f ./k8s/probe.yaml --namespace=${_GKE_NAMESPACE}
       kubectl rollout status deploy/api-probe --namespace=${_GKE_NAMESPACE} --timeout=120s
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+- name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy terms reset'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      # Deleted rather than skipped when off: the job writes to every user, so
+      # switching it off has to stop it.
+      TERMS_RESET_ENABLED=$(sed -n 's/^TERMS_RESET_ENABLED=//p' /workspace/render-vars.env)
+      if [ "$$TERMS_RESET_ENABLED" != "true" ]; then
+        echo "TERMS_RESET_ENABLED is '$$TERMS_RESET_ENABLED' for profile '${_PROFILE}', removing any terms reset schedule."
+        kubectl delete cronjob terms-reset --namespace=${_GKE_NAMESPACE} --ignore-not-found
+        exit 0
+      fi
+      kubectl apply -f ./k8s/terms-reset.yaml --namespace=${_GKE_NAMESPACE}
   env:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
@@ -498,6 +561,54 @@ steps:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
+- name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy monitoring page'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      # Same MONITORING_ENABLED the profiles set. The page is a path on the
+      # admin host of the regional load balancer, so it needs both.
+      MONITORING_ENABLED=$(sed -n 's/^MONITORING_ENABLED=//p' /workspace/render-vars.env)
+      if [ "$$MONITORING_ENABLED" != "true" ]; then
+        echo "MONITORING_ENABLED is '$$MONITORING_ENABLED' for profile '${_PROFILE}', skipping the monitoring page."
+        exit 0
+      fi
+      if [ "${_ENABLE_REGIONAL_LB}" != "true" ] || [ "${_ADMIN_PANEL_ENABLED}" != "true" ]; then
+        echo "ERROR: MONITORING_ENABLED needs the regional load balancer and the admin panel." >&2
+        exit 1
+      fi
+      # Without it the NetworkPolicy would not render; the setup repo sends it with the regional LB.
+      if [ -z "${_PROXY_ONLY_CIDR}" ]; then
+        echo "ERROR: MONITORING_ENABLED is true but _PROXY_ONLY_CIDR is empty." >&2
+        exit 1
+      fi
+      kubectl apply -f ./k8s/monitoring.yaml --namespace=${_GKE_NAMESPACE}
+      # Its first pod may wait for a new node to pull the API image.
+      kubectl rollout status deploy/monitoring --namespace=${_GKE_NAMESPACE} --timeout=300s
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+- name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy monitoring report'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      # The setup repo sets _MONITORING_REPORT with the report bucket and the job's rights. Deleted
+      # rather than skipped when off, so an environment without them stops sending reports.
+      MONITORING_ENABLED=$(sed -n 's/^MONITORING_ENABLED=//p' /workspace/render-vars.env)
+      if [ "${_MONITORING_REPORT}" != "true" ] || [ "$$MONITORING_ENABLED" != "true" ]; then
+        echo "_MONITORING_REPORT is '${_MONITORING_REPORT}', MONITORING_ENABLED is '$$MONITORING_ENABLED': removing any monitoring report schedule."
+        kubectl delete cronjob monitoring-report --namespace=${_GKE_NAMESPACE} --ignore-not-found
+        exit 0
+      fi
+      kubectl apply -f ./k8s/monitoring-report.yaml --namespace=${_GKE_NAMESPACE}
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
 # Defaults for the sovereign-inference substitutions.
 substitutions:
   # Selects k8s/profiles/<name>.env for workload sizing. "default" keeps every
@@ -517,6 +628,8 @@ substitutions:
   # a trigger not yet re-applied renders the same value it would anyway. Must be
   # a valid label value: alphanumerics, '-', '_' or '.', 63 characters or fewer.
   _APPLICATION: "genai-portal"
+  # Where the "Help & FAQ" menu entry leads; terraform sends an environment's own.
+  _HELP_AND_FAQ_URL: "https://www.reply.com/go-reply/en/"
   _GPU_RESERVATION_NAME: ""
   # Global Ingress. MUST default to "true": absence has to keep meaning "on" for
   # any environment whose trigger has not been re-applied yet. Terraform sends
@@ -534,7 +647,13 @@ substitutions:
   # substitution fails the build at submit time.
   _ENABLE_REGIONAL_LB: "false"
   _REGIONAL_IP_NAME: ""
+  _REGIONAL_SSL_POLICY_NAME: ""
   _IAP_CLIENT_ID: ""
+  # The regional load balancer's proxy-only subnet, the only source the monitoring
+  # page's NetworkPolicy admits besides health checks.
+  _PROXY_ONLY_CIDR: ""
+  # "true" where the setup repo keeps the report bucket and gives the monitoring report its rights.
+  _MONITORING_REPORT: "false"
   # Appended to the api pod's claimName: empty selects the ReadWriteOnce claims,
   # "-rwx" selects the ReadWriteMany ones.
   _ENABLE_SOVEREIGN_INFERENCE: "false"

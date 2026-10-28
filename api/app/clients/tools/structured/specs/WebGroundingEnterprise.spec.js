@@ -20,6 +20,9 @@ jest.mock('@google-cloud/vertexai', () => ({
   }),
 }));
 
+jest.mock('~/models', () => ({ spendTokens: jest.fn() }));
+
+const { spendTokens } = require('~/models');
 const WebGroundingEnterprise = require('../WebGroundingEnterprise');
 
 /** Stands in for the Vertex generative model, answering each call with the next canned response. */
@@ -272,11 +275,222 @@ describe('WebGroundingEnterprise', () => {
   });
 
   test('reports a failed search as a message instead of throwing', async () => {
-    const search = stubModel([new Error('503 Service Unavailable')]);
+    const search = stubModel([new Error('socket hang up')]);
 
     const { content: out } = await invokeTool(toolWith(search));
 
-    expect(out).toMatch(/error with the Web Grounding for Enterprise Search/);
+    expect(out).toMatch(/Websuche ist fehlgeschlagen/);
+    expect(out).toMatch(/keine Aussage als durch eine Suche belegt/);
+  });
+});
+
+describe('WebGroundingEnterprise token usage', () => {
+  const sources = 'Bis 4,5 h [1].\n[[QUELLEN]]\n1|awmf.org|2023|S2e';
+  const usage = {
+    promptTokenCount: 120,
+    toolUsePromptTokenCount: 30,
+    candidatesTokenCount: 40,
+    thoughtsTokenCount: 8,
+  };
+  const withUsage = (response) => ({ ...response, usageMetadata: usage });
+
+  const userTool = (search) => {
+    const tool = toolWith(search);
+    tool.userId = 'user-1';
+    tool.geminiModel = 'gemini-3.8-flash';
+    return tool;
+  };
+
+  const invokeInConversation = (tool) =>
+    tool.invoke(
+      { query: QUERY },
+      {
+        toolCall: { id: 'call_1', name: 'web_grounding_enterprise', args: { query: QUERY } },
+        configurable: { thread_id: 'convo-1', run_id: 'msg-1' },
+      },
+    );
+
+  beforeEach(() => spendTokens.mockReset());
+
+  test('records the search call under its own context, tool and thinking tokens included', async () => {
+    const search = stubModel([withUsage(groundedResponse(sources, ['awmf.org']))]);
+
+    await invokeInConversation(userTool(search));
+
+    expect(spendTokens).toHaveBeenCalledTimes(1);
+    expect(spendTokens).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: 'user-1',
+        model: 'gemini-3.8-flash',
+        conversationId: 'convo-1',
+        messageId: 'msg-1',
+        context: 'web_grounding',
+      }),
+      { promptTokens: 150, completionTokens: 48 },
+    );
+  });
+
+  test('records both calls when an empty search is retried', async () => {
+    const search = stubModel([
+      withUsage(emptyResponse('Keine Treffer.')),
+      withUsage(groundedResponse(sources, ['awmf.org'])),
+    ]);
+
+    await invokeInConversation(userTool(search));
+
+    expect(spendTokens).toHaveBeenCalledTimes(2);
+  });
+
+  test('records nothing without a user to charge', async () => {
+    const search = stubModel([withUsage(groundedResponse(sources, ['awmf.org']))]);
+
+    await invokeTool(toolWith(search));
+
+    expect(spendTokens).not.toHaveBeenCalled();
+  });
+
+  test('answers even when the usage cannot be recorded', async () => {
+    spendTokens.mockRejectedValue(new Error('mongo down'));
+    const search = stubModel([withUsage(groundedResponse(sources, ['awmf.org']))]);
+
+    const { content: out } = await invokeInConversation(userTool(search));
+
+    expect(out).toContain('[awmf.org](');
+  });
+});
+
+describe('WebGroundingEnterprise overload retries', () => {
+  /** What the Vertex SDK throws for a 4xx: the status sits on the cause. */
+  const clientError = (status, text) =>
+    Object.assign(new Error(`[VertexAI.ClientError]: got status: ${status} ${text}. {}`), {
+      name: 'ClientError',
+      cause: { code: status },
+    });
+  const overloaded = () => clientError(429, 'Too Many Requests');
+  const answer = () =>
+    groundedResponse('Bis 4,5 h [1].\n[[QUELLEN]]\n1|awmf.org|2023|S2e', ['awmf.org']);
+
+  /** Lets fake time run past every backoff wait while the tool works. */
+  const settle = async (tool) => {
+    const pending = invokeTool(tool);
+    await jest.advanceTimersByTimeAsync(60000);
+    return pending;
+  };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('answers from a retry after an overloaded search', async () => {
+    const search = stubModel([overloaded(), answer()]);
+
+    const { content } = await settle(toolWith(search));
+
+    expect(search.asked).toHaveLength(2);
+    expect(content).toContain('Bis 4,5 h.');
+  });
+
+  test('tells the agent the search is unavailable after three overloaded tries', async () => {
+    const search = stubModel([overloaded(), overloaded(), overloaded(), answer()]);
+
+    const { content, artifact } = await settle(toolWith(search));
+
+    expect(search.asked).toHaveLength(3);
+    expect(content).toMatch(/Websuche ist gerade nicht verfügbar/);
+    expect(content).toMatch(/keine Aussage als durch eine Suche belegt/);
+    expect(artifact).toBeUndefined();
+  });
+
+  test('does not retry a rejected search', async () => {
+    const search = stubModel([clientError(400, 'Bad Request'), answer()]);
+
+    const { content } = await settle(toolWith(search));
+
+    expect(search.asked).toHaveLength(1);
+    expect(content).toMatch(/Websuche ist fehlgeschlagen/);
+  });
+
+  /** A tool whose overloaded search can move to a second model. */
+  const withFallback = (search, fallback) => {
+    const tool = toolWith(search);
+    tool.geminiModel = 'gemini-3.8-flash';
+    tool.fallbackModel = 'gemini-4-argon';
+    tool.fallbackGenerativeModel = fallback;
+    return tool;
+  };
+
+  test('searches with the fallback model once the main one stays overloaded', async () => {
+    const search = stubModel([overloaded(), overloaded(), answer()]);
+    const fallback = stubModel([answer()]);
+
+    const { content } = await settle(withFallback(search, fallback));
+
+    expect(search.asked).toHaveLength(2);
+    expect(fallback.asked).toHaveLength(1);
+    expect(content).toContain('Bis 4,5 h.');
+  });
+
+  test('stays on the main model when its retry answers', async () => {
+    const search = stubModel([overloaded(), answer()]);
+    const fallback = stubModel([answer()]);
+
+    await settle(withFallback(search, fallback));
+
+    expect(search.asked).toHaveLength(2);
+    expect(fallback.asked).toHaveLength(0);
+  });
+
+  test('does not fall back for a rejected search', async () => {
+    const search = stubModel([clientError(400, 'Bad Request')]);
+    const fallback = stubModel([answer()]);
+
+    const { content } = await settle(withFallback(search, fallback));
+
+    expect(fallback.asked).toHaveLength(0);
+    expect(content).toMatch(/Websuche ist fehlgeschlagen/);
+  });
+
+  test('tells the agent the search is unavailable when both models are overloaded', async () => {
+    const search = stubModel([overloaded(), overloaded()]);
+    const fallback = stubModel([overloaded(), overloaded(), overloaded()]);
+
+    const { content } = await settle(withFallback(search, fallback));
+
+    expect(fallback.asked).toHaveLength(3);
+    expect(content).toMatch(/Websuche ist gerade nicht verfügbar/);
+  });
+
+  test('records a fallback search under the model that answered', async () => {
+    spendTokens.mockReset();
+    const search = stubModel([overloaded(), overloaded()]);
+    const fallback = stubModel([answer()]);
+    const tool = withFallback(search, fallback);
+    tool.userId = 'user-1';
+
+    await settle(tool);
+
+    expect(spendTokens).toHaveBeenCalledTimes(1);
+    expect(spendTokens.mock.calls[0][0].model).toBe('gemini-4-argon');
+  });
+
+  test('stops retrying once the search has used its budget', async () => {
+    const search = stubModel([emptyResponse('Erster Versuch.'), overloaded(), answer()]);
+    const { generateContent } = search;
+    search.generateContent = async (request) => {
+      if (search.asked.length === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 19000));
+      }
+      return generateContent(request);
+    };
+
+    const { content } = await settle(toolWith(search));
+
+    expect(search.asked).toHaveLength(2);
+    expect(content).toMatch(/Websuche ist gerade nicht verfügbar/);
   });
 });
 
@@ -302,6 +516,7 @@ describe('WebGroundingEnterprise client wiring', () => {
     process.env.GOOGLE_SERVICE_KEY_FILE = key;
     process.env.WEB_GROUNDING_SOURCES_FILE = policy;
     delete process.env.WEB_GROUNDING_MODEL;
+    delete process.env.WEB_GROUNDING_FALLBACK_MODEL;
     delete process.env.WEB_GROUNDING_THINKING_LEVEL;
   });
 
@@ -329,6 +544,27 @@ describe('WebGroundingEnterprise client wiring', () => {
     new WebGroundingEnterprise({ geminiModel: 'gemini-3.8-flash' });
 
     expect(mockClients[0].models.map((m) => m.model)).toEqual(['gemini-3.5-flash-lite']);
+  });
+
+  test('builds the fallback search model next to the main one', () => {
+    process.env.WEB_GROUNDING_MODEL = 'gemini-3.8-flash';
+    process.env.WEB_GROUNDING_FALLBACK_MODEL = 'gemini-4-argon';
+
+    new WebGroundingEnterprise({ geminiModel: 'gemini-3.8-flash' });
+
+    expect(mockClients[0].models.map((m) => m.model)).toEqual([
+      'gemini-3.8-flash',
+      'gemini-4-argon',
+    ]);
+  });
+
+  test('builds no fallback that names the main model', () => {
+    process.env.WEB_GROUNDING_MODEL = 'gemini-4-argon';
+    process.env.WEB_GROUNDING_FALLBACK_MODEL = 'gemini-4-argon';
+
+    new WebGroundingEnterprise({ geminiModel: 'gemini-3.8-flash' });
+
+    expect(mockClients[0].models.map((m) => m.model)).toEqual(['gemini-4-argon']);
   });
 
   test('sets the thinking level of the search model when one is configured', () => {

@@ -1,0 +1,1092 @@
+'use strict';
+/* global FeedbackHints, MonitoringShell */
+
+const { T, t, $, storage, columnsOf, spanKey, spanOf, query, label, address } = MonitoringShell;
+const REASONS = T.reasons;
+const MONTHS = T.months;
+const REFRESH_MS = 60000;
+/** A month shown from memory is checked again in the background once it is this old. */
+const FRESH_MS = 60000;
+/** Ten texts fit on one screen. */
+const PAGE_SIZE = 10;
+const MARKER = '[entfernt]';
+const SEEN_KEY = 'feedback-seen';
+const SEEN_MAX = 5000;
+
+const ICON = {
+  prev: '<svg class="i small" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>',
+  next: '<svg class="i small" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
+  thumbsUp: `<svg class="i up" viewBox="0 0 24 24" role="img" aria-label="${t('thumbsUp')}"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>`,
+  thumbsDown: `<svg class="i down" viewBox="0 0 24 24" role="img" aria-label="${t('thumbsDown')}"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></svg>`,
+  clean:
+    '<svg class="i small" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>',
+  trash:
+    '<svg class="i small" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>',
+  check:
+    '<svg class="i small" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>',
+};
+
+// Possible personal data, marked only in this browser (hints.js).
+const { findHints } = FeedbackHints;
+const num = (n) => Math.max(0, Number(n) || 0);
+const int = (n) => num(n).toLocaleString(T.locale);
+const percent = (value, digits) =>
+  new Intl.NumberFormat(T.locale, {
+    style: 'percent',
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value);
+const share = (part, whole) => (whole >= 10 ? percent(num(part) / whole, 1) : null);
+const esc = (s) =>
+  String(s).replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
+  );
+const dayOf = (iso) => Number(iso.slice(8, 10));
+const monthOf = (iso) => Number(iso.slice(5, 7));
+/** A text's date, with its year once an interval runs over New Year. */
+const dm = (iso) =>
+  state.span && state.span.from.slice(0, 4) !== state.span.to.slice(0, 4)
+    ? T.dateYear(dayOf(iso), monthOf(iso), iso.slice(0, 4))
+    : T.date(dayOf(iso), monthOf(iso));
+const days = (to) => T.span(dayOf(to));
+const clock = (ms) =>
+  new Date(ms).toLocaleTimeString(T.locale, { hour: '2-digit', minute: '2-digit' });
+// Texts seen in an earlier visit; anything else is marked new. A first visit marks nothing.
+const seenStored = storage((s) => s.getItem(SEEN_KEY));
+const seen = new Set(storage(() => JSON.parse(seenStored || '[]')) || []);
+let firstVisit = seenStored === null;
+
+const state = {
+  data: null,
+  key: '',
+  span: null,
+  rows: [],
+  rating: '',
+  hintsOnly: false,
+  page: 1,
+  // New texts that arrived while another page was open; they wait so that page stays put.
+  held: new Set(),
+  // Texts that came in while the page was open, in order of arrival.
+  arrivals: new Map(),
+  open: null,
+  drafts: new Map(),
+  arrived: new Set(),
+  months: [],
+  ratings: {},
+  want: '',
+  failed: '',
+  cache: new Map(),
+  inflight: new Map(),
+  timer: 0,
+};
+
+function rememberSeen(ids) {
+  const stored = storage((s) => JSON.parse(s.getItem(SEEN_KEY) || '[]')) || [];
+  const all = [...new Set([...stored, ...ids])];
+  storage((s) => s.setItem(SEEN_KEY, JSON.stringify(all.slice(-SEEN_MAX))));
+}
+
+const WRAP = {
+  match: (part) => `<mark class="match">${part}</mark>`,
+  hint: (part) => `<mark class="hint" title="${t('hint')}">${part}</mark>`,
+  removed: (part) => `<span class="removed">${part}</span>`,
+};
+
+/** The text with search matches, likely personal data and removed parts marked, escaped. */
+function highlight(text, query, hints) {
+  const kinds = new Array(text.length).fill('');
+  for (const [start, end] of hints) {
+    kinds.fill('hint', start, end);
+  }
+  for (let i = text.indexOf(MARKER); i >= 0; i = text.indexOf(MARKER, i + 1)) {
+    kinds.fill('removed', i, i + MARKER.length);
+  }
+  if (query) {
+    const lower = text.toLowerCase();
+    for (let i = lower.indexOf(query); i >= 0; i = lower.indexOf(query, i + 1)) {
+      kinds.fill('match', i, i + query.length);
+    }
+  }
+  let html = '';
+  let start = 0;
+  for (let i = 1; i <= text.length; i++) {
+    if (i < text.length && kinds[i] === kinds[start]) {
+      continue;
+    }
+    const part = esc(text.slice(start, i));
+    html += WRAP[kinds[start]]?.(part) ?? part;
+    start = i;
+  }
+  return html;
+}
+
+function enrich(text, data) {
+  return {
+    ...text,
+    hints: findHints(text.text),
+    cleaned: text.text.includes(MARKER),
+    reviewed: text.reviewed === true,
+    isNew: !seen.has(text.id),
+    today: data.period.running && text.date === data.period.to,
+  };
+}
+
+/** Possible personal data that no reviewer has marked as checked yet. */
+const flagged = (r) => r.hints.length > 0 && !r.reviewed;
+
+function setLive(kind, text) {
+  $('live').hidden = !text;
+  $('live').className = `live ${kind}`;
+  $('live-text').textContent = text;
+}
+
+/** A running month says when it was fetched; a finished month needs no status. */
+function settleLive(data) {
+  const at = state.cache.get(state.key)?.at || Date.now();
+  setLive('on', data.period.running ? t('live', { time: clock(at) }) : '');
+}
+
+function busy(on) {
+  // Placeholders stand in on the first load; after that the previous month fades back.
+  $('content').classList.toggle('stale', on && Boolean(state.data));
+  if (on) {
+    $('content').setAttribute('aria-busy', 'true');
+    setLive('busy', t('loading'));
+  } else {
+    $('content').removeAttribute('aria-busy');
+  }
+}
+
+function showError(message) {
+  $('error').hidden = !message;
+  $('error-text').textContent = message || '';
+}
+
+let toastTimer = 0;
+function toast(message) {
+  $('toast').textContent = message;
+  $('toast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    $('toast').hidden = true;
+  }, 4000);
+}
+
+/** One request per month or interval at a time; every answer is kept for switching back. */
+function request(key) {
+  if (!state.inflight.has(key)) {
+    const pending = fetch(`api/month${query(key)}`, {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    })
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(res.status === 403 ? 'forbidden' : `HTTP ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((data) => {
+        state.cache.set(key, { data, at: Date.now() });
+        return data;
+      })
+      .finally(() => state.inflight.delete(key));
+    state.inflight.set(key, pending);
+  }
+  return state.inflight.get(key);
+}
+
+/** Shows a month or an interval: from memory, else once loaded. The latest choice wins. */
+async function show(key) {
+  state.want = key;
+  state.failed = '';
+  clearTimeout(state.timer);
+  renderNav(key);
+  const hit = state.cache.get(key);
+  if (hit) {
+    apply(hit.data, false, key);
+    settleLive(hit.data);
+    if (Date.now() - hit.at < FRESH_MS) {
+      settle(hit.data);
+      return;
+    }
+  } else {
+    busy(true);
+  }
+  try {
+    const data = await request(key);
+    if (state.want !== key) {
+      return;
+    }
+    if (!spanOf(key) && !data.months.includes(key)) {
+      // An old link to a month without feedback: show the newest month instead.
+      history.replaceState(null, '', location.pathname);
+      show(data.months[0]);
+      return;
+    }
+    apply(data, false, key);
+    settle(data);
+  } catch (error) {
+    if (state.want !== key) {
+      return;
+    }
+    busy(false);
+    if (hit) {
+      setLive('warn', t('stale'));
+      schedule();
+      return;
+    }
+    state.failed = key;
+    showError(
+      error.message === 'forbidden' ? t('noAccess') : t('loadFailed', { month: label(key) }),
+    );
+    if (state.data) {
+      state.want = state.key;
+      address(state.key);
+      renderNav(state.key);
+      settleLive(state.data);
+      schedule();
+    } else {
+      setLive('warn', t('notLoaded'));
+    }
+  }
+}
+
+function settle(data) {
+  busy(false);
+  showError('');
+  settleLive(data);
+  prefetchAround(state.key);
+  schedule();
+}
+
+function navigate(key) {
+  if (!key || key === state.want) {
+    return;
+  }
+  closeWork(false);
+  state.page = 1;
+  address(key);
+  show(key);
+}
+
+/** Loads the months next to this one in the background, so stepping is instant. */
+function prefetchAround(month) {
+  const i = spanOf(month) ? -1 : state.months.indexOf(month);
+  for (const next of i < 0 ? [] : [state.months[i + 1], state.months[i - 1]]) {
+    if (next && !state.cache.has(next)) {
+      request(next).catch(() => {});
+    }
+  }
+}
+
+/** Fetches the running month, or an interval up to today, again; new texts slide in. */
+async function poll() {
+  const { key } = state;
+  if (!key || state.want !== key) {
+    return;
+  }
+  try {
+    const data = await request(key);
+    if (state.want === key) {
+      apply(data, true, key);
+      settleLive(data);
+    }
+  } catch {
+    if (state.want === key) {
+      setLive('warn', t('pollFailed', { time: clock(Date.now() + REFRESH_MS) }));
+    }
+  } finally {
+    if (state.want === key) {
+      schedule();
+    }
+  }
+}
+
+function apply(data, live, key) {
+  const known = new Set(state.rows.map((r) => r.id));
+  if (live) {
+    const target = state.page === 1 && !state.open ? state.arrived : state.held;
+    data.texts
+      .filter((t) => !known.has(t.id))
+      .forEach((t) => {
+        target.add(t.id);
+        state.arrivals.set(t.id, state.arrivals.size + 1);
+      });
+  } else {
+    state.held.clear();
+  }
+  const ids = new Set(data.texts.map((t) => t.id));
+  state.held.forEach((id) => {
+    if (!ids.has(id)) {
+      state.held.delete(id);
+    }
+  });
+  if (firstVisit) {
+    data.texts.forEach((t) => seen.add(t.id));
+    firstVisit = false;
+  }
+  state.data = data;
+  state.key = key;
+  state.span = spanOf(key);
+  // Texts carry a day but no time, so a text that came in while the page was open goes first in its day.
+  const order = new Map(data.texts.map((t, i) => [t.id, i]));
+  const arrival = (r) => state.arrivals.get(r.id) || 0;
+  state.rows = data.texts
+    .map((t) => enrich(t, data))
+    .sort(
+      (a, b) =>
+        b.date.localeCompare(a.date) ||
+        arrival(b) - arrival(a) ||
+        order.get(a.id) - order.get(b.id),
+    );
+  renderMonths(data.months, data.ratingsByMonth);
+  renderNav(key);
+  if (state.open && !state.rows.some((r) => r.id === state.open.id)) {
+    state.open = null;
+    toast(t('goneWhileEditing'));
+  }
+  renderHeader();
+  renderStats();
+  renderChart();
+  renderReasons();
+  renderTexts();
+  rememberSeen(data.texts.map((t) => t.id));
+}
+
+function schedule() {
+  clearTimeout(state.timer);
+  if (!state.data?.period.running) {
+    return;
+  }
+  state.timer = setTimeout(() => {
+    if (document.hidden) {
+      schedule();
+    } else {
+      poll();
+    }
+  }, REFRESH_MS);
+}
+
+/** The months with feedback and their ratings; an open grid shows them at once. */
+function renderMonths(months, ratings = {}) {
+  state.months = months;
+  state.ratings = ratings;
+  picker.refresh();
+}
+
+/** A loaded month knows its ratings best; for the running month that is the latest poll. */
+const ratingsOf = (month) =>
+  state.cache.get(month)?.data.current.rated ?? state.ratings[month] ?? 0;
+
+const picker = MonitoringShell.monthPicker({
+  months: () => state.months,
+  current: () => state.want,
+  describe: (month) => {
+    const count = int(ratingsOf(month));
+    return {
+      count,
+      detail: ratingsOf(month) === 1 ? t('ratingsOne') : t('ratingsMany', { n: count }),
+    };
+  },
+  none: t('noFeedback'),
+  earlier: t('noEarlier'),
+  later: t('noLater'),
+  onPick: (month) => navigate(month),
+});
+const renderNav = (key) => picker.renderNav(key);
+const range = MonitoringShell.rangePicker({
+  current: () => state.want,
+  earliest: () => `${state.months.at(-1)}-01`,
+  start: () => spanOf(state.want) || MonitoringShell.monthSpan(state.want),
+  onApply: (span) => navigate(spanKey(span)),
+});
+MonitoringShell.modeSwitch({
+  current: () => state.want,
+  months: () => state.months,
+  onMonth: navigate,
+  range,
+});
+
+/** The brand and the reviewer are written into the page by the server; only the month changes. */
+function renderHeader() {
+  document.title = `${label(state.key)} · ${$('app').textContent} Feedback`;
+}
+
+/** A month against the one before; an interval with its length, there being nothing to compare. */
+function renderPeriod() {
+  const d = state.data;
+  if (state.span) {
+    const n = d.days.length;
+    const parts = [n === 1 ? t('rangeDay') : t('rangeDays', { n: int(n) })];
+    if (d.period.running) {
+      parts.push(t('rangeRunning', { time: clock(state.cache.get(state.key)?.at || Date.now()) }));
+    }
+    const cols = columns();
+    if (cols.weekly) {
+      parts.push(cols.some((c) => c.part) ? t('rangeWeeklyPart') : t('rangeWeekly'));
+    }
+    // The feedback store began later than the interval.
+    const oldest = state.months.at(-1);
+    if (oldest && `${oldest}-01` > d.period.from) {
+      parts.push(t('feedbackSince', { month: MonitoringShell.monthLabel(oldest) }));
+    }
+    $('period').textContent = `${parts.join(' · ')}.`;
+    return false;
+  }
+  const p = d.previous;
+  const before = MONTHS[monthOf(p.from) - 1];
+  // A month without feedback, such as one before the store existed, is no comparison.
+  const compare = d.months.includes(p.from.slice(0, 7));
+  let scope = t('scopeNone', { month: before });
+  if (compare) {
+    scope = d.period.running
+      ? t('scopeSame', { span: days(p.to), month: before })
+      : t('scopeWhole', { month: before });
+  }
+  $('period').textContent = d.period.running
+    ? t('periodRunning', {
+        date: T.longDate(dayOf(d.period.to), monthOf(d.period.from)),
+        scope,
+      })
+    : t('periodClosed', { scope });
+  return compare;
+}
+
+function renderStats() {
+  const d = state.data;
+  const c = d.current;
+  // An interval has nothing to compare with, so these zeros are never shown.
+  const p = d.previous || { rated: 0, up: 0, down: 0, texts: 0 };
+  const compare = renderPeriod();
+  const vs = (value) => (compare ? t('previous', { value }) : '');
+  $('k-rated').textContent = int(c.rated);
+  $('p-rated').textContent = vs(int(p.rated));
+  const positive = share(c.up, num(c.rated));
+  $('k-positive').textContent = positive ?? '–';
+  $('p-positive').textContent = positive ? vs(share(p.up, num(p.rated)) ?? '–') : t('fromTen');
+  $('k-down').textContent = int(c.down);
+  $('p-down').textContent = vs(int(p.down));
+  $('k-texts').textContent = int(c.texts);
+  $('p-texts').textContent = [t('inList', { n: int(state.rows.length) }), vs(int(p.texts))]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function niceMax(max) {
+  if (max <= 5) {
+    return 5;
+  }
+  const step = 10 ** Math.floor(Math.log10(max));
+  return (Math.ceil((max / step) * 2) * step) / 2;
+}
+
+/** The chart's columns: a month's days, or an interval's days or calendar weeks. */
+function columns() {
+  const d = state.data;
+  const days = d.days.map(([up, down]) => [num(up), num(down)]);
+  if (!state.span) {
+    const month = monthOf(d.period.from);
+    return days.map((v, i) => ({
+      v,
+      label: T.shortDate(i + 1, month),
+      axis: i === 0 || (i + 1) % 5 === 0 ? T.axisDay(i + 1) : '',
+    }));
+  }
+  const list = columnsOf(d.period.from, days.length);
+  const result = list.map((c) => ({
+    ...c,
+    v: c.days.reduce(([up, down], i) => [up + days[i][0], down + days[i][1]], [0, 0]),
+  }));
+  result.weekly = list.weekly;
+  return result;
+}
+
+/**
+ * The whole month or interval; in a running month a thin line marks today and the days after
+ * stay empty. Drawn at the box's own size in pixels, so it fills its panel and the text reads
+ * the same everywhere.
+ */
+function renderChart() {
+  const d = state.data;
+  const box = $('chart-box').getBoundingClientRect();
+  const [w, h] = [Math.round(box.width) || 1000, Math.round(box.height) || 220];
+  const cols = columns();
+  const last = d.period.running && !state.span ? dayOf(d.period.to) : cols.length;
+  const values = cols.map((c) => c.v);
+  const unit = cols.weekly ? t('perWeek') : t('perDay');
+  $('chart-title').textContent = unit;
+  const top = niceMax(Math.max(0, ...values.slice(0, last).map(([up, down]) => up + down)));
+  const [left, right, y0, y1] = [40, w - 4, h - 30, 10];
+  const step = (right - left) / values.length;
+  const width = Math.max(2, step * 0.72);
+  const radius = Math.min(3, width / 2);
+  const y = (v) => y0 - (v / top) * (y0 - y1);
+  $('chart').setAttribute('viewBox', `0 0 ${w} ${h}`);
+  let svg = [0, top / 2, top]
+    .map(
+      (v) =>
+        `<line class="grid" x1="${left}" x2="${right}" y1="${y(v)}" y2="${y(v)}"/>` +
+        `<text x="${left - 8}" y="${y(v) + 4}" text-anchor="end">${int(v)}</text>`,
+    )
+    .join('');
+  // Today sits on the date axis: a tag in the row of day numbers, the line rising from it.
+  const marker = last < values.length ? left + last * step : null;
+  const tagWidth = t('today').length * 7 + 16;
+  if (marker !== null) {
+    svg += `<line class="today-line" x1="${marker}" x2="${marker}" y1="${y1}" y2="${y0 + 8}"/>`;
+    svg += `<rect class="today-tag" x="${marker - tagWidth / 2}" y="${y0 + 8}" width="${tagWidth}" height="20" rx="10"/>`;
+    svg += `<text class="today-label" x="${marker}" y="${y0 + 22}" text-anchor="middle">${t('today')}</text>`;
+  }
+  values.forEach(([up, down], i) => {
+    const center = left + (i + 0.5) * step;
+    const x = center - width / 2;
+    if (i < last) {
+      const title = `<title>${esc(t('dayTip', { date: cols[i].label, up, down }))}</title>`;
+      const hu = y0 - y(up);
+      const hd = y0 - y(down);
+      svg += `<g${cols[i].part ? ' class="part"' : ''}>${title}<rect class="up" x="${x}" y="${y0 - hu}" width="${width}" height="${hu}" rx="${radius}"/>`;
+      svg += `<rect class="down" x="${x}" y="${y0 - hu - hd - (hd ? 2 : 0)}" width="${width}" height="${hd}" rx="${radius}"/></g>`;
+    }
+    const clear = marker === null || Math.abs(center - marker) > tagWidth / 2 + 14;
+    if (cols[i].axis && clear) {
+      svg += `<text x="${center}" y="${y0 + 22}" text-anchor="middle">${esc(cols[i].axis)}</text>`;
+    }
+  });
+  if (!values.slice(0, last).some(([up, down]) => up + down)) {
+    svg += `<text class="empty" x="${(left + right) / 2}" y="${(y0 + y1) / 2}" text-anchor="middle">${t('noRatingsYet')}</text>`;
+  }
+  $('chart').innerHTML = svg;
+  $('chart-table').innerHTML =
+    `<caption>${unit}</caption>` +
+    `<tr><th>${cols.weekly ? t('weekCol') : t('day')}</th><th>${t('thumbsUp')}</th><th>${t('thumbsDown')}</th></tr>` +
+    values
+      .slice(0, last)
+      .map(
+        ([up, down], i) => `<tr><td>${esc(cols[i].label)}</td><td>${up}</td><td>${down}</td></tr>`,
+      )
+      .join('');
+}
+
+function renderReasons() {
+  for (const [rating, list, color] of [
+    ['thumbsDown', 'r-down', 'var(--down)'],
+    ['thumbsUp', 'r-up', 'var(--up)'],
+  ]) {
+    const rows = Object.entries(state.data.reasons[rating] || {})
+      .map(([key, n]) => [key, num(n)])
+      .filter(([, n]) => n > 0)
+      .sort((a, b) => b[1] - a[1]);
+    const total = rows.reduce((sum, [, n]) => sum + n, 0);
+    $(list).innerHTML = rows.length
+      ? rows
+          .map(
+            ([key, n]) =>
+              `<li><span>${esc(REASONS[key] || key)}</span><span class="num"><b>${int(n)}</b> · ${percent(n / total, 0)}</span>` +
+              `<span class="track" aria-hidden="true"><i style="width:${Math.round((100 * n) / rows[0][1])}%;background:${color}"></i></span></li>`,
+          )
+          .join('')
+      : `<li class="empty">${t('noRatings')}</li>`;
+  }
+}
+
+function visibleRows(query) {
+  return state.rows.filter(
+    (r) =>
+      r.id === state.open?.id ||
+      (!state.held.has(r.id) &&
+        (!state.rating || r.rating === state.rating) &&
+        (!state.hintsOnly || flagged(r)) &&
+        (!query || r.text.toLowerCase().includes(query))),
+  );
+}
+
+/** "Prüfen" with a button that marks the text as checked for everyone, or "Geprüft" with one to undo it. */
+function reviewTags(r, date) {
+  if (r.reviewed) {
+    return (
+      `<span class="badge reviewed" title="${t('reviewedNote')}">${ICON.check}${t('reviewedTag')}</span>` +
+      `<button type="button" class="text-btn" data-review="false" aria-label="${t('withdrawReviewOne', { date })}">${t('withdrawReview')}</button>`
+    );
+  }
+  if (!r.hints.length) {
+    return '';
+  }
+  return (
+    `<span class="badge hint">${t('check')}</span>` +
+    `<button type="button" class="text-btn" data-review="true" aria-label="${t('markReviewedOne', { date })}">${t('markReviewed')}</button>`
+  );
+}
+
+function rowElement(r, query) {
+  const li = document.createElement('li');
+  li.className = state.arrived.has(r.id) ? 'row arrived' : 'row';
+  li.dataset.id = r.id;
+  const date = dm(r.date);
+  const tags = [
+    `<span class="badge">${esc(REASONS[r.reason] || r.reason)}</span>`,
+    reviewTags(r, date),
+    r.cleaned ? `<span class="badge cleaned">${t('cleanedTag')}</span>` : '',
+    r.today ? `<span class="badge" title="${t('todayNote')}">${t('today')}</span>` : '',
+  ].join('');
+  li.innerHTML =
+    `<div class="date"><time datetime="${r.date}">${dm(r.date)}</time>${r.isNew ? `<br><span class="badge new">${t('newTag')}</span>` : ''}</div>` +
+    `<div class="rating">${ICON[r.rating] || ''}</div>` +
+    `<div class="body"><p class="text">${highlight(r.text, query, r.reviewed ? [] : r.hints)}</p><div class="tags">${tags}</div></div>` +
+    '<div class="actions">' +
+    `<button type="button" class="ghost" data-act="clean" aria-label="${t('cleanOne', { date })}">${ICON.clean}<span>${t('clean')}</span></button>` +
+    `<button type="button" class="ghost danger" data-act="delete" aria-label="${t('deleteOne', { date })}">${ICON.trash}<span>${t('delete')}</span></button>` +
+    '</div>';
+  return li;
+}
+
+function renderTexts() {
+  if (state.page === 1 && !state.open && state.held.size) {
+    state.held.forEach((id) => state.arrived.add(id));
+    state.held.clear();
+  }
+  const query = $('filter').value.trim().toLowerCase();
+  const list = $('list');
+  const active = document.activeElement;
+  const focusRow = active?.closest?.('.row')?.dataset.id;
+  // A redraw keeps keyboard focus on the same button of the same text.
+  const focusButton = active?.dataset?.review
+    ? '[data-review]'
+    : active?.dataset?.act && `[data-act="${active.dataset.act}"]`;
+  const openRow = state.open ? list.querySelector(`[data-id="${state.open.id}"]`) : null;
+
+  const rows = visibleRows(query);
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  state.page = Math.min(state.page, pages);
+  const fragment = document.createDocumentFragment();
+  rows.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE).forEach((r) => {
+    fragment.append(r.id === state.open?.id && openRow ? openRow : rowElement(r, query));
+  });
+  if (!rows.length) {
+    const empty = document.createElement('li');
+    empty.className = 'empty-state';
+    empty.innerHTML = state.rows.length
+      ? `<p>${t('noMatch')}</p><button type="button" class="btn" data-reset>${t('reset')}</button>`
+      : `<p>${t('noTexts')}</p>${state.data.period.running ? `<p>${t('comeAutomatically')}</p>` : ''}`;
+    fragment.append(empty);
+  }
+  list.replaceChildren(fragment);
+  state.arrived.clear();
+
+  renderPager(rows.length, pages);
+  renderIncoming();
+  $('t-count').textContent = t('inList', { n: int(state.rows.length) });
+  const hinted = state.rows.filter(flagged).length;
+  $('hints-count').textContent = `(${int(hinted)})`;
+
+  if (focusRow && focusButton) {
+    list.querySelector(`[data-id="${focusRow}"] ${focusButton}`)?.focus({ preventScroll: true });
+  }
+}
+
+/** Page numbers around the open page, with gaps: 1 … 4 5 6 … 13. */
+function pageList(page, pages) {
+  const wanted = new Set([1, pages, page - 1, page, page + 1]);
+  if (page <= 3) {
+    [2, 3, 4].forEach((p) => wanted.add(p));
+  }
+  if (page >= pages - 2) {
+    [pages - 3, pages - 2, pages - 1].forEach((p) => wanted.add(p));
+  }
+  const list = [...wanted].filter((p) => p >= 1 && p <= pages).sort((a, b) => a - b);
+  return list.flatMap((p, i) => (i && p - list[i - 1] > 1 ? ['…', p] : [p]));
+}
+
+function renderPager(total, pages) {
+  if (pages <= 1) {
+    $('list-foot').replaceChildren();
+    return;
+  }
+  const from = (state.page - 1) * PAGE_SIZE + 1;
+  const to = Math.min(total, state.page * PAGE_SIZE);
+  const step = (name, page, label) =>
+    `<button type="button" data-step="${name}" data-page="${page}" aria-label="${label}"` +
+    `${page < 1 || page > pages ? ' disabled' : ''}>${ICON[name]}</button>`;
+  const numbers = pageList(state.page, pages)
+    .map((p) =>
+      p === '…'
+        ? '<span class="gap" aria-hidden="true">…</span>'
+        : `<button type="button" data-page="${p}" aria-label="${t('page', { n: p })}"` +
+          `${p === state.page ? ' aria-current="page"' : ''}>${p}</button>`,
+    )
+    .join('');
+  $('list-foot').innerHTML =
+    `<nav class="pager" aria-label="${t('pages')}">` +
+    `<p class="pager-range" aria-live="polite">${t('range', { from, to, total: int(total) })}</p>` +
+    `<div class="pager-pages">${step('prev', state.page - 1, t('prevPage'))}${numbers}` +
+    `${step('next', state.page + 1, t('nextPage'))}</div></nav>`;
+}
+
+function renderIncoming() {
+  const n = state.held.size;
+  $('incoming').hidden = n === 0;
+  $('incoming-text').textContent = n === 1 ? t('incomingOne') : t('incomingMany', { n: int(n) });
+}
+
+function goToPage(page) {
+  closeWork(false);
+  state.page = page;
+  renderTexts();
+  $('texts-title').scrollIntoView({ block: 'start' });
+}
+
+const rowOf = (id) => state.rows.find((r) => r.id === id);
+
+/** Keeps every month and interval in memory in step with a deleted, cleaned or checked text. */
+function patchCached(change) {
+  for (const entry of state.cache.values()) {
+    entry.data.texts = change(entry.data.texts);
+  }
+}
+const liOf = (id) => $('list').querySelector(`[data-id="${id}"]`);
+
+function openWork(id, mode) {
+  if (state.open) {
+    closeWork(false);
+  }
+  const r = rowOf(id);
+  const li = liOf(id);
+  if (!r || !li) {
+    return;
+  }
+  state.open = { id, mode };
+  const date = dm(r.date);
+  const panel = document.createElement('div');
+  panel.className = mode === 'delete' ? 'work confirm' : 'work';
+  if (mode === 'clean') {
+    const draft = state.drafts.get(id);
+    panel.innerHTML =
+      `<label class="sr-only" for="edit-${id}">${t('cleanedText', { date })}</label>` +
+      `<textarea id="edit-${id}" maxlength="500" aria-describedby="edit-hint-${id}"></textarea>` +
+      `<p class="hint-line" id="edit-hint-${id}">${t('cleanHelp', { marker: MARKER })}</p>` +
+      (r.today ? `<p class="today">${t('todayNote')}</p>` : '') +
+      (draft !== undefined ? `<p class="hint-line">${t('draftBack')}</p>` : '') +
+      '<div class="work-actions">' +
+      `<button type="button" class="btn" data-work="mark">${t('replaceMarked')}</button>` +
+      `<button type="button" class="btn" data-work="all">${t('replaceAll')}</button>` +
+      '<span class="grow"></span>' +
+      `<button type="button" class="btn" data-work="cancel">${t('cancel')}</button>` +
+      `<button type="button" class="btn submit" data-work="save">${t('save')}</button>` +
+      '</div><p class="error" role="alert"></p>';
+    li.querySelector('.body').append(panel);
+    const area = panel.querySelector('textarea');
+    area.value = draft ?? r.text;
+    updateSave(panel, r);
+    area.focus();
+  } else {
+    panel.setAttribute('role', 'group');
+    panel.setAttribute('aria-labelledby', `confirm-${id}`);
+    panel.innerHTML =
+      `<p id="confirm-${id}"><strong>${t('confirmTitle')}</strong> ${t('confirmText')}</p>` +
+      (r.today ? `<p class="today">${t('todayNote')}</p>` : '') +
+      '<div class="work-actions">' +
+      `<button type="button" class="btn" data-work="cancel">${t('cancel')}</button>` +
+      `<button type="button" class="btn destructive" data-work="delete">${t('deleteOne', { date })}</button>` +
+      '</div><p class="error" role="alert"></p>';
+    li.querySelector('.body').append(panel);
+    panel.querySelector('[data-work="cancel"]').focus();
+  }
+  li.querySelector('.actions').hidden = true;
+}
+
+function closeWork(restoreFocus = true) {
+  if (!state.open) {
+    return;
+  }
+  const { id, mode } = state.open;
+  const li = liOf(id);
+  const area = li?.querySelector('textarea');
+  const r = rowOf(id);
+  if (area && r && area.value.trim() !== r.text) {
+    state.drafts.set(id, area.value);
+  }
+  li?.querySelector('.work')?.remove();
+  if (li) {
+    li.querySelector('.actions').hidden = false;
+  }
+  state.open = null;
+  if (restoreFocus) {
+    li?.querySelector(`[data-act="${mode}"]`)?.focus();
+  }
+}
+
+function updateSave(panel, r) {
+  const value = panel.querySelector('textarea').value.trim();
+  panel.querySelector('[data-work="save"]').disabled = !value || value === r.text;
+}
+
+async function post(id, action, body) {
+  const res = await fetch(`api/texts/${encodeURIComponent(id)}/${action}`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', 'X-Monitoring-Page': '1' },
+    body: JSON.stringify(body || {}),
+  });
+  if (!res.ok) {
+    const error = new Error(`HTTP ${res.status}`);
+    error.status = res.status;
+    throw error;
+  }
+  return res.json();
+}
+
+function failure(error, action) {
+  if (error.status === 409) {
+    return action === 'clean' ? t('tooSoonClean') : t('tooSoonDelete');
+  }
+  return t('failed');
+}
+
+async function run(button, action) {
+  const { id } = state.open;
+  const r = rowOf(id);
+  const li = liOf(id);
+  const panel = li.querySelector('.work');
+  const buttons = panel.querySelectorAll('button');
+  const text = action === 'clean' ? panel.querySelector('textarea').value.trim() : undefined;
+  buttons.forEach((b) => {
+    b.disabled = true;
+  });
+  button.setAttribute('aria-busy', 'true');
+  panel.querySelector('.error').textContent = '';
+  const date = dm(r.date);
+  try {
+    const result = await post(id, action, action === 'clean' ? { text } : undefined);
+    state.open = null;
+    state.drafts.delete(id);
+    if (action === 'delete') {
+      const next = li.nextElementSibling?.dataset.id || li.previousElementSibling?.dataset.id;
+      li.classList.add('leaving');
+      await new Promise((resolve) =>
+        setTimeout(resolve, matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180),
+      );
+      state.rows = state.rows.filter((row) => row.id !== id);
+      patchCached((texts) => texts.filter((t) => t.id !== id));
+      renderTexts();
+      renderStats();
+      (next ? liOf(next)?.querySelector('[data-act="delete"]') : $('texts-title'))?.focus();
+      toast(t('deleted', { date }));
+    } else {
+      Object.assign(r, {
+        text: result.text,
+        cleaned: result.text.includes(MARKER),
+        hints: findHints(result.text),
+      });
+      patchCached((texts) => texts.map((t) => (t.id === id ? { ...t, text: result.text } : t)));
+      renderTexts();
+      liOf(id)?.querySelector('[data-act="clean"]')?.focus();
+      toast(t('cleaned', { date }));
+    }
+  } catch (error) {
+    if (error.status === 404) {
+      state.open = null;
+      forget(r);
+      return;
+    }
+    if (action === 'clean') {
+      state.drafts.set(id, text);
+    }
+    panel.querySelector('.error').textContent = failure(error, action);
+    buttons.forEach((b) => {
+      b.disabled = false;
+    });
+    if (action === 'clean') {
+      updateSave(panel, r);
+    }
+    button.removeAttribute('aria-busy');
+  }
+}
+
+/** A text another reviewer has deleted in the meantime leaves the list. */
+function forget(r) {
+  state.rows = state.rows.filter((row) => row.id !== r.id);
+  patchCached((texts) => texts.filter((t) => t.id !== r.id));
+  renderTexts();
+  toast(t('goneAlready'));
+  $('texts-title').focus();
+}
+
+/** Marks a text as checked for every reviewer, or takes that back; its marks hide or return. */
+async function review(button, id, reviewed) {
+  const r = rowOf(id);
+  if (!r) {
+    return;
+  }
+  closeWork(false);
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  const date = dm(r.date);
+  try {
+    await post(id, 'review', { reviewed });
+    r.reviewed = reviewed;
+    patchCached((texts) => texts.map((t) => (t.id === id ? { ...t, reviewed } : t)));
+    renderTexts();
+    (liOf(id)?.querySelector('[data-review]') || $('texts-title')).focus();
+    toast(reviewed ? t('reviewedDone', { date }) : t('reviewWithdrawn', { date }));
+  } catch (error) {
+    if (error.status === 404) {
+      forget(r);
+      return;
+    }
+    button.disabled = false;
+    button.removeAttribute('aria-busy');
+    toast(error.status === 409 ? t('tooSoonReview') : t('failed'));
+  }
+}
+
+$('list').addEventListener('click', (event) => {
+  const target = event.target.closest('button');
+  if (!target) {
+    return;
+  }
+  if (target.hasAttribute('data-reset')) {
+    $('filter').value = '';
+    state.rating = '';
+    state.hintsOnly = false;
+    state.page = 1;
+    syncFilters();
+    renderTexts();
+    $('filter').focus();
+    return;
+  }
+  const id = target.closest('.row')?.dataset.id;
+  if (target.dataset.review) {
+    review(target, id, target.dataset.review === 'true');
+    return;
+  }
+  if (target.dataset.act) {
+    openWork(id, target.dataset.act);
+    return;
+  }
+  const panel = target.closest('.work');
+  const area = panel?.querySelector('textarea');
+  switch (target.dataset.work) {
+    case 'cancel':
+      closeWork();
+      break;
+    case 'mark': {
+      const { selectionStart: start, selectionEnd: end } = area;
+      if (start === end) {
+        panel.querySelector('.error').textContent = t('markFirst');
+        area.focus();
+        break;
+      }
+      area.setRangeText(MARKER, start, end, 'end');
+      panel.querySelector('.error').textContent = '';
+      updateSave(panel, rowOf(id));
+      area.focus();
+      break;
+    }
+    case 'all':
+      area.value = MARKER;
+      updateSave(panel, rowOf(id));
+      area.focus();
+      break;
+    case 'save':
+      run(target, 'clean');
+      break;
+    case 'delete':
+      run(target, 'delete');
+      break;
+    default:
+  }
+});
+
+$('list').addEventListener('input', (event) => {
+  if (event.target.matches('.work textarea')) {
+    updateSave(event.target.closest('.work'), rowOf(state.open.id));
+  }
+});
+
+$('list-foot').addEventListener('click', (event) => {
+  const button = event.target.closest('button');
+  if (!button || button.disabled) {
+    return;
+  }
+  const { step } = button.dataset;
+  goToPage(Number(button.dataset.page));
+  // Keyboard focus stays on the pager: on the same arrow, or on the page just opened.
+  const foot = $('list-foot');
+  (
+    (step && foot.querySelector(`[data-step="${step}"]:not(:disabled)`)) ||
+    foot.querySelector('[aria-current="page"]')
+  )?.focus({ preventScroll: true });
+});
+$('incoming').addEventListener('click', () => {
+  goToPage(1);
+  $('texts-title').focus({ preventScroll: true });
+});
+
+function syncFilters() {
+  document.querySelectorAll('[data-rating]').forEach((b) => {
+    b.setAttribute('aria-pressed', String(b.dataset.rating === state.rating));
+  });
+  $('hints-only').setAttribute('aria-pressed', String(state.hintsOnly));
+}
+
+// Only the rating filter's own buttons: the header's Monat | Zeitraum switch is a .seg too.
+document.querySelectorAll('[data-rating]').forEach((b) =>
+  b.addEventListener('click', () => {
+    state.rating = b.dataset.rating;
+    state.page = 1;
+    syncFilters();
+    renderTexts();
+  }),
+);
+$('hints-only').addEventListener('click', () => {
+  state.hintsOnly = !state.hintsOnly;
+  state.page = 1;
+  syncFilters();
+  renderTexts();
+});
+$('filter').addEventListener('input', () => {
+  state.page = 1;
+  if (state.data) {
+    renderTexts();
+  }
+});
+$('retry').addEventListener('click', () => {
+  const key = state.failed || state.want;
+  address(key);
+  show(key);
+});
+
+document.addEventListener('keydown', (event) => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+  if (event.key === '/' && !typing && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    event.preventDefault();
+    $('filter').focus();
+  } else if (event.key === 'Escape' && (picker.isOpen() || range.isOpen())) {
+    event.preventDefault();
+    picker.close(true);
+    range.close(true);
+  } else if (event.key === 'Escape' && state.open) {
+    event.preventDefault();
+    closeWork();
+  }
+});
+
+document.addEventListener('visibilitychange', () => {
+  const at = state.data ? state.cache.get(state.key)?.at : 0;
+  if (!document.hidden && state.data?.period.running && Date.now() - (at || 0) >= REFRESH_MS) {
+    poll();
+  }
+});
+
+// The chart is drawn at its box's size, so it follows the box.
+new ResizeObserver(() => {
+  if (state.data) {
+    renderChart();
+  }
+}).observe($('chart-box'));
+
+// The server writes the month or interval into the page; the clock is only a fallback.
+const initial = MonitoringShell.initialKey();
+renderMonths([spanOf(initial) ? initial.slice(11, 18) : initial]);
+address(initial);
+show(initial);
