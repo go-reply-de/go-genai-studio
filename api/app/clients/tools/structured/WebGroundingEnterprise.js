@@ -99,6 +99,8 @@ class WebGroundingEnterprise extends Tool {
         this.userId = fields.userId;
         this.policy = loadPolicy();
         this.geminiModel = process.env.WEB_GROUNDING_MODEL || fields.geminiModel || 'gemini-2.5-flash';
+        /** Searched with once the main model stays overloaded; Google's overloads hit one model's pool. */
+        this.fallbackModel = process.env.WEB_GROUNDING_FALLBACK_MODEL;
         /** Thinking past LOW makes Gemini Flash search in rounds and return no attributable chunks. */
         this.thinkingLevel = process.env.WEB_GROUNDING_THINKING_LEVEL;
 
@@ -170,13 +172,18 @@ class WebGroundingEnterprise extends Tool {
                 ...(multiRegionEndpoint ? { apiEndpoint: multiRegionEndpoint } : {}),
             });
 
-            this.generativeModel = this.vertexAI.preview.getGenerativeModel({
-                model: this.geminiModel,
-                tools: [{ enterpriseWebSearch: { excludeDomains: this.policy.excludeDomains } }],
-                ...(this.thinkingLevel
-                    ? { generationConfig: { thinkingConfig: { thinkingLevel: this.thinkingLevel } } }
-                    : {}),
-            });
+            const searchModel = (model) =>
+                this.vertexAI.preview.getGenerativeModel({
+                    model,
+                    tools: [{ enterpriseWebSearch: { excludeDomains: this.policy.excludeDomains } }],
+                    ...(this.thinkingLevel
+                        ? { generationConfig: { thinkingConfig: { thinkingLevel: this.thinkingLevel } } }
+                        : {}),
+                });
+            this.generativeModel = searchModel(this.geminiModel);
+            if (this.fallbackModel && this.fallbackModel !== this.geminiModel) {
+                this.fallbackGenerativeModel = searchModel(this.fallbackModel);
+            }
 
         } catch (error) {
             logger.error('Error initializing Vertex AI client:', error);
@@ -186,17 +193,36 @@ class WebGroundingEnterprise extends Tool {
         }
     }
 
-    /** One search call, retried on overload while the search's budget lasts. */
+    /**
+     * One search call, retried on overload while the search's budget lasts. With a fallback model
+     * the main one gets a single retry, so an overloaded pool is left after about 2 s, not 6 s.
+     */
     async _generate(request, deadline, config) {
-        const result = await withOverloadRetry(() => this.generativeModel.generateContent(request), {
-            deadline,
-        });
-        void this._recordUsage(result.response?.usageMetadata, config);
+        let model = this.geminiModel;
+        let result;
+        try {
+            result = await withOverloadRetry(() => this.generativeModel.generateContent(request), {
+                deadline,
+                ...(this.fallbackGenerativeModel ? { attempts: 2 } : {}),
+            });
+        } catch (error) {
+            const status = errorStatus(error);
+            if (!this.fallbackGenerativeModel || !isRetryableStatus(status)) {
+                throw error;
+            }
+            logger.warn(`[WebGroundingEnterprise] ${model} returned ${status}; searching with ${this.fallbackModel}`);
+            model = this.fallbackModel;
+            result = await withOverloadRetry(
+                () => this.fallbackGenerativeModel.generateContent(request),
+                { deadline },
+            );
+        }
+        void this._recordUsage(result.response?.usageMetadata, model, config);
         return result;
     }
 
     /** The agent's own usage leaves out this call, so it is recorded as its own transaction context. */
-    async _recordUsage(usage, config) {
+    async _recordUsage(usage, model, config) {
         const promptTokens = (usage?.promptTokenCount ?? 0) + (usage?.toolUsePromptTokenCount ?? 0);
         const completionTokens = (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0);
         if (!this.userId || (!promptTokens && !completionTokens)) {
@@ -206,7 +232,7 @@ class WebGroundingEnterprise extends Tool {
             await spendTokens(
                 {
                     user: this.userId,
-                    model: this.geminiModel,
+                    model,
                     conversationId: config?.configurable?.thread_id,
                     messageId: config?.configurable?.run_id ?? config?.configurable?.requestBody?.messageId,
                     context: 'web_grounding',

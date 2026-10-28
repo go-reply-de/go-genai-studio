@@ -601,6 +601,11 @@ spec:
                 configMapKeyRef:
                   key: WEB_GROUNDING_MODEL
                   name: env
+            - name: WEB_GROUNDING_FALLBACK_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  key: WEB_GROUNDING_FALLBACK_MODEL
+                  name: env
             - name: WEB_GROUNDING_THINKING_LEVEL
               valueFrom:
                 configMapKeyRef:
