@@ -68,13 +68,11 @@ steps:
   args:
     - '-c'
     - |
-      # Determine the version string: use tag if present, otherwise use short SHA.
+      # The version (e.g. v0.7.8) from the tag, else the short SHA.
       VERSION_STRING=""
       if [ -n "${TAG_NAME}" ]; then
         echo "Git tag found: ${TAG_NAME}. Extracting version..."
-        # Extract just the version (e.g., v0.7.8) from the full git tag.
         VERSION_STRING=$(echo "${TAG_NAME}" | sed -E 's/.*(v[0-9]+(\.[0-9]+)*(-rc[0-9]+)?).*/\1/')
-        # If grep finds nothing, fall back to the full tag name.
         if [ -z "$${VERSION_STRING}" ]; then
           VERSION_STRING="${TAG_NAME}"
         fi
@@ -84,13 +82,8 @@ steps:
       fi
       echo "Version string set to: $${VERSION_STRING}"
 
-      # Workload sizing comes from k8s/profiles/*.env, not substitutions:
-      # default.env is the baseline, ${_PROFILE}.env layers on top and wins
-      # (awk keeps the last assignment). Adding a tunable is one line in a
-      # profile, with no new substitution or Terraform variable. _PROFILE may
-      # name several, space separated, applied left to right.
-      # In /workspace rather than a mktemp, so later steps can read back the
-      # same rendered values the manifests got - see "Deploy Redis".
+      # Sizing comes from k8s/profiles: default.env, then each name in _PROFILE
+      # on top, last one wins. In /workspace so later steps read the same values.
       RENDER_VARS=/workspace/render-vars.env
       PROFILE_FILES="./k8s/profiles/default.env"
       for p in ${_PROFILE}; do
@@ -106,8 +99,7 @@ steps:
       echo "Rendering with profile '${_PROFILE}' ($$(wc -l < "$${RENDER_VARS}") values):"
       sort "$${RENDER_VARS}" | sed 's/^/  /'
 
-      # Which of api.yaml's two volume pairs survives. rwx needs the bucket name
-      # in the same step, so validate it here rather than at apply time.
+      # Checked here: rwx needs the bucket name to render api.yaml.
       case "${_API_FILES_MODE}" in
         rwo) ;;
         rwx) [ -n "${_API_FILES_BUCKET_NAME}" ] || {
@@ -118,11 +110,8 @@ steps:
       esac
       echo "api file volumes: mode=${_API_FILES_MODE}"
 
-      # Ingress TLS. Comes from terraform (self_managed_tls), NOT from a
-      # profile: only terraform knows whether the Secret has actually been
-      # published, and a name rendered in an environment where it has not points
-      # the Ingress at a Secret that is not there. Empty deletes the line
-      # instead, the same shape as an unset GPU reservation below.
+      # From terraform, not a profile: only terraform knows the Secret exists.
+      # Empty deletes the line rather than point the Ingress at nothing.
       TLS_SECRET_NAME="${_TLS_SECRET_NAME}"
       if [ -z "$${TLS_SECRET_NAME}" ]; then
         echo "ingress TLS: ManagedCertificate only"
@@ -130,14 +119,13 @@ steps:
         echo "ingress TLS: ManagedCertificate + Secret '$${TLS_SECRET_NAME}'"
       fi
 
-      # Regional load balancer. Fails loudly rather than deploying a Gateway
-      # that would 403 everyone or serve no certificate.
+      # Fail rather than deploy a Gateway that 403s everyone or has no certificate.
       if [ "${_ENABLE_REGIONAL_LB}" = "true" ]; then
         if [ -z "${_REGIONAL_IP_NAME}" ]; then
           echo "ERROR: _ENABLE_REGIONAL_LB is true but _REGIONAL_IP_NAME is empty - terraform has not reserved the regional address." >&2
           exit 1
         fi
-        # The SSL policy is what enforces TLS 1.2 or later on the Gateway.
+        # The SSL policy enforces TLS 1.2 or later on the Gateway.
         if [ -z "${_REGIONAL_SSL_POLICY_NAME}" ]; then
           echo "ERROR: _ENABLE_REGIONAL_LB is true but _REGIONAL_SSL_POLICY_NAME is empty - terraform has not created the regional SSL policy." >&2
           exit 1
@@ -146,8 +134,7 @@ steps:
           echo "ERROR: _ENABLE_REGIONAL_LB is true but no TLS Secret is published. A regional load balancer cannot use a ManagedCertificate - set self_managed_tls = \"serving\" in terraform." >&2
           exit 1
         fi
-        # Only one of clientID/oauth2ClientSecret means Google-managed OAuth,
-        # silently, which is not what the Ingress does.
+        # A secret without clientID silently means Google-managed OAuth.
         if [ -z "${_IAP_CLIENT_ID}" ]; then
           echo "ERROR: _ENABLE_REGIONAL_LB is true but _IAP_CLIENT_ID is empty." >&2
           exit 1
@@ -155,13 +142,12 @@ steps:
         echo "regional LB: address=${_REGIONAL_IP_NAME} tls=$${TLS_SECRET_NAME} ssl_policy=${_REGIONAL_SSL_POLICY_NAME}"
       fi
 
-      # An empty REDIS_URI must be unset, not "": the api parses it at module
-      # load even with Redis off, and new URL('') throws.
+      # Empty REDIS_URI is dropped: new URL('') throws at api load, even with Redis off.
       RENDERED_REDIS_URI=$$(sed -n 's/^REDIS_URI=//p' "$${RENDER_VARS}")
+      # Escaped, because sed reads & in a query string as the whole match.
+      HELP_URL=$$(printf '%s' "${_HELP_AND_FAQ_URL}" | sed 's/[&|\\]/\\&/g')
 
       find ./k8s -name "*.yaml" -print0 | while IFS= read -r -d $'\0' file; do
-        # Delete the line when nothing is published, rather than render a
-        # dangling reference; substitute explicitly otherwise.
         if [ -z "$${TLS_SECRET_NAME}" ]; then
           sed -i -e "/###_TLS_SECRET_NAME###/d" "$file"
         else
@@ -171,9 +157,7 @@ steps:
           sed -i -e "/###_REDIS_URI###/d" "$file"
         fi
 
-        # Profile-driven values first. Keys are plain uppercase identifiers, so a
-        # literal | in a value is the only thing that would break this delimiter -
-        # none of the sizing values contain one.
+        # Profile values go in unescaped; none of them contains | or &.
         while IFS='=' read -r k v; do
           sed -i -e "s|###_$${k}###|$${v}|g" "$file"
         done < "$${RENDER_VARS}"
@@ -195,21 +179,16 @@ steps:
         sed -i -e "s|###_PROXY_ONLY_CIDR###|${_PROXY_ONLY_CIDR}|g" "$file"
         sed -i -e "s/###_SECURITY_POLICY###/${_SECURITY_POLICY}/g" "$file"
         sed -i -e "s/###APP_TITLE###/${_APP_TITLE}/g" "$file"
-        # Escaped, because sed reads & in a query string as the whole match.
-        HELP_URL=$$(printf '%s' "${_HELP_AND_FAQ_URL}" | sed 's/[&|\\]/\\&/g')
         sed -i -e "s|###_HELP_AND_FAQ_URL###|$${HELP_URL}|g" "$file"
         sed -i -e "s/###_BRANDING_BUCKET_NAME###/${_BRANDING_BUCKET_NAME}/g" "$file"
         sed -i -e "s|###_API_FILES_BUCKET_NAME###|${_API_FILES_BUCKET_NAME}|g" "$file"
-        # Drop the pair this mode does not use, then strip the marker from the
-        # survivors - a leftover marker would land inside a YAML value.
+        # Drop the unused volume pair, then the marker, which would end up in a YAML value.
         if [ "${_API_FILES_MODE}" = "rwx" ]; then
           sed -i -e "/###_RWO_ONLY###/d" -e "s|[[:space:]]*###_RWX_ONLY###||g" "$file"
         else
           sed -i -e "/###_RWX_ONLY###/d" -e "s|[[:space:]]*###_RWO_ONLY###||g" "$file"
         fi
-        # An empty name DELETES both nodeSelector lines rather than rendering
-        # them blank: affinity "specific" with no reservation leaves the pod
-        # Pending forever, with no fallback to on-demand.
+        # No reservation deletes both lines: "specific" without one leaves the pod Pending.
         if [ -z "${_GPU_RESERVATION_NAME}" ]; then
           sed -i -e "/###_RESERVATION_AFFINITY###/d" -e "/###_GPU_RESERVATION_NAME###/d" "$file"
         else
@@ -226,20 +205,15 @@ steps:
         sed -i -e "s|###_RAG_OPENAI_API_KEY###|${_RAG_OPENAI_API_KEY}|g" "$file"
         sed -i -e "s~###_CUSTOM_FOOTER###~${_APP_TITLE} - $${VERSION_STRING}${_CUSTOM_FOOTER}~g" "$file"
         sed -i -e "s|###_VERTEX_AI_DATASTORE_ID###|${_VERTEX_AI_DATASTORE_ID}|g" "$file"
-        # Sovereign inference placeholders. Cloud Build resolves ${_FOO} itself
-        # before bash ever runs, so bash default syntax (${_FOO:-x}) is NOT
-        # valid here - it is rejected as an invalid substitution at submit time.
-        # Defaults live in the substitutions: block at the bottom of this file.
+        # Sovereign inference. Cloud Build rejects bash defaults (:-) on substitutions
+        # at submit time; the defaults live in substitutions: below.
         sed -i -e "s|###_MODELS_BUCKET_NAME###|${_MODELS_BUCKET_NAME}|g" "$file"
         sed -i -e "s|###_ACCELERATOR_TYPE###|${_ACCELERATOR_TYPE}|g" "$file"
         sed -i -e "s|###_GEMMA_MODEL_NAME###|${_GEMMA_MODEL_NAME}|g" "$file"
         sed -i -e "s|###_GEMMA_SERVED_NAME###|${_GEMMA_MODEL_NAME}|g" "$file"
         sed -i -e "s|###_GPU_COUNT###|${_GPU_COUNT}|g" "$file"
-        # NOTE: quantization, max-model-len, max-num-seqs and the TEI model name
-        # are deliberately NOT substitutions. They are literal values in
-        # k8s/env.yaml, read by the inference pods as env vars, so they can be
-        # retuned without a Terraform apply. See the checksum step below, which
-        # is what makes such an edit actually roll the pods.
+        # Quantization, max-model-len, max-num-seqs and the TEI model are literals in
+        # env.yaml, so no terraform apply; the checksum below rolls the pods.
         sed -i -e "s|###_GEMMA_CPU###|${_GEMMA_CPU}|g" "$file"
         sed -i -e "s|###_GEMMA_MEMORY###|${_GEMMA_MEMORY}|g" "$file"
         sed -i -e "s|###_GEMMA_MIN_REPLICAS###|${_GEMMA_MIN_REPLICAS}|g" "$file"
@@ -250,9 +224,7 @@ steps:
         sed -i -e "s|###_TEI_MAX_REPLICAS###|${_TEI_MAX_REPLICAS}|g" "$file"
       done
 
-      # rag.yaml is in here because its image tag is fixed: without the
-      # annotation an embeddings model or region change would reach the
-      # ConfigMap but never reach the running pod.
+      # rag.yaml too: its image tag is fixed, so only this rolls it on an embeddings change.
       ENV_CHECKSUM=$(grep -E '^  (VLLM_|TEI_|EMBEDDINGS_|RAG_OPENAI_|GOOGLE_CLOUD_)' ./k8s/env.yaml \
         | sha256sum | cut -c1-16)
       echo "Inference config checksum: $${ENV_CHECKSUM}"
