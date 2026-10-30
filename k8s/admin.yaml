@@ -32,6 +32,8 @@ spec:
               value: https://###DOMAIN###
             - name: SESSION_COOKIE_SECURE
               value: "true"
+            - name: ADMIN_SSO_ONLY
+              value: "###_ADMIN_SSO_ONLY###"
             - name: SESSION_SECRET
               valueFrom:
                 secretKeyRef:
