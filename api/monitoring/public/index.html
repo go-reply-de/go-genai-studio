@@ -233,7 +233,7 @@
       </section>
 
       <div class="split dim">
-        <section class="panel chart-panel" aria-labelledby="chart-title">
+        <section class="panel chart-panel" id="chart-panel" aria-labelledby="chart-title">
           <div class="panel-head">
             <h2 id="chart-title">{{t:perDay}}</h2>
             <p class="legend" aria-hidden="true">
@@ -241,9 +241,17 @@
               ><span><i class="dot down"></i>{{t:thumbsDown}}</span>
             </p>
           </div>
-          <div class="chart-box" id="chart-box">
+          <div
+            class="chart-box day-box"
+            id="chart-box"
+            role="group"
+            aria-label="{{t:ratingsChartLabel}}"
+            tabindex="0"
+            aria-describedby="chart-day"
+          >
             <svg
               id="chart"
+              class="day-chart"
               viewBox="0 0 1000 220"
               role="img"
               aria-labelledby="chart-title"
@@ -252,6 +260,7 @@
               <rect class="placeholder" x="44" y="12" width="952" height="174" rx="8" />
             </svg>
           </div>
+          <p class="day-note" id="chart-day" aria-live="polite">{{t:ratingsHint}}</p>
           <div class="sr-only">
             <table id="chart-table">
               <caption>

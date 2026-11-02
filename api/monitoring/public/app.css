@@ -1497,8 +1497,7 @@ mark.hint {
   pointer-events: none;
 }
 /* A week only partly inside the interval, or not over yet, reads lighter than a quiet week. */
-.day-chart .part rect:not(.hit),
-#chart .part rect {
+.day-chart .part rect:not(.hit) {
   fill-opacity: 0.35;
   stroke: var(--text-tertiary);
   stroke-width: 1;

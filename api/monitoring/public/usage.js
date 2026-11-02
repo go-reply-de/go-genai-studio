@@ -75,7 +75,6 @@ const state = {
   cache: new Map(),
   inflight: new Map(),
   timer: 0,
-  hover: 0,
   split: ['purpose', 'model'].includes(remembered) ? remembered : $('content').dataset.defaultSplit,
 };
 
@@ -199,7 +198,7 @@ function navigate(key) {
     return;
   }
   address(key);
-  state.hover = 0;
+  lanes.lift(0);
   state.allWeeks = false;
   show(key);
 }
@@ -368,15 +367,15 @@ function renderStats() {
   $('p-conversations').textContent = vs(c.conversations, p?.conversations, int);
   $('k-messages').textContent = int(c.messages);
   $('p-messages').textContent = vs(c.messages, p?.messages, int);
+  // Per request over the days with tokens; the exporter counts a prompt and its answer as two messages.
+  const requests = state.data.days.reduce((n, d) => n + (d?.tokens ? d.messages : 0), 0) / 2;
   for (const field of ['input', 'output']) {
     $(`k-${field}`).textContent = c.recorded ? amount(c[field]) : '–';
-    let cmp = c.recorded ? '' : t('notRecorded');
-    if (c.recorded && p) {
-      cmp = p.recorded
-        ? vs(c[field], p[field], amount)
-        : t('previous', { value: t('notRecorded') });
+    let note = c.recorded ? '' : t('notRecorded');
+    if (c.recorded && requests >= 1) {
+      note = t('perRequest', { n: int(c[field] / requests) });
     }
-    $(`p-${field}`).textContent = cmp;
+    $(`p-${field}`).textContent = note;
   }
   const web = webTokens(state.data.days);
   $('k-web').textContent = c.recorded ? amount(web) : '–';
@@ -588,7 +587,7 @@ function renderCharts() {
   for (const { svg, box, chart, top } of charts) {
     drawDays(svg, box, { ...chart, top, left: GUTTER });
   }
-  hover(state.hover);
+  lanes.lift(lanes.lifted());
 }
 
 function renderUsageTable() {
@@ -733,15 +732,10 @@ function renderTrends() {
     .join('');
 }
 
-/** One column lifted in both lanes, its figures under each chart; 0 shows the whole period. */
-function hover(day) {
-  state.hover = day;
+/** The lifted column's figures under each chart; 0 shows how to lift one. */
+function describeDay(day) {
   const slot = day ? state.slots[day - 1] : null;
   const entry = slot?.day;
-  $('lanes').classList.toggle('linked', Boolean(entry));
-  document.querySelectorAll('#lanes [data-day]').forEach((g) => {
-    g.classList.toggle('hl', Number(g.dataset.day) === day);
-  });
   if (!entry) {
     $('usage-day').textContent = state.slots.weekly ? t('hoverHintWeek') : t('hoverHint');
     $('tokens-day').textContent = '';
@@ -793,53 +787,11 @@ MonitoringShell.modeSwitch({
   range,
 });
 
-// A mouse lifts the day under it; a tap pins a day until the next tap, and so do the arrow keys.
-$('lanes').addEventListener('pointerover', (event) => {
-  const g = event.target.closest('[data-day]');
-  if (g && event.pointerType === 'mouse') {
-    hover(Number(g.dataset.day));
-  }
-});
-for (const box of document.querySelectorAll('.day-box')) {
-  box.addEventListener('pointerleave', (event) => {
-    if (event.pointerType === 'mouse') {
-      hover(0);
-    }
-  });
-}
-document.addEventListener('pointerdown', (event) => {
-  if (event.pointerType === 'mouse' || !state.data) {
-    return;
-  }
-  const g = event.target.closest('#lanes [data-day]');
-  const day = g ? Number(g.dataset.day) : 0;
-  hover(day === state.hover ? 0 : day);
-});
-$('lanes').addEventListener('keydown', (event) => {
-  if (!event.target.classList.contains('day-box') || !state.data) {
-    return;
-  }
-  const days = state.slots.flatMap((s, i) => (s.day ? [i + 1] : []));
-  const i = days.indexOf(state.hover);
-  const moves = {
-    ArrowRight: i < 0 ? 0 : Math.min(i + 1, days.length - 1),
-    ArrowLeft: i < 0 ? days.length - 1 : Math.max(i - 1, 0),
-    Home: 0,
-    End: days.length - 1,
-  };
-  if (event.key === 'Escape' && state.hover) {
-    event.preventDefault();
-    hover(0);
-  } else if (event.key in moves && days.length) {
-    event.preventDefault();
-    hover(days[moves[event.key]]);
-  }
-});
-$('lanes').addEventListener('focusout', (event) => {
-  const leaving = event.target.classList.contains('day-box');
-  if (leaving && !event.relatedTarget?.classList?.contains('day-box')) {
-    hover(0);
-  }
+// One day lifted in both lanes.
+const lanes = MonitoringShell.columnHover({
+  root: $('lanes'),
+  columns: () => state.slots.flatMap((s, i) => (s.day ? [i + 1] : [])),
+  onLift: describeDay,
 });
 $('lanes').addEventListener('click', (event) => {
   const split = event.target.closest('[data-split]');

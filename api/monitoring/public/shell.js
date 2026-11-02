@@ -516,6 +516,71 @@ const MonitoringShell = (() => {
     );
   }
 
+  /**
+   * Lifts one column of the charts in `root` and steps the others back: the column under the
+   * mouse, a tapped one until the next tap, or one chosen with the arrow keys. `columns()` lists
+   * the numbers of the columns with figures; `onLift(n)` writes their figures, 0 for none.
+   */
+  function columnHover({ root, columns, onLift }) {
+    let lifted = 0;
+    const lift = (n) => {
+      lifted = columns().includes(n) ? n : 0;
+      root.classList.toggle('linked', lifted > 0);
+      root.querySelectorAll('[data-day]').forEach((g) => {
+        g.classList.toggle('hl', Number(g.dataset.day) === lifted);
+      });
+      onLift(lifted);
+    };
+    root.addEventListener('pointerover', (event) => {
+      const g = event.target.closest('[data-day]');
+      if (g && event.pointerType === 'mouse') {
+        lift(Number(g.dataset.day));
+      }
+    });
+    for (const box of root.querySelectorAll('.day-box')) {
+      box.addEventListener('pointerleave', (event) => {
+        if (event.pointerType === 'mouse') {
+          lift(0);
+        }
+      });
+    }
+    document.addEventListener('pointerdown', (event) => {
+      if (event.pointerType === 'mouse' || !columns().length) {
+        return;
+      }
+      const g = event.target.closest('[data-day]');
+      const n = g && root.contains(g) ? Number(g.dataset.day) : 0;
+      lift(n === lifted ? 0 : n);
+    });
+    root.addEventListener('keydown', (event) => {
+      if (!event.target.classList.contains('day-box')) {
+        return;
+      }
+      const list = columns();
+      const i = list.indexOf(lifted);
+      const moves = {
+        ArrowRight: i < 0 ? 0 : Math.min(i + 1, list.length - 1),
+        ArrowLeft: i < 0 ? list.length - 1 : Math.max(i - 1, 0),
+        Home: 0,
+        End: list.length - 1,
+      };
+      if (event.key === 'Escape' && lifted) {
+        event.preventDefault();
+        lift(0);
+      } else if (event.key in moves && list.length) {
+        event.preventDefault();
+        lift(list[moves[event.key]]);
+      }
+    });
+    root.addEventListener('focusout', (event) => {
+      const leaving = event.target.classList.contains('day-box');
+      if (leaving && !event.relatedTarget?.classList?.contains('day-box')) {
+        lift(0);
+      }
+    });
+    return { lift, lifted: () => lifted };
+  }
+
   /** The interval a month stands for, up to today. */
   function monthSpan(month) {
     const [y, m] = month.split('-').map(Number);
@@ -585,5 +650,6 @@ const MonitoringShell = (() => {
     monthPicker,
     rangePicker,
     modeSwitch,
+    columnHover,
   };
 })();
