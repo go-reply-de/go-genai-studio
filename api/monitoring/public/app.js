@@ -266,6 +266,7 @@ function navigate(key) {
   }
   closeWork(false);
   state.page = 1;
+  chartHover.lift(0);
   address(key);
   show(key);
 }
@@ -502,17 +503,20 @@ function columns() {
   return result;
 }
 
+/** A running month's columns stop at today. */
+const lastColumn = (cols) =>
+  state.data.period.running && !state.span ? dayOf(state.data.period.to) : cols.length;
+
 /**
  * The whole month or interval; in a running month a thin line marks today and the days after
  * stay empty. Drawn at the box's own size in pixels, so it fills its panel and the text reads
  * the same everywhere.
  */
 function renderChart() {
-  const d = state.data;
   const box = $('chart-box').getBoundingClientRect();
   const [w, h] = [Math.round(box.width) || 1000, Math.round(box.height) || 220];
   const cols = columns();
-  const last = d.period.running && !state.span ? dayOf(d.period.to) : cols.length;
+  const last = lastColumn(cols);
   const values = cols.map((c) => c.v);
   const unit = cols.weekly ? t('perWeek') : t('perDay');
   $('chart-title').textContent = unit;
@@ -542,10 +546,10 @@ function renderChart() {
     const center = left + (i + 0.5) * step;
     const x = center - width / 2;
     if (i < last) {
-      const title = `<title>${esc(t('dayTip', { date: cols[i].label, up, down }))}</title>`;
+      const hit = `<rect class="hit" x="${left + i * step}" y="${y1}" width="${step}" height="${y0 - y1}"/>`;
       const hu = y0 - y(up);
       const hd = y0 - y(down);
-      svg += `<g${cols[i].part ? ' class="part"' : ''}>${title}<rect class="up" x="${x}" y="${y0 - hu}" width="${width}" height="${hu}" rx="${radius}"/>`;
+      svg += `<g data-day="${i + 1}"${cols[i].part ? ' class="part"' : ''}>${hit}<rect class="up" x="${x}" y="${y0 - hu}" width="${width}" height="${hu}" rx="${radius}"/>`;
       svg += `<rect class="down" x="${x}" y="${y0 - hu - hd - (hd ? 2 : 0)}" width="${width}" height="${hd}" rx="${radius}"/></g>`;
     }
     const clear = marker === null || Math.abs(center - marker) > tagWidth / 2 + 14;
@@ -566,6 +570,22 @@ function renderChart() {
         ([up, down], i) => `<tr><td>${esc(cols[i].label)}</td><td>${up}</td><td>${down}</td></tr>`,
       )
       .join('');
+  chartHover.lift(chartHover.lifted());
+}
+
+/** The lifted column's ratings under the chart; 0 shows how to lift one. */
+function describeColumn(n) {
+  const cols = state.data ? columns() : [];
+  const col = cols[n - 1];
+  if (col) {
+    $('chart-day').textContent = t('dayRatings', {
+      date: col.label,
+      up: int(col.v[0]),
+      down: int(col.v[1]),
+    });
+  } else {
+    $('chart-day').textContent = cols.weekly ? t('ratingsHintWeek') : t('ratingsHint');
+  }
 }
 
 function renderReasons() {
@@ -1076,6 +1096,13 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && state.data?.period.running && Date.now() - (at || 0) >= REFRESH_MS) {
     poll();
   }
+});
+
+// One day or week lifted in the chart, as in the Nutzung tab.
+const chartHover = MonitoringShell.columnHover({
+  root: $('chart-panel'),
+  columns: () => (state.data ? Array.from({ length: lastColumn(columns()) }, (_, i) => i + 1) : []),
+  onLift: describeColumn,
 });
 
 // The chart is drawn at its box's size, so it follows the box.
