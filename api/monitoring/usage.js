@@ -46,6 +46,14 @@ function rises(metric, by = []) {
 }
 
 const highest = (metric) => `max(max_over_time(${metric}[1h]))`;
+/**
+ * The exporter answers from a count it makes once a minute, so its first readings after midnight
+ * still hold the day before. Counts of people skip each hour's first minutes; they only grow
+ * during a day, so a later reading of the hour holds the same people.
+ */
+const SETTLE_MINUTES = 5;
+const PEOPLE = `[${60 - SETTLE_MINUTES}m]`;
+const people = (metric) => `max(max_over_time(${metric}${PEOPLE}))`;
 
 const QUERIES = {
   up: highest(UP),
@@ -57,11 +65,11 @@ const QUERIES = {
     'context',
     'type',
   ]),
-  users: highest('librechat_daily_unique_users'),
+  users: people('librechat_daily_unique_users'),
   // Reported only while the exporter counts tokens from LibreChat's transactions.
   recorded: highest('librechat_window_unique_users{window="30d"}'),
 };
-const WEEKLY = highest('librechat_weekly_unique_users');
+const WEEKLY = people('librechat_weekly_unique_users');
 
 const pad = (n) => String(n).padStart(2, '0');
 const daysIn = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
@@ -266,17 +274,25 @@ function createUsage({ credentials, fetchFn = fetch, now = () => new Date() }) {
     // A running month counts to the minute, so a new message shows before the hour is over.
     const through = running ? Math.floor(now().getTime() / MINUTE) * MINUTE : end;
     const minutes = (through - end) / MINUTE;
+    // Only the hour after midnight skips its first minutes while it runs, so a new person shows at once.
+    const afterMidnight = hourDate(end) !== berlinDate.format(new Date(end));
+    const settled = afterMidnight ? minutes - SETTLE_MINUTES : minutes;
     /** A query's full hours, then the running hour's minutes in the same window shape. */
-    const hours = (query, start, stop = end) =>
-      Promise.all([
+    const hours = (query, start, stop = end) => {
+      const span = query.includes(PEOPLE) ? settled : minutes;
+      return Promise.all([
         start <= stop ? range(query, start, stop) : [],
-        minutes
+        span > 0
           ? instant(
-              query.replace('[1h:5m]', `[${minutes}m:5m]`).replace('[1h]', `[${minutes}m]`),
+              query
+                .replace('[1h:5m]', `[${span}m:5m]`)
+                .replace('[1h]', `[${span}m]`)
+                .replace(PEOPLE, `[${span}m]`),
               through,
             )
           : [],
       ]).then((parts) => parts.flat());
+    };
     const days = Array(daysIn(y, m)).fill(null);
     const weeks = weeksOf(y, m).filter((w) => w.start < through);
     if (through > from) {

@@ -206,6 +206,48 @@ describe('usage from Cloud Monitoring', () => {
     expect(view.days[4].messages).toBe(48);
   });
 
+  it('leaves the first minutes of each full hour out of the users, as they can hold the day before', async () => {
+    const app = start({}, OCT_16);
+    await app.usage.view('2026-10');
+    const range = (k) => app.calls.find((c) => c.kind === k && !c.instant);
+    expect(range('users').query).toBe('max(max_over_time(librechat_daily_unique_users[55m]))');
+    expect(range('users').step).toBe(HOUR);
+    expect(range('weekly').query).toBe('max(max_over_time(librechat_weekly_unique_users[55m]))');
+  });
+
+  it('counts the users of a running hour from its first minute', async () => {
+    // 16 October 2026, 15:20 in Berlin.
+    const app = start({}, OCT_16);
+    await app.usage.view('2026-10');
+    const hour = (k) => app.calls.find((c) => c.kind === k && c.instant).query;
+    expect(hour('users')).toBe('max(max_over_time(librechat_daily_unique_users[20m]))');
+    expect(hour('weekly')).toBe('max(max_over_time(librechat_weekly_unique_users[20m]))');
+  });
+
+  it('counts the users of the hour after midnight from its sixth minute', async () => {
+    // Monday 19 October 2026, 00:20 in Berlin.
+    const app = start({ users: [[{}, always(4)]] }, () => new Date('2026-10-18T22:20:00Z'));
+    const view = await app.usage.view('2026-10');
+    const hour = (k) => app.calls.find((c) => c.kind === k && c.instant).query;
+    expect(hour('users')).toBe('max(max_over_time(librechat_daily_unique_users[15m]))');
+    expect(hour('weekly')).toBe('max(max_over_time(librechat_weekly_unique_users[15m]))');
+    expect(hour('messages')).toBe(
+      'sum (sum_over_time(clamp_min(max (librechat_messages_total) - max (librechat_messages_total offset 5m), 0)[20m:5m]))',
+    );
+    expect(view.days[18].users).toBe(4);
+  });
+
+  it('asks for no users in the first minutes after midnight, but for the messages', async () => {
+    // Monday 19 October 2026, 00:04 in Berlin.
+    const app = start({ users: [[{}, always(4)]] }, () => new Date('2026-10-18T22:04:00Z'));
+    const view = await app.usage.view('2026-10');
+    const instant = app.calls.filter((c) => c.instant).map((c) => c.kind);
+    expect(instant).toContain('messages');
+    expect(instant).not.toContain('users');
+    expect(instant).not.toContain('weekly');
+    expect(view.days[18].users).toBe(0);
+  });
+
   it('takes the highest daily users of a day and of each Monday to Sunday week', async () => {
     // Users of the day rise through the day; the week's count rises through the week.
     const berlinDay = new Intl.DateTimeFormat('en-CA', {
