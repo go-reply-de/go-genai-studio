@@ -5,7 +5,7 @@ metadata:
 spec:
   containers:
   - name: testcontainer
-    image: busybox
+    image: busybox:latest@sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4
     command: ["sh", "-c", "while true; do sleep 30; done"] # Replace with your application
     volumeMounts:
     # - name: test-pvc-pgdata

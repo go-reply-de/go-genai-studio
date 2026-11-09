@@ -38,19 +38,19 @@ steps:
     'SONAR_HOST',
     'SONAR_LOGIN'
   ]
-- name: 'gcr.io/cloud-builders/docker'
+- name: 'gcr.io/cloud-builders/docker@sha256:91eaff0806a70dc0b3c853191a2da9995b2aa88d9b24196182344a4cef633603'
   args: ['build', '-t', '$LOCATION-docker.pkg.dev/$PROJECT_ID/${_REGISTRY_NAME}/api:$SHORT_SHA', '.', '-f', 'Dockerfile.multi']
   id: 'Build Docker Image'
 
-- name: 'gcr.io/cloud-builders/docker'
+- name: 'gcr.io/cloud-builders/docker@sha256:91eaff0806a70dc0b3c853191a2da9995b2aa88d9b24196182344a4cef633603'
   args: ['push', '$LOCATION-docker.pkg.dev/$PROJECT_ID/${_REGISTRY_NAME}/api:$SHORT_SHA' ]
   id: 'Push Docker Image'
 
-- name: 'gcr.io/cloud-builders/gcloud'
+- name: 'gcr.io/cloud-builders/gcloud@sha256:9c2b896ca8d587726aaaad99c83ba8bcf3f7495d82ae574906ede11d87dc31d0'
   args: ['container', 'clusters', 'get-credentials', '${_GKE_CLUSTER_NAME}', '--zone', '$LOCATION']
   id: 'GKE Get Credentials'
 
-- name: 'gcr.io/cloud-builders/kubectl'
+- name: 'gcr.io/cloud-builders/kubectl@sha256:9881d43eddfd993821d1f6b645269dd043823c275410b8d30bffd52d92f8de10'
   id: 'Create K8S namespace'
   entrypoint: 'bash'
   args:
@@ -62,7 +62,7 @@ steps:
       kubectl create namespace ${_GKE_NAMESPACE}
     fi
 
-- name: "gcr.io/cloud-builders/kubectl"
+- name: "gcr.io/cloud-builders/kubectl@sha256:9881d43eddfd993821d1f6b645269dd043823c275410b8d30bffd52d92f8de10"
   id: 'Modify K8S manifests'
   entrypoint: 'bash'
   args:
@@ -232,7 +232,7 @@ steps:
         sed -i -e "s|###_ENV_CHECKSUM###|$${ENV_CHECKSUM}|g" "$file"
       done
 
-- name: 'gcr.io/cloud-builders/gcloud'
+- name: 'gcr.io/cloud-builders/gcloud@sha256:9c2b896ca8d587726aaaad99c83ba8bcf3f7495d82ae574906ede11d87dc31d0'
   id: 'Create K8S secrets'
   entrypoint: 'bash'
   args:
@@ -284,14 +284,14 @@ steps:
     - 'CLOUDSDK_COMPUTE_REGION=${_GKE_REGION}' # If running on GKE
 
 
-- name: "gcr.io/cloud-builders/kubectl"
+- name: "gcr.io/cloud-builders/kubectl@sha256:9881d43eddfd993821d1f6b645269dd043823c275410b8d30bffd52d92f8de10"
   id: 'Apply K8S components'
   args: ["apply", "-f", "./k8s/env.yaml", "-f", "./k8s/mongodb.yaml", "-f", "./k8s/meilisearch.yaml", "-f", "./k8s/maintenance-page.yaml", "-f", "./k8s/metrics-exporter.yaml", "--namespace=${_GKE_NAMESPACE}"]
   env:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
-- name: "gcr.io/cloud-builders/kubectl"
+- name: "gcr.io/cloud-builders/kubectl@sha256:9881d43eddfd993821d1f6b645269dd043823c275410b8d30bffd52d92f8de10"
   id: 'Deploy backup scope'
   entrypoint: bash
   args:
@@ -320,7 +320,7 @@ steps:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
-- name: "gcr.io/cloud-builders/kubectl"
+- name: "gcr.io/cloud-builders/kubectl@sha256:9881d43eddfd993821d1f6b645269dd043823c275410b8d30bffd52d92f8de10"
   id: 'Deploy Sovereign AI Inference'
   entrypoint: bash
   args:
@@ -358,14 +358,14 @@ steps:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
-- name: "gcr.io/cloud-builders/kubectl"
+- name: "gcr.io/cloud-builders/kubectl@sha256:9881d43eddfd993821d1f6b645269dd043823c275410b8d30bffd52d92f8de10"
   id: 'Deploy RAG API'
   args: ["apply", "-f", "./k8s/vectordb.yaml", "-f", "./k8s/rag.yaml", "--namespace=${_GKE_NAMESPACE}"]
   env:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
-- name: "gcr.io/cloud-builders/kubectl"
+- name: "gcr.io/cloud-builders/kubectl@sha256:9881d43eddfd993821d1f6b645269dd043823c275410b8d30bffd52d92f8de10"
   id: 'Deploy Redis'
   entrypoint: bash
   args:
@@ -398,14 +398,14 @@ steps:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
-- name: "gcr.io/cloud-builders/kubectl"
+- name: "gcr.io/cloud-builders/kubectl@sha256:9881d43eddfd993821d1f6b645269dd043823c275410b8d30bffd52d92f8de10"
   id: 'Deploy API'
   args: ["apply", "-f", "./k8s/api.yaml", "--namespace=${_GKE_NAMESPACE}"]
   env:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
-- name: "gcr.io/cloud-builders/kubectl"
+- name: "gcr.io/cloud-builders/kubectl@sha256:9881d43eddfd993821d1f6b645269dd043823c275410b8d30bffd52d92f8de10"
   id: 'Update Redis'
   entrypoint: bash
   args:
@@ -436,7 +436,7 @@ steps:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
-- name: "gcr.io/cloud-builders/kubectl"
+- name: "gcr.io/cloud-builders/kubectl@sha256:9881d43eddfd993821d1f6b645269dd043823c275410b8d30bffd52d92f8de10"
   id: 'Deploy API autoscaler'
   entrypoint: bash
   args:
@@ -459,7 +459,7 @@ steps:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
-- name: "gcr.io/cloud-builders/kubectl"
+- name: "gcr.io/cloud-builders/kubectl@sha256:9881d43eddfd993821d1f6b645269dd043823c275410b8d30bffd52d92f8de10"
   id: 'Deploy availability probe'
   entrypoint: bash
   args:
@@ -480,7 +480,7 @@ steps:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
-- name: "gcr.io/cloud-builders/kubectl"
+- name: "gcr.io/cloud-builders/kubectl@sha256:9881d43eddfd993821d1f6b645269dd043823c275410b8d30bffd52d92f8de10"
   id: 'Deploy terms reset'
   entrypoint: bash
   args:
@@ -499,7 +499,7 @@ steps:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
-- name: "gcr.io/cloud-builders/kubectl"
+- name: "gcr.io/cloud-builders/kubectl@sha256:9881d43eddfd993821d1f6b645269dd043823c275410b8d30bffd52d92f8de10"
   id: 'Deploy Admin Panel'
   entrypoint: bash
   args:
@@ -514,7 +514,7 @@ steps:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
-- name: "gcr.io/cloud-builders/kubectl"
+- name: "gcr.io/cloud-builders/kubectl@sha256:9881d43eddfd993821d1f6b645269dd043823c275410b8d30bffd52d92f8de10"
   id: 'Deploy ingress'
   entrypoint: bash
   args:
@@ -539,7 +539,7 @@ steps:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
-- name: "gcr.io/cloud-builders/kubectl"
+- name: "gcr.io/cloud-builders/kubectl@sha256:9881d43eddfd993821d1f6b645269dd043823c275410b8d30bffd52d92f8de10"
   id: 'Deploy regional gateway'
   entrypoint: bash
   args:
@@ -561,7 +561,7 @@ steps:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
-- name: "gcr.io/cloud-builders/kubectl"
+- name: "gcr.io/cloud-builders/kubectl@sha256:9881d43eddfd993821d1f6b645269dd043823c275410b8d30bffd52d92f8de10"
   id: 'Deploy monitoring page'
   entrypoint: bash
   args:
@@ -590,7 +590,7 @@ steps:
     - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
-- name: "gcr.io/cloud-builders/kubectl"
+- name: "gcr.io/cloud-builders/kubectl@sha256:9881d43eddfd993821d1f6b645269dd043823c275410b8d30bffd52d92f8de10"
   id: 'Deploy monitoring report'
   entrypoint: bash
   args:

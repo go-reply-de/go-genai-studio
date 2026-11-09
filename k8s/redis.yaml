@@ -26,7 +26,7 @@ spec:
     spec:
       containers:
         - name: redis
-          image: redis:7.4-alpine
+          image: redis:7.4-alpine@sha256:c5d34a98396a4775e223c74e929162c35c5a2182901ba26b50ade939941ce14b
           # An empty requirepass turns auth off, and a secret without a version
           # arrives here as "": refuse to start instead.
           command:
