@@ -1,0 +1,46 @@
+# SonarQube scan of main, started by its own trigger in the environments that enable it, so deploys
+# neither wait for it nor run a third-party scanner with deploy rights. Scope: sonar-project.properties.
+# Documentation: https://goreplyde.atlassian.net/wiki/spaces/GOR/pages/2940502076/Code+Quality+with+SonarQube
+steps:
+# Trigger checkouts are shallow; blame, and with it new-code detection, needs the full history.
+- name: 'gcr.io/cloud-builders/git@sha256:9f0134c772d3bfb931f55e820c83b22510b3e533c33fc9b6edb8678413ffe244'
+  id: 'Fetch full history'
+  args: ['fetch', '--unshallow', '--quiet']
+
+- name: 'gcr.io/cloud-builders/docker@sha256:fbc05705e6f24467e40ae8a4097ab9b8fae1116551f838fa2c55f4367427fc36'
+  id: 'Run SonarQube analysis'
+  entrypoint: 'bash'
+  args:
+    - -c
+    - |
+      set -e
+      # The docker builder has no gcloud; on the cloudbuild network this container gets the build's credentials.
+      read_secret() {
+        docker run --rm --network=cloudbuild --entrypoint gcloud \
+          gcr.io/cloud-builders/gcloud@sha256:114a8a3f347d78125ab539fc46b49999979e8b5f9ddeaf963cc4c5fe6b3c699e \
+          secrets versions access latest --project="$PROJECT_ID" --secret="${_LIBRECHAT_CREDENTIALS_ENV_KEYS_PREFIX}$$1"
+      }
+      sonar_host=$$(read_secret SONAR_HOST)
+      sonar_token=$$(read_secret SONAR_LOGIN)
+      if [ -z "$$sonar_host" ] || [ -z "$$sonar_token" ]; then
+        echo "Error: the SONAR_HOST or SONAR_LOGIN secret is empty in Secret Manager."
+        exit 1
+      fi
+      # Off the cloudbuild network the scanner has no Google credentials. The workspace is a Cloud Build
+      # volume, so it is copied in; it arrives owned by root, which git blame refuses without safe.directory.
+      cid=$$(docker create \
+        -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+        sonarsource/sonar-scanner-cli:12.2.0.4256_8.1.0@sha256:a3f4215076706c95a17a68c19322ee916e40a3acd081a8c1a1e839e0194afa57 \
+        -Dsonar.host.url="$$sonar_host" \
+        -Dsonar.token="$$sonar_token" \
+        -Dsonar.projectKey="${_REGISTRY_NAME}" \
+        -Dsonar.projectName="${_REGISTRY_NAME}" \
+        -Dsonar.working.directory=/tmp/sonar-work)
+      docker cp /workspace/. "$$cid":/usr/src
+      docker start -a "$$cid"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  # The JS/TS analysis runs out of memory on the default two-CPU machine.
+  machineType: E2_HIGHCPU_8
+timeout: 2400s
