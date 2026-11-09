@@ -1,0 +1,28 @@
+# OSV-Scanner over package-lock.json, started by its own triggers (pull requests and pushes to main) so it
+# runs without deploy rights. Report-only: findings do not fail the build. The table goes to the build log,
+# the HTML and JSON reports to the private reports bucket; nothing is posted to GitHub.
+steps:
+- name: 'ghcr.io/google/osv-scanner:v2.7.0@sha256:4f3b7e2c64b9d38a5febc5a7e4a3dfef1d1362f726dea7a2ef4762b46469fcd0'
+  id: 'Scan package-lock.json'
+  args: ['scan', 'source', '--format', 'table', 'package-lock.json']
+  # Exit code 1 means vulnerabilities were found, which is expected while the scan is report-only.
+  allowExitCodes: [1]
+
+- name: 'ghcr.io/google/osv-scanner:v2.7.0@sha256:4f3b7e2c64b9d38a5febc5a7e4a3dfef1d1362f726dea7a2ef4762b46469fcd0'
+  id: 'Write the HTML report'
+  args: ['scan', 'source', '--format', 'html', '--output-file', 'osv-report.html', 'package-lock.json']
+  allowExitCodes: [1]
+
+- name: 'ghcr.io/google/osv-scanner:v2.7.0@sha256:4f3b7e2c64b9d38a5febc5a7e4a3dfef1d1362f726dea7a2ef4762b46469fcd0'
+  id: 'Write the JSON report'
+  args: ['scan', 'source', '--format', 'json', '--output-file', 'osv-report.json', 'package-lock.json']
+  allowExitCodes: [1]
+
+artifacts:
+  objects:
+    location: 'gs://${_REPORTS_BUCKET}/osv/$SHORT_SHA/'
+    paths: ['osv-report.html', 'osv-report.json']
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+timeout: 600s
