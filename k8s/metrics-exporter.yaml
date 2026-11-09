@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: metrics-exporter
-        image: ghcr.io/virtuos/librechat_exporter:2.7.0
+        image: ghcr.io/virtuos/librechat_exporter:2.7.0@sha256:7079a27d16a4943c5ed32ab5d83ae1b1952366c4ed3fcc8a5033f6b8da7d26af
         imagePullPolicy: Always
         ports:
         - name: metrics-port

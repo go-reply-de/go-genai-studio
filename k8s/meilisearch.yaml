@@ -444,7 +444,7 @@ spec:
                 configMapKeyRef:
                   key: SESSION_EXPIRY
                   name: env
-          image: getmeili/meilisearch:v1.7.3
+          image: getmeili/meilisearch:v1.7.3@sha256:19b825993dbe80c61eec65de7e7096cd545a09a744d8d00f3dd117185ebb36f9
           resources:
             requests:
               cpu: "###_MEILI_CPU###"
