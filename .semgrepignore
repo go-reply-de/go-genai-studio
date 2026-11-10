@@ -1,4 +1,5 @@
-# Semgrep scans git-tracked files only. This file replaces its built-in ignore list, so the usual paths repeat.
+# Semgrep scans tracked files and untracked ones that .gitignore lets through. This file replaces its
+# built-in ignore list, so the usual paths repeat.
 node_modules/
 build/
 dist/

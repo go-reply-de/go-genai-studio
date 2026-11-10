@@ -1,43 +1,23 @@
-# Repository checks that need no secrets: OSV-Scanner on package-lock.json and Semgrep on the code. Their own
-# triggers (pull requests and pushes to main) run them without deploy rights. Report-only: findings never fail
-# the build. Results stay in the build log and the private reports bucket; nothing is posted to GitHub.
+# Semgrep on pull requests, from its own trigger so it runs without deploy rights. It reports only what the pull
+# request adds and fails the check on new ERROR findings. Findings stay in the build log and the private reports
+# bucket; GitHub only sees pass or fail.
 steps:
-# Exit code 1 means vulnerabilities were found.
-- name: 'ghcr.io/google/osv-scanner:v2.7.0@sha256:4f3b7e2c64b9d38a5febc5a7e4a3dfef1d1362f726dea7a2ef4762b46469fcd0'
-  id: 'OSV: scan package-lock.json'
-  waitFor: ['-']
-  args: ['scan', 'source', '--format', 'table', 'package-lock.json']
-  allowExitCodes: [1]
-
-- name: 'ghcr.io/google/osv-scanner:v2.7.0@sha256:4f3b7e2c64b9d38a5febc5a7e4a3dfef1d1362f726dea7a2ef4762b46469fcd0'
-  id: 'OSV: write the HTML report'
-  waitFor: ['-']
-  args: ['scan', 'source', '--format', 'html', '--output-file', 'osv-report.html', 'package-lock.json']
-  allowExitCodes: [1]
-
-- name: 'ghcr.io/google/osv-scanner:v2.7.0@sha256:4f3b7e2c64b9d38a5febc5a7e4a3dfef1d1362f726dea7a2ef4762b46469fcd0'
-  id: 'OSV: write the JSON report'
-  waitFor: ['-']
-  args: ['scan', 'source', '--format', 'json', '--output-file', 'osv-report.json', 'package-lock.json']
-  allowExitCodes: [1]
-
-# A pull request is compared with its merge base on the target branch. Trigger checkouts are shallow, so that
-# needs the history first. Pushes to main get a full scan.
+# The baseline is the merge base on the target branch. Trigger checkouts are shallow, so the history comes first.
 - name: 'gcr.io/cloud-builders/git@sha256:9f0134c772d3bfb931f55e820c83b22510b3e533c33fc9b6edb8678413ffe244'
-  id: 'Semgrep: fetch the target branch'
-  waitFor: ['-']
+  id: 'Fetch the target branch'
   entrypoint: 'bash'
   args:
     - -c
     - |
       set -e
-      if [ -n "${_BASE_BRANCH}" ]; then
-        git fetch --unshallow --quiet --no-tags origin "+refs/heads/${_BASE_BRANCH}:refs/remotes/origin/${_BASE_BRANCH}"
+      if [ -z "${_BASE_BRANCH}" ]; then
+        echo "Error: this build runs on pull requests only (_BASE_BRANCH is empty)." >&2
+        exit 1
       fi
+      git fetch --unshallow --quiet --no-tags origin "+refs/heads/${_BASE_BRANCH}:refs/remotes/origin/${_BASE_BRANCH}"
 
 - name: 'semgrep/semgrep:1.184.0@sha256:cc1b68266f267878b39739373ea9985b9a78e5d64497dd875c8de100b22695ed'
-  id: 'Semgrep: scan the code'
-  waitFor: ['Semgrep: fetch the target branch']
+  id: 'Semgrep: scan what the pull request adds'
   entrypoint: 'sh'
   # The image expects the code in /src and exits 2 without it.
   env: ['SEMGREP_SRC_DIRECTORY=/workspace', 'SEMGREP_ENABLE_VERSION_CHECK=0']
@@ -45,37 +25,37 @@ steps:
     - -c
     - |
       set -e
-      baseline=""
-      if [ -n "${_BASE_BRANCH}" ]; then
-        baseline="--baseline-commit=$$(git merge-base HEAD "origin/${_BASE_BRANCH}")"
-        echo "Pull request: only findings that are new against ${_BASE_BRANCH}."
-      else
-        echo "Full scan."
-      fi
-      semgrep scan --metrics=off $$baseline \
+      base=$$(git merge-base HEAD "origin/${_BASE_BRANCH}")
+      echo "Findings new against ${_BASE_BRANCH} (merge base $$base)."
+      # Secrets are Gitleaks' and push protection's job; the websocket rule only matches the string ws://.
+      semgrep scan --metrics=off --baseline-commit="$$base" \
         --config=p/default --config=p/javascript --config=p/typescript --config=p/owasp-top-ten \
+        --exclude-rule=generic.secrets.security.detected-generic-secret.detected-generic-secret \
+        --exclude-rule=javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket \
         --json --output=semgrep-report.json --sarif-output=semgrep-report.sarif
-      # Low-confidence warnings are audit hints, nearly all false positives here, so the log leaves them out.
-      # Errors stay even at low confidence: command injection is only caught by such a rule. The report keeps all.
+      # Errors fail the check. Low-confidence warnings are audit hints, nearly all false positives here, so the log
+      # leaves them out; the report keeps them. A failed build uploads no reports, so the log carries the details.
       python3 - <<'EOF'
-      import json
-      report = json.load(open("semgrep-report.json"))
-      results = report["results"]
-      def shown(r):
-          return r["extra"]["severity"] == "ERROR" or r["extra"].get("metadata", {}).get("confidence") != "LOW"
-      for r in filter(shown, results):
+      import json, sys
+      results = json.load(open("semgrep-report.json"))["results"]
+      errors = [r for r in results if r["extra"]["severity"] == "ERROR"]
+      others = [r for r in results if r not in errors and r["extra"].get("metadata", {}).get("confidence") != "LOW"]
+      for r in errors + others:
           print("%s:%d  %s  %s" % (r["path"], r["start"]["line"], r["extra"]["severity"], r["check_id"]))
-      print("%d findings shown, %d in the report, %d scan errors." % (len(list(filter(shown, results))), len(results), len(report["errors"])))
+          if r in errors:
+              print("    " + r["extra"]["message"].strip().replace("\n", " ")[:300])
+      print("%d new errors, %d other findings shown, %d in the report." % (len(errors), len(others), len(results)))
+      sys.exit(1 if errors else 0)
       EOF
 
 artifacts:
   objects:
     location: 'gs://${_REPORTS_BUCKET}/security/$SHORT_SHA/'
     # The SARIF report opens in VS Code with Microsoft's SARIF Viewer extension.
-    paths: ['osv-report.html', 'osv-report.json', 'semgrep-report.json', 'semgrep-report.sarif']
+    paths: ['semgrep-report.json', 'semgrep-report.sarif']
 
 options:
   logging: CLOUD_LOGGING_ONLY
-  # _BASE_BRANCH exists only in pull request builds.
+  # _BASE_BRANCH exists only in pull request builds; without this a manual run fails before the clear error above.
   substitutionOption: ALLOW_LOOSE
-timeout: 1200s
+timeout: 600s
