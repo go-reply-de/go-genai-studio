@@ -39,7 +39,8 @@ steps:
   id: 'Semgrep: scan the code'
   waitFor: ['Semgrep: fetch the target branch']
   entrypoint: 'sh'
-  env: ['SEMGREP_ENABLE_VERSION_CHECK=0']
+  # The image expects the code in /src and exits 2 without it.
+  env: ['SEMGREP_SRC_DIRECTORY=/workspace', 'SEMGREP_ENABLE_VERSION_CHECK=0']
   args:
     - -c
     - |
@@ -51,7 +52,7 @@ steps:
       else
         echo "Full scan."
       fi
-      semgrep scan --metrics=off --quiet $$baseline \
+      semgrep scan --metrics=off $$baseline \
         --config=p/default --config=p/javascript --config=p/typescript --config=p/owasp-top-ten \
         --json --output=semgrep-report.json
       # Low-confidence warnings are audit hints, nearly all false positives here, so the log leaves them out.
