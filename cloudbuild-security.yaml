@@ -54,7 +54,7 @@ steps:
       fi
       semgrep scan --metrics=off $$baseline \
         --config=p/default --config=p/javascript --config=p/typescript --config=p/owasp-top-ten \
-        --json --output=semgrep-report.json
+        --json --output=semgrep-report.json --sarif-output=semgrep-report.sarif
       # Low-confidence warnings are audit hints, nearly all false positives here, so the log leaves them out.
       # Errors stay even at low confidence: command injection is only caught by such a rule. The report keeps all.
       python3 - <<'EOF'
@@ -71,7 +71,8 @@ steps:
 artifacts:
   objects:
     location: 'gs://${_REPORTS_BUCKET}/security/$SHORT_SHA/'
-    paths: ['osv-report.html', 'osv-report.json', 'semgrep-report.json']
+    # The SARIF report opens in VS Code with Microsoft's SARIF Viewer extension.
+    paths: ['osv-report.html', 'osv-report.json', 'semgrep-report.json', 'semgrep-report.sarif']
 
 options:
   logging: CLOUD_LOGGING_ONLY
