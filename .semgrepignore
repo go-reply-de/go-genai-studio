@@ -1,0 +1,23 @@
+# Semgrep scans git-tracked files only. This file replaces its built-in ignore list, so the usual paths repeat.
+node_modules/
+build/
+dist/
+*.min.js
+client/public/
+
+# Custom rules hold example code.
+.semgrep/
+
+# Tests and fixtures.
+test/
+tests/
+e2e/
+__tests__/
+__mocks__/
+*.spec.*
+*.test.*
+
+# GitHub Actions are disabled; k8s and helm belong to the IaC scan.
+.github/
+k8s/
+helm/
