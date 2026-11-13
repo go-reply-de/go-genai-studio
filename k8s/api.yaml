@@ -326,6 +326,11 @@ spec:
                 configMapKeyRef:
                   key: GOOGLE_LOC
                   name: env
+            - name: GEMINI_IMAGE_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  key: GEMINI_IMAGE_MODEL
+                  name: env
             - name: HELP_AND_FAQ_URL
               valueFrom:
                 configMapKeyRef:
