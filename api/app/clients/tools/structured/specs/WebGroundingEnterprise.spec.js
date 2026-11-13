@@ -414,6 +414,69 @@ describe('WebGroundingEnterprise overload retries', () => {
     expect(content).toMatch(/Websuche ist fehlgeschlagen/);
   });
 
+  /** A tool whose overloaded search can move to a second model. */
+  const withFallback = (search, fallback) => {
+    const tool = toolWith(search);
+    tool.geminiModel = 'gemini-3.8-flash';
+    tool.fallbackModel = 'gemini-4-argon';
+    tool.fallbackGenerativeModel = fallback;
+    return tool;
+  };
+
+  test('searches with the fallback model once the main one stays overloaded', async () => {
+    const search = stubModel([overloaded(), overloaded(), answer()]);
+    const fallback = stubModel([answer()]);
+
+    const { content } = await settle(withFallback(search, fallback));
+
+    expect(search.asked).toHaveLength(2);
+    expect(fallback.asked).toHaveLength(1);
+    expect(content).toContain('Bis 4,5 h.');
+  });
+
+  test('stays on the main model when its retry answers', async () => {
+    const search = stubModel([overloaded(), answer()]);
+    const fallback = stubModel([answer()]);
+
+    await settle(withFallback(search, fallback));
+
+    expect(search.asked).toHaveLength(2);
+    expect(fallback.asked).toHaveLength(0);
+  });
+
+  test('does not fall back for a rejected search', async () => {
+    const search = stubModel([clientError(400, 'Bad Request')]);
+    const fallback = stubModel([answer()]);
+
+    const { content } = await settle(withFallback(search, fallback));
+
+    expect(fallback.asked).toHaveLength(0);
+    expect(content).toMatch(/Websuche ist fehlgeschlagen/);
+  });
+
+  test('tells the agent the search is unavailable when both models are overloaded', async () => {
+    const search = stubModel([overloaded(), overloaded()]);
+    const fallback = stubModel([overloaded(), overloaded(), overloaded()]);
+
+    const { content } = await settle(withFallback(search, fallback));
+
+    expect(fallback.asked).toHaveLength(3);
+    expect(content).toMatch(/Websuche ist gerade nicht verfügbar/);
+  });
+
+  test('records a fallback search under the model that answered', async () => {
+    spendTokens.mockReset();
+    const search = stubModel([overloaded(), overloaded()]);
+    const fallback = stubModel([answer()]);
+    const tool = withFallback(search, fallback);
+    tool.userId = 'user-1';
+
+    await settle(tool);
+
+    expect(spendTokens).toHaveBeenCalledTimes(1);
+    expect(spendTokens.mock.calls[0][0].model).toBe('gemini-4-argon');
+  });
+
   test('stops retrying once the search has used its budget', async () => {
     const search = stubModel([emptyResponse('Erster Versuch.'), overloaded(), answer()]);
     const { generateContent } = search;
@@ -453,6 +516,7 @@ describe('WebGroundingEnterprise client wiring', () => {
     process.env.GOOGLE_SERVICE_KEY_FILE = key;
     process.env.WEB_GROUNDING_SOURCES_FILE = policy;
     delete process.env.WEB_GROUNDING_MODEL;
+    delete process.env.WEB_GROUNDING_FALLBACK_MODEL;
     delete process.env.WEB_GROUNDING_THINKING_LEVEL;
   });
 
@@ -480,6 +544,27 @@ describe('WebGroundingEnterprise client wiring', () => {
     new WebGroundingEnterprise({ geminiModel: 'gemini-3.8-flash' });
 
     expect(mockClients[0].models.map((m) => m.model)).toEqual(['gemini-3.5-flash-lite']);
+  });
+
+  test('builds the fallback search model next to the main one', () => {
+    process.env.WEB_GROUNDING_MODEL = 'gemini-3.8-flash';
+    process.env.WEB_GROUNDING_FALLBACK_MODEL = 'gemini-4-argon';
+
+    new WebGroundingEnterprise({ geminiModel: 'gemini-3.8-flash' });
+
+    expect(mockClients[0].models.map((m) => m.model)).toEqual([
+      'gemini-3.8-flash',
+      'gemini-4-argon',
+    ]);
+  });
+
+  test('builds no fallback that names the main model', () => {
+    process.env.WEB_GROUNDING_MODEL = 'gemini-4-argon';
+    process.env.WEB_GROUNDING_FALLBACK_MODEL = 'gemini-4-argon';
+
+    new WebGroundingEnterprise({ geminiModel: 'gemini-3.8-flash' });
+
+    expect(mockClients[0].models.map((m) => m.model)).toEqual(['gemini-4-argon']);
   });
 
   test('sets the thinking level of the search model when one is configured', () => {

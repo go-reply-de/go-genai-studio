@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="{{LANG}}">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{MONTH_LABEL}} · {{APP}} {{t:usageTab}}</title>
+    <script src="theme.js"></script>
+    <link rel="stylesheet" href="app.css" />
+    <script src="i18n.js" defer></script>
+    <script src="shell.js" defer></script>
+    <script src="usage.js" defer></script>
+  </head>
+  <body>
+    <a class="skip" href="#usage-title">{{t:skipUsage}}</a>
+
+    <header class="topbar">
+      <div class="bar">
+        <div class="brand">
+          <span class="logo" id="logo" aria-hidden="true">{{LOGO}}</span>
+          <span class="brand-name"><b id="app">{{APP}}</b><span>Monitoring</span></span>
+          <span class="badge" id="env">{{ENVIRONMENT}}</span>
+        </div>
+        <span class="grow"></span>
+        <div class="lang" role="group" aria-label="{{t:language}}">
+          <button
+            type="button"
+            data-lang="de"
+            lang="de"
+            aria-label="Deutsch"
+            aria-pressed="{{LANG_DE}}"
+            title="Deutsch"
+          >
+            DE
+          </button>
+          <button
+            type="button"
+            data-lang="en"
+            lang="en"
+            aria-label="English"
+            aria-pressed="{{LANG_EN}}"
+            title="English"
+          >
+            EN
+          </button>
+        </div>
+        <div class="theme" role="group" aria-label="{{t:appearance}}">
+          <button
+            type="button"
+            data-theme="system"
+            aria-label="{{t:themeSystem}}"
+            title="{{t:themeSystem}}"
+          >
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="2" y="3" width="20" height="14" rx="2" />
+              <path d="M8 21h8M12 17v4" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            data-theme="light"
+            aria-label="{{t:themeLight}}"
+            title="{{t:themeLight}}"
+          >
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"
+              />
+            </svg>
+          </button>
+          <button
+            type="button"
+            data-theme="dark"
+            aria-label="{{t:themeDark}}"
+            title="{{t:themeDark}}"
+          >
+            <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+            </svg>
+          </button>
+        </div>
+        <span class="user" id="user" title="{{USER}}">
+          <span class="avatar" id="avatar" aria-hidden="true">{{INITIALS}}</span>
+          <span class="sr-only" id="user-name">{{t:signedInAs}}</span>
+        </span>
+      </div>
+      <nav class="tabs" aria-label="{{t:tabs}}">
+        <div class="tabs-bar">
+          <a href="./">{{t:feedbackTab}}</a>
+          <a href="usage" aria-current="page">{{t:usageTab}}</a>
+        </div>
+      </nav>
+    </header>
+
+    <main class="content" id="content" data-default-split="{{SPLIT}}">
+      <div class="alert" id="error" role="alert" hidden>
+        <span id="error-text"></span>
+        <button class="btn" type="button" id="retry">{{t:retry}}</button>
+      </div>
+
+      <section class="month" aria-labelledby="month-title">
+        <div class="month-head">
+          <div class="month-nav" data-span="{{MODE_RANGE}}" role="group" aria-label="{{t:month}}">
+            <div class="seg mode" role="group" aria-label="{{t:modeLabel}}">
+              <button type="button" data-mode="month" aria-pressed="{{MODE_MONTH}}">
+                {{t:modeMonth}}</button
+              ><button type="button" data-mode="range" aria-pressed="{{MODE_RANGE}}">
+                {{t:modeRange}}
+              </button>
+            </div>
+            <div class="steps">
+              <button type="button" id="prev" aria-label="{{t:prevMonth}}" disabled>
+                <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m15 18-6-6 6-6" />
+                </svg>
+              </button>
+              <button type="button" id="next" aria-label="{{t:nextMonth}}" disabled>
+                <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+              </button>
+            </div>
+            <h1 class="month-heading">
+              <button
+                type="button"
+                class="picker"
+                id="month-button"
+                data-month="{{MONTH}}"
+                data-from="{{FROM}}"
+                data-to="{{TO}}"
+                aria-haspopup="dialog"
+                aria-expanded="false"
+                aria-controls="month-pop"
+                aria-describedby="month-hint"
+              >
+                <span id="month-title">{{MONTH_LABEL}}</span>
+                <svg class="i chevron" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+            </h1>
+            <span class="sr-only" id="month-hint">{{t:chooseMonth}}</span>
+            <div
+              class="month-pop"
+              id="month-pop"
+              role="dialog"
+              aria-label="{{t:chooseMonth}}"
+              hidden
+            >
+              <div class="pop-year">
+                <button type="button" id="year-prev" aria-label="{{t:prevYear}}">
+                  <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m15 18-6-6 6-6" />
+                  </svg>
+                </button>
+                <span id="year-label"></span>
+                <button type="button" id="year-next" aria-label="{{t:nextYear}}">
+                  <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                </button>
+              </div>
+              <div class="month-grid" id="month-grid"></div>
+            </div>
+            <div
+              class="month-pop range-pop"
+              id="range-pop"
+              role="dialog"
+              aria-label="{{t:chooseRange}}"
+              hidden
+            >
+              <div class="range-ends">
+                <button type="button" class="range-end" id="range-from" aria-pressed="true">
+                  <small>{{t:rangeFrom}}</small><span></span>
+                </button>
+                <button type="button" class="range-end" id="range-to" aria-pressed="false">
+                  <small>{{t:rangeTo}}</small><span></span>
+                </button>
+              </div>
+              <div class="pop-year">
+                <button type="button" id="cal-prev" aria-label="{{t:prevMonth}}">
+                  <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m15 18-6-6 6-6" />
+                  </svg>
+                </button>
+                <span id="cal-label" aria-live="polite"></span>
+                <button type="button" id="cal-next" aria-label="{{t:nextMonth}}">
+                  <svg class="i" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                </button>
+              </div>
+              <div class="cal-head" id="cal-head" aria-hidden="true"></div>
+              <div class="cal-grid" id="cal-grid"></div>
+              <div class="range-quick">
+                <button type="button" data-quick="30">{{t:last30}}</button>
+                <button type="button" data-quick="year">{{t:thisYear}}</button>
+                <button type="button" data-quick="all">{{t:sinceStart}}</button>
+              </div>
+              <div class="range-foot">
+                <button type="button" class="btn submit" id="range-apply">{{t:apply}}</button>
+              </div>
+            </div>
+          </div>
+          <p class="live" id="live" role="status" aria-live="polite">
+            <i class="live-dot" aria-hidden="true"></i><span id="live-text">{{t:loading}}</span>
+          </p>
+        </div>
+        <p class="period dim" id="period"><span class="skeleton line"></span></p>
+      </section>
+
+      <div class="lanes dim" id="lanes">
+        <section class="lane" aria-labelledby="usage-title">
+          <div class="lane-head">
+            <h2 id="usage-title" tabindex="-1">{{t:laneUsage}}</h2>
+          </div>
+          <dl class="stats two">
+            <div class="stat">
+              <dt>{{t:conversations}}</dt>
+              <dd class="value" id="k-conversations"><span class="skeleton"></span></dd>
+              <dd class="cmp" id="p-conversations"></dd>
+            </div>
+            <div class="stat">
+              <dt>{{t:messages}}</dt>
+              <dd class="value" id="k-messages"><span class="skeleton"></span></dd>
+              <dd class="cmp" id="p-messages"></dd>
+            </div>
+          </dl>
+          <section class="panel chart-panel" aria-labelledby="usage-chart-title">
+            <div class="panel-head">
+              <h3 id="usage-chart-title">{{t:perDayUsage}}</h3>
+              <p class="legend" aria-hidden="true">
+                <span><i class="dot neutral"></i>{{t:legendConversations}}</span
+                ><span><i class="dot stroke"></i>{{t:legendUsers}}</span>
+              </p>
+            </div>
+            <div
+              class="chart-box day-box"
+              id="usage-box"
+              role="group"
+              aria-label="{{t:usageChartLabel}}"
+              tabindex="0"
+              aria-describedby="usage-day"
+            >
+              <svg
+                class="day-chart"
+                id="usage-chart"
+                role="img"
+                aria-labelledby="usage-chart-title"
+                focusable="false"
+              >
+                <rect class="placeholder" x="40" y="10" width="100%" height="160" rx="8" />
+              </svg>
+            </div>
+            <p class="day-note" id="usage-day" aria-live="polite">{{t:hoverHint}}</p>
+            <div class="sr-only"><table id="usage-table"></table></div>
+          </section>
+          <div class="lane-rest">
+            <section class="panel" aria-labelledby="usage-weeks-title">
+              <div class="panel-head">
+                <h3 id="usage-weeks-title">{{t:usersPerWeek}}</h3>
+              </div>
+              <ul class="trend week-list" id="week-list">
+                <li class="placeholder"><span class="skeleton line"></span></li>
+              </ul>
+              <button type="button" class="text-btn more" id="weeks-more" hidden></button>
+              <p class="foot">{{t:usersNote}}</p>
+            </section>
+            <section class="panel" aria-labelledby="usage-months-title">
+              <div class="panel-head">
+                <h3 id="usage-months-title">{{t:conversationsPerMonth}}</h3>
+              </div>
+              <ul class="trend" id="usage-trend">
+                <li class="placeholder"><span class="skeleton line"></span></li>
+              </ul>
+            </section>
+          </div>
+        </section>
+
+        <section class="lane" aria-labelledby="tokens-title">
+          <div class="lane-head">
+            <h2 id="tokens-title">{{t:laneTokens}}</h2>
+            <div class="seg" role="group" aria-label="{{t:splitLabel}}">
+              <button type="button" data-split="purpose" aria-pressed="false">
+                {{t:splitPurpose}}</button
+              ><button type="button" data-split="model" aria-pressed="false">
+                {{t:splitModel}}
+              </button>
+            </div>
+          </div>
+          <dl class="stats three">
+            <div class="stat">
+              <dt>{{t:input}}</dt>
+              <dd class="value" id="k-input"><span class="skeleton"></span></dd>
+              <dd class="cmp" id="p-input"></dd>
+            </div>
+            <div class="stat">
+              <dt>{{t:output}}</dt>
+              <dd class="value" id="k-output"><span class="skeleton"></span></dd>
+              <dd class="cmp" id="p-output"></dd>
+            </div>
+            <div class="stat">
+              <dt>{{t:webSearch}}</dt>
+              <dd class="value" id="k-web"><span class="skeleton"></span></dd>
+              <dd class="cmp" id="p-web"></dd>
+            </div>
+          </dl>
+          <section class="panel chart-panel" aria-labelledby="tokens-chart-title">
+            <div class="panel-head">
+              <h3 id="tokens-chart-title">{{t:tokensByPurpose}}</h3>
+              <p class="legend" id="tokens-legend" aria-hidden="true"></p>
+            </div>
+            <div
+              class="chart-box day-box"
+              id="tokens-box"
+              role="group"
+              aria-label="{{t:tokensChartLabel}}"
+              tabindex="0"
+              aria-describedby="tokens-day"
+            >
+              <svg
+                class="day-chart"
+                id="tokens-chart"
+                role="img"
+                aria-labelledby="tokens-chart-title"
+                focusable="false"
+              >
+                <rect class="placeholder" x="40" y="10" width="100%" height="160" rx="8" />
+              </svg>
+            </div>
+            <p class="day-note" id="tokens-day" aria-live="polite"></p>
+            <div class="sr-only"><table id="tokens-table"></table></div>
+          </section>
+          <div class="lane-rest">
+            <section class="panel" aria-labelledby="split-title">
+              <div class="panel-head"><h3 id="split-title">{{t:tableByPurpose}}</h3></div>
+              <div class="scroll-x">
+                <table class="tbl">
+                  <thead>
+                    <tr>
+                      <th scope="col" id="split-col">{{t:splitPurpose}}</th>
+                      <th scope="col">{{t:input}}</th>
+                      <th scope="col">{{t:output}}</th>
+                      <th scope="col">{{t:share}}</th>
+                    </tr>
+                  </thead>
+                  <tbody id="split-rows">
+                    <tr class="placeholder">
+                      <td colspan="4"><span class="skeleton line"></span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p class="foot" id="split-foot"></p>
+            </section>
+            <section class="panel" aria-labelledby="tokens-months-title">
+              <div class="panel-head">
+                <h3 id="tokens-months-title">{{t:inputPerMonth}}</h3>
+              </div>
+              <ul class="trend" id="tokens-trend">
+                <li class="placeholder"><span class="skeleton line"></span></li>
+              </ul>
+            </section>
+          </div>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

@@ -90,6 +90,30 @@ spec:
                 configMapKeyRef:
                   key: AUDIT_LOG_FAIL_CLOSED
                   name: env
+            - name: ADMIN_LOCAL_LOGIN
+              valueFrom:
+                configMapKeyRef:
+                  key: ADMIN_LOCAL_LOGIN
+                  name: env
+            # Created by Terraform only where audit logs are exported (setup repo, audit_logs module).
+            - name: AUDIT_EXPORT_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  key: AUDIT_EXPORT_BUCKET
+                  name: audit-export
+                  optional: true
+            - name: AUDIT_EXPORT_RETAIN_UNTIL
+              valueFrom:
+                configMapKeyRef:
+                  key: AUDIT_EXPORT_RETAIN_UNTIL
+                  name: audit-export
+                  optional: true
+            - name: AUDIT_EXPORT_RETENTION_DAYS
+              valueFrom:
+                configMapKeyRef:
+                  key: AUDIT_EXPORT_RETENTION_DAYS
+                  name: audit-export
+                  optional: true
             - name: APP_TITLE
               valueFrom:
                 configMapKeyRef:
@@ -259,6 +283,11 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   key: FILE_RETENTION_SWEEP_MAX_ATTEMPTS
+                  name: env
+            - name: FILE_UPLOAD_IP_MAX
+              valueFrom:
+                configMapKeyRef:
+                  key: FILE_UPLOAD_IP_MAX
                   name: env
             - name: GCP_LOGGING
               value: "true"
@@ -523,6 +552,18 @@ spec:
                   key: REDIS_URI
                   name: env
                   optional: true
+            - name: REDIS_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  key: REDIS_USERNAME
+                  name: env
+            # Only environments that run Redis have this key.
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: REDIS_PASSWORD
+                  name: librechat-credentials-env
+                  optional: true
             - name: REDIS_RETRY_MAX_ATTEMPTS
               valueFrom:
                 configMapKeyRef:
@@ -587,6 +628,11 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   key: WEB_GROUNDING_MODEL
+                  name: env
+            - name: WEB_GROUNDING_FALLBACK_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  key: WEB_GROUNDING_FALLBACK_MODEL
                   name: env
             - name: WEB_GROUNDING_THINKING_LEVEL
               valueFrom:

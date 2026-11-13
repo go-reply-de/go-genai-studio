@@ -5,6 +5,7 @@ import type { CappedRole, RolePermissionCapMethods } from './caps';
 import type { StartupConfigFlags } from './config';
 import { createStrictBrowserEgress, isStrictBrowserEgress } from './egress';
 import { createSpeechAccessGate, isSpeechLocalOnly } from './speech';
+import { stripRequestsFromConsoleErrors } from './logs';
 import { startRetentionMaintenance } from '~/retention';
 import { isFeedbackStoreEnabled } from '~/feedback';
 import { createStartupConfigFlags } from './config';
@@ -30,15 +31,17 @@ export interface HardeningOptions<R extends CappedRole = CappedRole> {
 }
 
 /**
- * Registers the deployment hardening ahead of the routers. Every piece stays off until its env
- * is set: STRICT_BROWSER_EGRESS, SPEECH_LOCAL_ONLY, ROLE_PERMISSION_CAPS and
- * RETENTION_WEEKLY_RESET.
+ * Registers the deployment hardening ahead of the routers. Errors always reach the console
+ * without their request; every other piece stays off until its env is set:
+ * STRICT_BROWSER_EGRESS, SPEECH_LOCAL_ONLY, ROLE_PERMISSION_CAPS and RETENTION_WEEKLY_RESET.
  */
 export async function startHardening<R extends CappedRole>({
   app,
   appConfig,
   methods,
 }: HardeningOptions<R>): Promise<void> {
+  stripRequestsFromConsoleErrors();
+
   const strictBrowserEgress = isStrictBrowserEgress();
   const speechLocalOnly = isSpeechLocalOnly();
   if (strictBrowserEgress) {

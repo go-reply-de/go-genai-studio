@@ -1,0 +1,80 @@
+# The monitoring report (api/monitoring/report.js): on the 1st at 06:00 Berlin
+# time, the month before as one HTML file in the report bucket and one log line that the setup
+# repo's alert mails. Counts only: comments are counted, never copied.
+#
+# Applied by the "Deploy monitoring report" step where _MONITORING_REPORT is true and the monitoring
+# page runs; the setup repo sets it together with the bucket and this job's rights, and the step
+# removes the schedule everywhere else.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: monitoring-report
+  namespace: ###_GKE_NAMESPACE###
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  labels:
+    app: monitoring-report
+  name: monitoring-report
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  # Six hours after the month ended, when its last hour has long been counted.
+  schedule: "0 6 1 * *"
+  timeZone: Europe/Berlin
+  concurrencyPolicy: Forbid
+  # A run missed at 06:00 (node upgrade, controller restart) still starts the same day.
+  startingDeadlineSeconds: 21600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # A second try sees the report already written and sends nothing twice.
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app: monitoring-report
+        spec:
+          serviceAccountName: monitoring-report
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: monitoring-report
+              # Same build as the page, so report and page count the same way.
+              image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
+              command: ["node", "/app/api/monitoring/report.js"]
+              env:
+                - name: ENVIRONMENT
+                  value: "###ENVIRONMENT###"
+                - name: APP_TITLE
+                  value: "###APP_TITLE###"
+                - name: FEEDBACK_DATASET
+                  valueFrom:
+                    configMapKeyRef:
+                      key: FEEDBACK_DATASET
+                      name: env
+                # Named by the setup repo's monitoring_report module.
+                - name: REPORT_BUCKET
+                  value: "###_APPLICATION###-###ENVIRONMENT###-monitoring-reports"
+                - name: PAGE_URL
+                  value: "https://admin.###DOMAIN###/monitoring/"
+                - name: USAGE_TOKEN_SPLIT
+                  value: "###_USAGE_TOKEN_SPLIT###"
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]

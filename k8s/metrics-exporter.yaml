@@ -33,6 +33,9 @@ spec:
         # Day, week and month boundaries; the default is UTC.
         - name: METRICS_TIMEZONE
           value: "Europe/Berlin"
+        # Count at each scrape: a cached count still holds yesterday's daily users just after midnight.
+        - name: METRICS_CACHE_ENABLED
+          value: "false"
         # Token usage as the model reported it, from transactions, not just the typed text.
         - name: ENABLE_USAGE_WINDOW_METRICS
           value: "true"
