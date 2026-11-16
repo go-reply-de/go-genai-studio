@@ -36,8 +36,33 @@ function parsePolicyConfig(raw) {
   return { excludeDomains: excluded === undefined ? [] : domainList(excluded, 'excludeDomains') };
 }
 
-/** Points the web search at the AWMF register and its societies first; other sources fill gaps. */
-function buildGroundingPrompt(query) {
+/** Same block for every search, so the source parsing and the agent's §5 read either prompt. */
+const SOURCE_BLOCK_INSTRUCTIONS = [
+  `Beende die Antwort IMMER mit ${SOURCE_BLOCK_MARKER} und danach einer Zeile pro Quelle,`,
+  'Felder durch | getrennt, ohne weitere Zeichen:',
+  'Nummer (1, 2, 3 …)|Domain|Jahr oder -|Kurzbeschreibung',
+];
+
+/** No medical wording at all: Gemini otherwise opens with "keine medizinische Fragestellung". */
+function buildGeneralPrompt(query) {
+  return [
+    'Beantworte die Frage auf Basis einer Websuche. Stütze die Antwort ausschließlich auf',
+    'tatsächlich gefundene Quellen und belege Aussagen im Text mit [n]. Bevorzuge offizielle',
+    'und seriöse Quellen. Schreibe nur die Antwort, ohne einzuordnen, um welche Art von',
+    'Frage es sich handelt.',
+    '',
+    ...SOURCE_BLOCK_INSTRUCTIONS,
+    '',
+    `Frage: ${query}`,
+  ].join('\n');
+}
+
+/** Points the web search at the AWMF register and its societies first; other sources fill gaps.
+ * Only a question the agent marks `medical: false` gets the general prompt. */
+function buildGroundingPrompt(query, { medical } = {}) {
+  if (medical === false) {
+    return buildGeneralPrompt(query);
+  }
   return [
     'Beantworte die medizinische Frage auf Basis einer Websuche. Stütze die Antwort',
     'ausschließlich auf tatsächlich gefundene Quellen und belege Aussagen im Text mit [n].',
@@ -56,9 +81,7 @@ function buildGroundingPrompt(query) {
     'Findest du dort keine passende Leitlinie, schreibe nicht, dass es keine gibt, sondern',
     'beantworte die Frage mit den gefundenen Quellen.',
     '',
-    `Beende die Antwort IMMER mit ${SOURCE_BLOCK_MARKER} und danach einer Zeile pro Quelle,`,
-    'Felder durch | getrennt, ohne weitere Zeichen:',
-    'Nummer (1, 2, 3 …)|Domain|Jahr oder -|Kurzbeschreibung',
+    ...SOURCE_BLOCK_INSTRUCTIONS,
     '',
     `Frage: ${query}`,
   ].join('\n');

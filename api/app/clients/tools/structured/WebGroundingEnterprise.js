@@ -36,6 +36,11 @@ const VERTEX_MULTI_REGION_ENDPOINTS = {
     global: 'aiplatform.googleapis.com',
 };
 
+/** Same text as the registry schema in packages/api, which is the one the agent model sees. */
+const MEDICAL_FLAG_DESCRIPTION =
+  'Set to false only when the question has no connection to medicine, health or care; the search ' +
+  'then skips the medical guideline focus. Leave it out when unsure.';
+
 /** Overload retries stop starting once a search has run this long, the retry on an empty result included. */
 const RETRY_BUDGET_MS = 20000;
 
@@ -88,8 +93,8 @@ class WebGroundingEnterprise extends Tool {
         super();
         this.name = 'web_grounding_enterprise';
         this.description =
-            'GDPR-compliant web search for medical information that looks in the AWMF guideline register ' +
-            'and the AWMF societies first. Use it only when you do not know the topic well enough ' +
+            'GDPR-compliant web search. Medical questions look in the AWMF guideline register and the ' +
+            'AWMF societies first. Use it only when you do not know the topic well enough ' +
             'or the user asks for a web search.';
         this.responseFormat = 'content_and_artifact';
 
@@ -125,6 +130,7 @@ class WebGroundingEnterprise extends Tool {
         // Define schema
         this.schema = z.object({
             query: z.string().describe('Search word or phrase for the Web Grounding Enterprise tool'),
+            medical: z.boolean().optional().describe(MEDICAL_FLAG_DESCRIPTION),
         });
 
         // Initialize properties using helper function
@@ -247,8 +253,8 @@ class WebGroundingEnterprise extends Tool {
     }
 
     /** An empty result leaves nothing to cite, so it earns exactly one more attempt. */
-    async _search(query, config) {
-        const request = contentsOf(buildGroundingPrompt(query));
+    async _search(query, medical, config) {
+        const request = contentsOf(buildGroundingPrompt(query, { medical }));
         const deadline = Date.now() + RETRY_BUDGET_MS;
         const first = extractGroundingResponse((await this._generate(request, deadline, config)).response);
         if (resultDomains(first.chunks).length) {
@@ -265,10 +271,10 @@ class WebGroundingEnterprise extends Tool {
 
     /** The text is what the agent reads; the artifact feeds LibreChat's Sources panel. */
     async _call(data, _runManager, config) {
-        const { query } = data;
+        const { query, medical } = data;
 
         try {
-            const { text, chunks, supports } = await this._search(query, config);
+            const { text, chunks, supports } = await this._search(query, medical, config);
             const { sources } = parseSourceBlock(text);
             const { entries, dropped, numbering } = mergeSources({ sources, chunks, supports });
             const turn = config?.toolCall?.turn ?? 0;
