@@ -1,4 +1,4 @@
-# Monitoring page at admin.<domain>/monitoring/ (tabs Feedback and Nutzung), on the
+# Monitoring page at admin.<domain>/monitoring/ (tabs Feedback at /feedback and Nutzung at /usage), on the
 # regional load balancer behind the admin panel's IAP. Applied only where
 # MONITORING_ENABLED is true (k8s/profiles). Runs the API image under its own service
 # account, which may read the feedback tables, clean texts and read Cloud Monitoring

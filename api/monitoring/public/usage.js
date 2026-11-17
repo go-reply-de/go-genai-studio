@@ -1,5 +1,5 @@
 'use strict';
-/* global MonitoringShell */
+/* global MonitoringShell, MonitoringGroups */
 
 const {
   T,
@@ -135,6 +135,8 @@ async function show(key) {
   state.failed = '';
   clearTimeout(state.timer);
   picker.renderNav(key);
+  // The groups load on their own, so a failing usage query does not hide them.
+  MonitoringGroups.show(key);
   const hit = state.cache.get(key);
   if (hit) {
     apply(hit.data, key);
@@ -271,6 +273,7 @@ function apply(data, key) {
   renderTrends();
   renderWeekList();
   renderCharts();
+  MonitoringGroups.show(key);
 }
 
 /** An interval's length, how fresh it is and from which day it has figures. */

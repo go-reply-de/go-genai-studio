@@ -1,0 +1,85 @@
+# Usage groups (api/monitoring/groups-job.js): every hour, the running week's users grouped by
+# how many conversations they had, written to the usage_groups table the monitoring page
+# reads. Only the group rows leave the pod; the counts per user stay in its memory.
+#
+# Applied by the "Deploy usage groups" step wherever the monitoring page runs; the setup repo's
+# monitoring_page module creates the table and this job's rights with the page's.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: monitoring-groups
+  namespace: ###_GKE_NAMESPACE###
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  labels:
+    app: monitoring-groups
+  name: monitoring-groups
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  # At :50, so the week's last run comes before the Sunday 23:00 reset deletes its chats.
+  schedule: "50 * * * *"
+  timeZone: Europe/Berlin
+  concurrencyPolicy: Forbid
+  # A missed run is not caught up; the next one counts the whole week again.
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels:
+            app: monitoring-groups
+        spec:
+          serviceAccountName: monitoring-groups
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: monitoring-groups
+              # Same build as the page, so job and page agree on the groups.
+              image: ###LOCATION###-docker.pkg.dev/###PROJECT_ID###/###_REGISTRY_NAME###/api:###API_SHORT_SHA###
+              command: ["node", "/app/api/monitoring/groups-job.js"]
+              env:
+                - name: MONGO_URI
+                  valueFrom:
+                    configMapKeyRef:
+                      key: MONGO_URI
+                      name: env
+                - name: FEEDBACK_DATASET
+                  valueFrom:
+                    configMapKeyRef:
+                      key: FEEDBACK_DATASET
+                      name: env
+                # The week ends when this reset deletes the chats.
+                - name: RETENTION_WEEKLY_RESET
+                  valueFrom:
+                    configMapKeyRef:
+                      key: RETENTION_WEEKLY_RESET
+                      name: env
+                      optional: true
+                - name: RETENTION_WEEKLY_RESET_TZ
+                  valueFrom:
+                    configMapKeyRef:
+                      key: RETENTION_WEEKLY_RESET_TZ
+                      name: env
+                      optional: true
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]

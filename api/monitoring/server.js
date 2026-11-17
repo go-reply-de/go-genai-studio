@@ -1,6 +1,7 @@
 /**
  * Monitoring page with two tabs: Feedback, the counts and free texts of the BigQuery dataset in
- * FEEDBACK_DATASET, and Nutzung, the metrics exporter's series in Cloud Monitoring (usage.js).
+ * FEEDBACK_DATASET, and Nutzung, the metrics exporter's series in Cloud Monitoring (usage.js) and
+ * the weekly usage groups that groups-job.js stores in the same dataset.
  *
  * Runs from the API image under its own Kubernetes service account, which may read the feedback
  * tables, clean texts and read Cloud Monitoring; the API itself may only add rows. Only the load
@@ -15,6 +16,7 @@ const path = require('path');
 const TEXTS = require('./public/i18n');
 const { createFeedback } = require('./feedback');
 const { createGoogle, QueryError } = require('./google');
+const { GROUPS } = require('./groups');
 const { createUsage } = require('./usage');
 
 const PREFIX = '/monitoring';
@@ -40,6 +42,7 @@ const STATIC = {
   '/shell.js': ['shell.js', 'text/javascript; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/usage.js': ['usage.js', 'text/javascript; charset=utf-8'],
+  '/groups.js': ['groups.js', 'text/javascript; charset=utf-8'],
   '/app.css': ['app.css', 'text/css; charset=utf-8'],
 };
 /** LibreChat's own Inter, from the client build in the image or its sources in a checkout. */
@@ -69,6 +72,13 @@ const berlinDay = (date) =>
 const LANG_COOKIE = /(?:^|;\s*)monitoring-lang=(de|en)(?:;|$)/;
 const isDate = (s) =>
   DATE.test(s) && new Date(Date.parse(`${s}T00:00:00Z`) || 0).toISOString().startsWith(s);
+const mondayOf = (day) => {
+  const date = new Date(`${day}T00:00:00Z`);
+  return new Date(date - ((date.getUTCDay() + 6) % 7) * DAY_MS).toISOString().slice(0, 10);
+};
+/** The groups a stored row spans: the lowest by its `min`, the highest by its `max`. */
+const bottomOf = (min) => GROUPS.find((g) => g.min === min)?.key;
+const topOf = (max) => GROUPS.find((g) => g.max === max)?.key;
 
 /**
  * The interval in ?from=…&to=…: undefined when none is asked, null when it is not two real
@@ -131,6 +141,7 @@ function createMonitoring({
       : [],
   );
   let months = { list: null, expires: 0 };
+  let groupWeeks = { list: null, expires: 0 };
   const views = new Map();
   const at = () => now().getTime();
   const { credentials, query, table } = createGoogle({ fetchFn, dataset });
@@ -194,6 +205,58 @@ function createMonitoring({
       months: [...new Set([running, ...Object.keys(ratings)])].sort().reverse(),
       ratingsByMonth: { [running]: 0, ...ratings },
     };
+  }
+
+  /**
+   * Every stored week with its groups, oldest first. The job rewrites the newest week each hour,
+   * so it is the running one until its Monday lies before this week's.
+   */
+  async function loadGroups() {
+    const { rows } = await query(
+      'SELECT CAST(week AS STRING), min_conversations, max_conversations, users, ' +
+        `conversations_share, tokens_share FROM ${await table('usage_groups')} ` +
+        'ORDER BY week, min_conversations DESC',
+      {},
+    );
+    const weeks = new Map();
+    for (const [week, min, max, users, conversations, tokens] of rows) {
+      if (!weeks.has(week)) {
+        weeks.set(week, { week, running: false, groups: [] });
+      }
+      const bounds = { min: Number(min), max: max === null ? null : Number(max) };
+      weeks.get(week).groups.push({
+        top: topOf(bounds.max),
+        bottom: bottomOf(bounds.min),
+        ...bounds,
+        users: Number(users),
+        conversations: Number(conversations),
+        tokens: Number(tokens),
+      });
+    }
+    const list = [...weeks.values()];
+    const newest = list[list.length - 1];
+    if (newest && newest.week >= mondayOf(berlinDay(now()))) {
+      newest.running = true;
+    }
+    return { weeks: list };
+  }
+
+  async function cachedGroups() {
+    if (at() >= groupWeeks.expires) {
+      const entry = { list: loadGroups(), expires: Infinity };
+      groupWeeks = entry;
+      entry.list.then(
+        () => {
+          entry.expires = at() + CACHE_MS;
+        },
+        () => {
+          if (groupWeeks === entry) {
+            groupWeeks = { list: null, expires: 0 };
+          }
+        },
+      );
+    }
+    return groupWeeks.list;
   }
 
   /** A tab with its header written in, so it is complete before any data arrives. */
@@ -332,8 +395,9 @@ function createMonitoring({
     if (url.pathname === `${PREFIX}/healthz`) {
       return send(res, 200, 'ok', 'text/plain');
     }
-    if (url.pathname === PREFIX) {
-      res.writeHead(301, { Location: `${PREFIX}/` });
+    // The Feedback tab lives at /feedback; the bare prefix and the old address still lead there.
+    if (url.pathname === PREFIX || url.pathname === `${PREFIX}/`) {
+      res.writeHead(302, { Location: `${PREFIX}/feedback${url.search}` });
       return res.end();
     }
     // Set by IAP, e.g. "accounts.google.com:name@example.org".
@@ -350,7 +414,7 @@ function createMonitoring({
       return send(res, 405, { error: 'method' });
     }
     const route = url.pathname.startsWith(PREFIX) ? url.pathname.slice(PREFIX.length) : null;
-    if (route === '/' || route === '/usage') {
+    if (route === '/feedback' || route === '/usage') {
       const asked = url.searchParams.get('m') || '';
       const span = askedInterval(url, berlinDay(now())) || null;
       let month = MONTH.test(asked) ? asked : berlinDay(now()).slice(0, 7);
@@ -359,7 +423,7 @@ function createMonitoring({
       }
       // The page asks for this month as soon as it has loaded; by then the queries are running.
       let loading;
-      if (route === '/') {
+      if (route === '/feedback') {
         loading = Promise.all([
           feedbackMonths(),
           span ? cachedIntervalView(span) : cachedMonthView(...month.split('-').map(Number)),
@@ -369,7 +433,7 @@ function createMonitoring({
       }
       loading.catch(() => {});
       const lang = language(req);
-      const page = route === '/' ? 'feedback' : 'usage';
+      const page = route === '/feedback' ? 'feedback' : 'usage';
       const html = renderPage(page, reviewer, month, lang, span);
       return send(res, 200, html, 'text/html; charset=utf-8', {
         'Content-Language': lang,
@@ -411,6 +475,14 @@ function createMonitoring({
         return send(res, 200, { ...view, split });
       } catch (error) {
         log('ERROR', 'usage query failed', { detail: error.message });
+        return send(res, error.status || 500, { error: error.message });
+      }
+    }
+    if (route === '/api/groups') {
+      try {
+        return send(res, 200, await cachedGroups());
+      } catch (error) {
+        log('ERROR', 'groups query failed', { detail: error.message });
         return send(res, error.status || 500, { error: error.message });
       }
     }

@@ -1840,3 +1840,135 @@ mark.hint {
     overflow-wrap: anywhere;
   }
 }
+
+/* Wer nutzt wie viel? */
+.groups {
+  display: grid;
+  gap: 16px;
+  margin-top: 8px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-light);
+}
+.groups .lane-head {
+  align-items: center;
+}
+.groups-week {
+  font-size: 15px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.groups-panel,
+.groups-note {
+  padding: 20px 22px;
+}
+.groups-note p {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-tertiary);
+}
+.groups-lead {
+  margin: 0 0 12px;
+  font-size: 18px;
+  line-height: 1.4;
+}
+.groups-lead b {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.groups-tbl td:nth-child(n + 3),
+.groups-tbl th:nth-child(n + 3) {
+  width: 34%;
+  text-align: left;
+}
+.groups-tbl td small {
+  display: block;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+.groups-tbl td b {
+  font-weight: 600;
+}
+/* Tabular figures would widen the hyphen in "Power-User"; the names have no numbers to line up. */
+.groups-tbl td:first-child {
+  overflow-wrap: normal;
+  font-variant-numeric: normal;
+}
+.cellbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 3.5rem;
+  align-items: center;
+  gap: 10px;
+}
+.cellbar > span:last-child {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.cellbar .track {
+  height: 10px;
+  border-radius: 9999px;
+  background: var(--track);
+  overflow: hidden;
+}
+.cellbar .track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+/* One group stands out, the rest stay grey like the monthly lists; green and amber mean answers and web search here. */
+.cellbar .g0 i {
+  background: var(--text-primary);
+}
+.cellbar .g1 i {
+  background: var(--text-tertiary);
+}
+@media (max-width: 560px) {
+  .groups-lead {
+    font-size: 16px;
+  }
+  /* Each group becomes a block: name and users on one line, then one labelled bar per measure. */
+  .groups-tbl thead {
+    display: none;
+  }
+  .groups-tbl,
+  .groups-tbl tbody,
+  .groups-tbl td {
+    display: block;
+    width: auto;
+  }
+  .groups-tbl tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .groups-tbl tbody tr:last-child {
+    border-bottom: 0;
+  }
+  .groups-tbl td,
+  .groups-tbl td:first-child,
+  .groups-tbl td:last-child {
+    padding: 0;
+    border: 0;
+    text-align: left;
+    overflow-wrap: normal;
+  }
+  .groups-tbl td[data-unit] {
+    text-align: right;
+  }
+  .groups-tbl td[data-unit]::after {
+    content: ' ' attr(data-unit);
+    color: var(--text-tertiary);
+  }
+  .groups-tbl td[data-label] {
+    grid-column: 1 / -1;
+    width: auto;
+  }
+  .groups-tbl td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
+}
