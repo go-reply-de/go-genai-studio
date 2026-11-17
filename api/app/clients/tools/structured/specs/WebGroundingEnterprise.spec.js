@@ -94,11 +94,10 @@ const toolWith = (search, policy = {}) => {
 };
 
 /** Invokes the tool the way LibreChat's tool executor does, so the result is a ToolMessage. */
-const invokeTool = (tool, turn = 0) =>
-  tool.invoke(
-    { query: QUERY },
-    { toolCall: { id: 'call_1', name: 'web_grounding_enterprise', args: { query: QUERY }, turn } },
-  );
+const invokeTool = (tool, turn = 0, args = { query: QUERY }) =>
+  tool.invoke(args, {
+    toolCall: { id: 'call_1', name: 'web_grounding_enterprise', args, turn },
+  });
 
 describe('WebGroundingEnterprise', () => {
   test('searches once when the search returns results', async () => {
@@ -180,6 +179,35 @@ describe('WebGroundingEnterprise', () => {
     await invokeTool(toolWith(search));
 
     expect(search.asked).toHaveLength(1);
+    expect(search.asked[0]).toContain('AWMF-Leitlinienregister');
+  });
+
+  test('searches a question marked non-medical without the medical guideline focus', async () => {
+    const query = 'Wann ist das nächste Spiel des FC Liverpool?';
+    const search = stubModel([
+      groundedResponse('Am 22. November [1].\n[[QUELLEN]]\n1|liverpoolfc.com|2026|Spielplan', [
+        'liverpoolfc.com',
+      ]),
+    ]);
+
+    const { content, artifact } = await invokeTool(toolWith(search), 0, { query, medical: false });
+
+    expect(search.asked).toHaveLength(1);
+    expect(search.asked[0]).toContain(query);
+    expect(search.asked[0]).not.toMatch(/medizin|AWMF|Leitlinie|Evidenz/i);
+    expect(content).toContain('Quellen:\n1. [liverpoolfc.com]');
+    expect(artifact?.web_search?.organic?.map((source) => source.title)).toEqual([
+      'liverpoolfc.com',
+    ]);
+  });
+
+  test('keeps the medical guideline focus for a question marked medical', async () => {
+    const search = stubModel([
+      groundedResponse('Bis 4,5 h [1].\n[[QUELLEN]]\n1|awmf.org|2023|S2e', ['awmf.org']),
+    ]);
+
+    await invokeTool(toolWith(search), 0, { query: QUERY, medical: true });
+
     expect(search.asked[0]).toContain('AWMF-Leitlinienregister');
   });
 

@@ -451,4 +451,28 @@ describe('buildGroundingPrompt', () => {
       /keine passende Leitlinie, schreibe nicht, dass es keine gibt[\s\S]*gefundenen Quellen/,
     );
   });
+
+  test('stays medical unless the question is marked non-medical', () => {
+    const query = 'Welches Zeitfenster gilt für die Thrombolyse?';
+
+    expect(buildGroundingPrompt(query, { medical: true })).toBe(buildGroundingPrompt(query));
+    expect(buildGroundingPrompt(query, {})).toBe(buildGroundingPrompt(query));
+  });
+
+  test('searches a non-medical question without the medical guideline focus', () => {
+    const query = 'Wann ist das nächste Spiel des FC Liverpool?';
+    const prompt = buildGroundingPrompt(query, { medical: false });
+
+    expect(prompt).toContain(`Frage: ${query}`);
+    expect(prompt).not.toMatch(/medizin|AWMF|Leitlinie|Evidenz/i);
+  });
+
+  test('asks a non-medical search for the same source block as a medical one', () => {
+    const sourceBlock = (prompt) => prompt.slice(prompt.indexOf('Beende die Antwort'));
+    const query = 'Wann ist das nächste Spiel des FC Liverpool?';
+
+    expect(sourceBlock(buildGroundingPrompt(query, { medical: false }))).toBe(
+      sourceBlock(buildGroundingPrompt(query)),
+    );
+  });
 });

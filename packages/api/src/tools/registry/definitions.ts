@@ -358,6 +358,12 @@ export const webGroundingEnterpriseSchema: ExtendedJsonSchema = {
       type: 'string',
       description: 'Search word or phrase for the Web Grounding Enterprise tool',
     },
+    medical: {
+      type: 'boolean',
+      description:
+        'Set to false only when the question has no connection to medicine, health or care; the search ' +
+        'then skips the medical guideline focus. Leave it out when unsure.',
+    },
   },
   required: ['query'],
 };
