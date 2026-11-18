@@ -108,7 +108,9 @@ describe('applyRolePermissionCaps', () => {
     methods = createMethods(mongoose, {
       getCache: () => ({
         get: async (key: string) => cache.get(key),
-        set: async (key: string, value: unknown) => cache.set(key, value),
+        set: async (key: string, value: unknown) => {
+          cache.set(key, value);
+        },
       }),
     });
   }, DB_SETUP_TIMEOUT_MS);

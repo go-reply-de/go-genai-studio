@@ -25,6 +25,9 @@ describe('installBrandStrings', () => {
     expect(i18n.t(key('com_ui_tos_instructions'))).toBe(
       'Please review the terms and conditions below.',
     );
+    expect(i18n.t(key('com_ui_tos_copyright'), { 0: '2026' })).toBe(
+      '© 2026 Go Reply. All Rights Reserved.',
+    );
     expect(i18n.t('com_ui_zoom_out')).toBe('Zoom out');
     uninstall();
   });

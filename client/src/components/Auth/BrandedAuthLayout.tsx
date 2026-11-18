@@ -1,7 +1,48 @@
 import { TStartupConfig } from 'librechat-data-provider';
+import { ErrorMessage } from '~/components/Auth/ErrorMessage';
 import { TranslationKeys, useLocalize } from '~/hooks';
 import SocialLoginRender from './SocialLoginRender';
 import '~/locales/brandStrings';
+import Footer from './Footer';
+
+/** The same messages upstream's `AuthLayout` shows, left-aligned for this layout. */
+function LoginError({
+  hasStartupConfigError,
+  error,
+}: {
+  hasStartupConfigError: boolean;
+  error: TranslationKeys | null;
+}) {
+  const localize = useLocalize();
+  if (hasStartupConfigError) {
+    return (
+      <div className="mt-6 sm:max-w-sm">
+        <ErrorMessage>{localize('com_auth_error_login_server')}</ErrorMessage>
+      </div>
+    );
+  }
+  if (error === 'com_auth_error_invalid_reset_token') {
+    return (
+      <div className="mt-6 sm:max-w-sm">
+        <ErrorMessage>
+          {localize('com_auth_error_invalid_reset_token')}{' '}
+          <a className="font-semibold text-green-600 hover:underline" href="/forgot-password">
+            {localize('com_auth_click_here')}
+          </a>{' '}
+          {localize('com_auth_to_try_again')}
+        </ErrorMessage>
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="mt-6 sm:max-w-sm">
+        <ErrorMessage>{localize(error)}</ErrorMessage>
+      </div>
+    );
+  }
+  return null;
+}
 
 /** Go GenAI Studio login layout; `StartupLayout` renders it in place of upstream's `AuthLayout`. */
 export default function BrandedAuthLayout({
@@ -11,6 +52,7 @@ export default function BrandedAuthLayout({
   startupConfig,
   startupConfigError,
   pathname,
+  error,
 }: {
   children: React.ReactNode;
   header: React.ReactNode;
@@ -49,6 +91,7 @@ export default function BrandedAuthLayout({
             <p className="mt-6 whitespace-pre-line text-xl/8 font-medium text-gray-950/75 dark:text-gray-200">
               {localize('com_description' as TranslationKeys)}
             </p>
+            <LoginError hasStartupConfigError={hasStartupConfigError} error={error} />
             {children}
             <div className="mt-12">
               {!pathname.includes('2fa') &&
@@ -58,6 +101,9 @@ export default function BrandedAuthLayout({
             </div>
           </div>
         </div>
+      </div>
+      <div className="absolute bottom-0 right-0">
+        <Footer startupConfig={startupConfig} />
       </div>
     </div>
   );

@@ -5,7 +5,7 @@ import { TranslationKeys, useLocalize } from '~/hooks';
 import { useGetStartupConfig } from '~/data-provider';
 import '~/locales/brandStrings';
 
-function TermsOfService({ className }: { className?: string }) {
+function TermsOfService() {
   const { data: config } = useGetStartupConfig();
 
   const localize = useLocalize();
@@ -45,7 +45,11 @@ function TermsOfService({ className }: { className?: string }) {
         </main>
 
         <footer className="mt-10 text-center text-sm text-gray-500">
-          <p>&copy; {new Date().getFullYear()} Go Reply. All Rights Reserved.</p>
+          <p>
+            {localize('com_ui_tos_copyright' as TranslationKeys, {
+              0: String(new Date().getFullYear()),
+            })}
+          </p>
         </footer>
       </div>
     </div>
