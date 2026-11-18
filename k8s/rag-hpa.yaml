@@ -1,0 +1,21 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rag
+  namespace: ###_GKE_NAMESPACE###
+spec:
+  # Bounds and target come from k8s/profiles/*.env; the target is a percentage
+  # of RAG_CPU, and rag is one Python process, so a busy pod sits near 100%.
+  minReplicas: ###_RAG_MIN_REPLICAS###
+  maxReplicas: ###_RAG_MAX_REPLICAS###
+  metrics:
+  - resource:
+      name: cpu
+      target:
+        averageUtilization: ###_RAG_HPA_TARGET_CPU###
+        type: Utilization
+    type: Resource
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: rag

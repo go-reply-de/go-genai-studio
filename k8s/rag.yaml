@@ -5,7 +5,7 @@ metadata:
     app: rag
   name: rag
 spec:
-  replicas: ###_RAG_REPLICAS###
+  replicas: ###_RAG_MIN_REPLICAS###
   selector:
     matchLabels:
       app: rag
