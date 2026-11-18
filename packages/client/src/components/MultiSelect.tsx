@@ -171,10 +171,10 @@ export default function MultiSelect<T extends string>({
               >
                 {renderItemContent
                   ? (renderItemContent(
-                    value,
-                    defaultContent,
-                    isCurrentItemSelected,
-                  ) as React.JSX.Element)
+                      value,
+                      defaultContent,
+                      isCurrentItemSelected,
+                    ) as React.JSX.Element)
                   : (defaultContent as React.JSX.Element)}
               </SelectItem>
             );

@@ -224,13 +224,13 @@ class AgentClient extends BaseClient {
     buffer.clear();
   }
 
-  setOptions(_options) { }
+  setOptions(_options) {}
 
   /**
    * `AgentClient` is not opinionated about vision requests, so we don't do anything here
    * @param {MongoFile[]} attachments
    */
-  checkVisionRequest() { }
+  checkVisionRequest() {}
 
   getSaveOptions() {
     let runOptions = {};
@@ -317,9 +317,9 @@ class AgentClient extends BaseClient {
       { agent: normalizeInstructions(this.options.agent), agentId: this.options.agent.id },
       ...(this.agentConfigs?.size > 0
         ? Array.from(this.agentConfigs.entries()).map(([agentId, agent]) => ({
-          agent: normalizeInstructions(agent),
-          agentId,
-        }))
+            agent: normalizeInstructions(agent),
+            agentId,
+          }))
         : []),
     ];
     const sharedRunAttachmentIds = new Set();
@@ -858,12 +858,13 @@ class AgentClient extends BaseClient {
           : DEFAULT_MEMORY_MAX_INPUT_TOKENS;
       const maxInputChars = maxInputTokens * MEMORY_INPUT_CHARS_PER_TOKEN;
       const isCharTruncated = bufferString.length > maxInputChars;
-      const memoryInput = `# Current Chat:\n\n${isCharTruncated
+      const memoryInput = `# Current Chat:\n\n${
+        isCharTruncated
           ? `[Earlier chat content omitted due to memory input limit]\n\n${bufferString.slice(
-            -maxInputChars,
-          )}`
+              -maxInputChars,
+            )}`
           : bufferString
-        }`;
+      }`;
       const {
         text: limitedMemoryInput,
         tokenCount,
@@ -1079,10 +1080,10 @@ class AgentClient extends BaseClient {
          *  differ from the parent's); `usage.agentId` is tagged by the sink. */
         cost: includeCost
           ? computeUsageCostUSD(
-            usage,
-            { getMultiplier: db.getMultiplier, getCacheMultiplier: db.getCacheMultiplier },
-            this.resolveAgentEndpointTokenConfig(usage),
-          )
+              usage,
+              { getMultiplier: db.getMultiplier, getCacheMultiplier: db.getCacheMultiplier },
+              this.resolveAgentEndpointTokenConfig(usage),
+            )
           : undefined,
       };
       /** Fold into the response's usage rollup (synchronously, regardless of
@@ -1226,11 +1227,11 @@ class AgentClient extends BaseClient {
       const formatOptions =
         needsReasoningContentFormat || freshSkillPrimeNames.size > 0
           ? {
-            ...(needsReasoningContentFormat ? { preserveReasoningContent: true } : {}),
-            ...(freshSkillPrimeNames.size > 0
-              ? { skipSkillBodyNames: freshSkillPrimeNames }
-              : {}),
-          }
+              ...(needsReasoningContentFormat ? { preserveReasoningContent: true } : {}),
+              ...(freshSkillPrimeNames.size > 0
+                ? { skipSkillBodyNames: freshSkillPrimeNames }
+                : {}),
+            }
           : undefined;
       let {
         messages: initialMessages,
@@ -1312,12 +1313,12 @@ class AgentClient extends BaseClient {
       const memoryMessages =
         this.processMemory && this.memoryPayload
           ? formatAgentMessages(
-            this.memoryPayload,
-            undefined,
-            toolSet,
-            skillPrimeResult?.skills,
-            formatOptions,
-          ).messages
+              this.memoryPayload,
+              undefined,
+              toolSet,
+              skillPrimeResult?.skills,
+              formatOptions,
+            ).messages
           : initialMessages;
 
       /**

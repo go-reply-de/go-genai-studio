@@ -1394,7 +1394,6 @@
   "com_ui_oauth_error_missing_code": "Authorization code is missing. Please try again.",
   "com_ui_oauth_error_missing_state": "State parameter is missing. Please try again.",
   "com_ui_oauth_error_title": "Authentication Failed",
-  "com_ui_oauth_flow_desc": "Complete the OAuth flow in the new window, then return here.",
   "com_ui_oauth_success_description": "Your authentication was successful. This window will close in",
   "com_ui_oauth_success_title": "Authentication Successful",
   "com_ui_obo": "On-Behalf-Of (OBO)",
@@ -1923,12 +1922,8 @@
   "com_ui_your_api_key": "Your API Key",
   "com_ui_your_projects": "Your projects",
   "com_ui_zoom": "Zoom",
-  "com_user_message": "You",
-  "com_warning_resubmit_unsupported": "Resubmitting the AI message is not supported for this endpoint.",
-  "com_description": "\nA comprehensive AI chat platform designed to give you full control over your conversational experiences. \nBy bringing together multiple AI providers and advanced features into one user-friendly interface, it provides the flexibility to build, customize, and deploy AI assistants for any kind of service or workflow effortlessly.",
-  "com_header_description": "Your very own AI Chatbot",
-  "com_ui_tos_instructions": "Please review the terms and conditions below.",
   "com_ui_zoom_in": "Zoom in",
   "com_ui_zoom_level": "Zoom level",
-  "com_ui_zoom_out": "Zoom out"
+  "com_ui_zoom_out": "Zoom out",
+  "com_user_message": "You"
 }

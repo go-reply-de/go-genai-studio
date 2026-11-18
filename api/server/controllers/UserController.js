@@ -150,11 +150,11 @@ const deleteUserMcpServers = async (userId) => {
     const migratedEntries =
       authoredServers.length > 0
         ? await AclEntry.find({
-          resourceType: ResourceType.MCPSERVER,
-          resourceId: { $in: authoredServers.map((s) => s._id) },
-        })
-          .select('resourceId')
-          .lean()
+            resourceType: ResourceType.MCPSERVER,
+            resourceId: { $in: authoredServers.map((s) => s._id) },
+          })
+            .select('resourceId')
+            .lean()
         : [];
     const migratedIds = new Set(migratedEntries.map((e) => e.resourceId.toString()));
     const legacyServers = authoredServers.filter((s) => !migratedIds.has(s._id.toString()));
@@ -169,8 +169,8 @@ const deleteUserMcpServers = async (userId) => {
     const aclOwnedServers =
       soleOwnedIds.length > 0
         ? await MCPServer.find({ _id: { $in: soleOwnedIds } })
-          .select('serverName')
-          .lean()
+            .select('serverName')
+            .lean()
         : [];
     const allServersToDelete = [...aclOwnedServers, ...legacyServers];
 

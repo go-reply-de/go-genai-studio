@@ -111,7 +111,7 @@ const startServer = async () => {
   if (isEnabled(process.env.TENANT_ISOLATION_STRICT)) {
     logger.warn(
       '[Security] TENANT_ISOLATION_STRICT is active. Ensure your reverse proxy strips or sets ' +
-      'the X-Tenant-Id header — untrusted clients must not be able to set it directly.',
+        'the X-Tenant-Id header — untrusted clients must not be able to set it directly.',
     );
   }
 

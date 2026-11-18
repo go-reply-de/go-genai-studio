@@ -774,7 +774,7 @@ export class MCPOAuthHandler {
            */
           logger.warn(
             `[MCPOAuth] No protected resource metadata available for ${serverName}. ` +
-            'This can cause issues with some Authorization Servers that expect a "resource" parameter.',
+              'This can cause issues with some Authorization Servers that expect a "resource" parameter.',
           );
         }
 

@@ -1,8 +1,9 @@
-import { useGetStartupConfig } from '~/data-provider';
 import React, { useEffect } from 'react';
-import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-import { useLocalize } from '~/hooks';
+import ReactMarkdown from 'react-markdown';
+import { TranslationKeys, useLocalize } from '~/hooks';
+import { useGetStartupConfig } from '~/data-provider';
+import '~/locales/brandStrings';
 
 function TermsOfService({ className }: { className?: string }) {
   const { data: config } = useGetStartupConfig();
@@ -32,7 +33,9 @@ function TermsOfService({ className }: { className?: string }) {
           <h1 className="text-4xl font-bold text-gray-900">
             {localize('com_ui_terms_of_service')}
           </h1>
-          <p className="mt-2 text-lg text-gray-600">{localize('com_ui_tos_instructions')}</p>
+          <p className="mt-2 text-lg text-gray-600">
+            {localize('com_ui_tos_instructions' as TranslationKeys)}
+          </p>
         </header>
 
         <main className="rounded-lg bg-white p-8 shadow-md">

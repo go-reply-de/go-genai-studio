@@ -599,8 +599,6 @@
   "com_sidepanel_conversation_tags": "ブックマーク",
   "com_sidepanel_hide_panel": "パネルを隠す",
   "com_sidepanel_manage_files": "ファイルを管理",
-  "com_sidepanel_mcp_no_servers_with_vars": "設定可能な変数を持つMCPサーバーはありません。",
-  "com_sidepanel_mcp_variables_for": "{{0}}のMCP変数",
   "com_sidepanel_parameters": "パラメータ",
   "com_sources_agent_file": "ソース・ドキュメント",
   "com_sources_agent_files": "エージェント・ファイル",

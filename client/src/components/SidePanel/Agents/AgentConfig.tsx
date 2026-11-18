@@ -366,22 +366,22 @@ export default function AgentConfig() {
           artifactsEnabled ||
           contextEnabled ||
           webSearchEnabled) && (
-            <div className="mb-4 flex w-full flex-col items-start gap-3">
-              <label className="text-token-text-primary block text-sm font-medium">
-                {localize('com_assistants_capabilities')}
-              </label>
-              {/* Code Execution */}
-              {codeEnabled && <CodeForm agent_id={agent_id} files={code_files} />}
-              {/* Web Search */}
-              {webSearchEnabled && <SearchForm />}
-              {/* File Context */}
-              {contextEnabled && <FileContext agent_id={agent_id} files={context_files} />}
-              {/* Artifacts */}
-              {artifactsEnabled && <Artifacts />}
-              {/* File Search */}
-              {fileSearchEnabled && <FileSearch agent_id={agent_id} files={knowledge_files} />}
-            </div>
-          )}
+          <div className="mb-4 flex w-full flex-col items-start gap-3">
+            <label className="text-token-text-primary block text-sm font-medium">
+              {localize('com_assistants_capabilities')}
+            </label>
+            {/* Code Execution */}
+            {codeEnabled && <CodeForm agent_id={agent_id} files={code_files} />}
+            {/* Web Search */}
+            {webSearchEnabled && <SearchForm />}
+            {/* File Context */}
+            {contextEnabled && <FileContext agent_id={agent_id} files={context_files} />}
+            {/* Artifacts */}
+            {artifactsEnabled && <Artifacts />}
+            {/* File Search */}
+            {fileSearchEnabled && <FileSearch agent_id={agent_id} files={knowledge_files} />}
+          </div>
+        )}
         {/* MCP Section */}
         {availableMCPServers != null && availableMCPServers.length > 0 && (
           <MCPTools

@@ -133,8 +133,8 @@ const registerActionTools = ({
     if (toolToAction.has(key)) {
       logger.warn(
         `[Actions] operationId collision: "${key}" already registered; ` +
-        `action "${entry.action?.action_id}" overwrites the previous entry. ` +
-        `Two actions share both the operationId and the encoded hostname.`,
+          `action "${entry.action?.action_id}" overwrites the previous entry. ` +
+          `Two actions share both the operationId and the encoded hostname.`,
       );
     }
     toolToAction.set(key, entry);
@@ -513,8 +513,8 @@ const nativeTools = new Set([Tools.execute_code, Tools.file_search, Tools.web_se
 const isBuiltInTool = (toolName) =>
   Boolean(
     manifestToolMap[toolName] ||
-    toolkits.some((t) => t.pluginKey === toolName) ||
-    nativeTools.has(toolName),
+      toolkits.some((t) => t.pluginKey === toolName) ||
+      nativeTools.has(toolName),
   );
 
 /**
@@ -728,7 +728,8 @@ async function loadToolDefinitionsWrapper({ req, res, agent, streamId = null, to
         (await getMCPServersRegistry().getServerConfig(serverName, userId, configServers));
     } catch (err) {
       logger.warn(
-        `[Tool Definitions] MCP registry unavailable while resolving '${serverName}': ${err?.message ?? err
+        `[Tool Definitions] MCP registry unavailable while resolving '${serverName}': ${
+          err?.message ?? err
         }. Skipping MCP tool exposure for this lookup.`,
       );
       return null;
@@ -817,7 +818,7 @@ async function loadToolDefinitionsWrapper({ req, res, agent, streamId = null, to
       if (!isDomainAllowed) {
         logger.warn(
           `[Actions] Domain "${action.metadata.domain}" not in allowedDomains. ` +
-          `Add it to librechat.yaml actions.allowedDomains to enable this action.`,
+            `Add it to librechat.yaml actions.allowedDomains to enable this action.`,
         );
         continue;
       }
@@ -1509,7 +1510,7 @@ async function loadToolsForExecution({
   if (isBashToolRequested && !isBashTool) {
     logger.warn(
       `[loadToolsForExecution] Skipping unregistered or unauthorized ${AgentConstants.BASH_TOOL}. ` +
-      `User: ${req.user.id} | Agent: ${agent?.id ?? 'unknown'}`,
+        `User: ${req.user.id} | Agent: ${agent?.id ?? 'unknown'}`,
     );
   }
   if (isBashTool) {
@@ -1526,8 +1527,8 @@ async function loadToolsForExecution({
   const fileAuthoringToolNames = new Set(
     toolRegistry
       ? Array.from(toolRegistry.values())
-        .filter((definition) => isFileAuthoringToolDefinition(definition))
-        .map((definition) => definition.name)
+          .filter((definition) => isFileAuthoringToolDefinition(definition))
+          .map((definition) => definition.name)
       : [],
   );
   const specialToolNames = new Set([
@@ -1556,7 +1557,7 @@ async function loadToolsForExecution({
     if (!allowed) {
       logger.warn(
         `[loadToolsForExecution] Skipping unregistered or unauthorized ${Tools.execute_code}. ` +
-        `User: ${req.user.id} | Agent: ${agent?.id ?? 'unknown'}`,
+          `User: ${req.user.id} | Agent: ${agent?.id ?? 'unknown'}`,
       );
     }
     return allowed;
@@ -1616,7 +1617,7 @@ async function loadToolsForExecution({
   } else if (actionToolNames.length > 0 && agent && !actionsEnabled) {
     logger.warn(
       `[loadToolsForExecution] Capability "${AgentCapabilities.actions}" disabled. ` +
-      `Skipping action tool execution. User: ${req.user.id} | Agent: ${agent.id} | Tools: ${actionToolNames.join(', ')}`,
+        `Skipping action tool execution. User: ${req.user.id} | Agent: ${agent.id} | Tools: ${actionToolNames.join(', ')}`,
     );
   }
 
@@ -1685,7 +1686,7 @@ async function loadActionToolsForExecution({
     if (!isDomainAllowed) {
       logger.warn(
         `[Actions] Domain "${action.metadata.domain}" not in allowedDomains. ` +
-        `Add it to librechat.yaml actions.allowedDomains to enable this action.`,
+          `Add it to librechat.yaml actions.allowedDomains to enable this action.`,
       );
       continue;
     }

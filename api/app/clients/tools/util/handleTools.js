@@ -23,8 +23,6 @@ const {
   manifestToolMap,
   // Basic Tools
   GoogleSearchAPI,
-  GoogleVertexAI,
-  WebGroundingEnterprise,
   // Structured Tools
   DALLE3,
   FluxAPI,
@@ -36,7 +34,6 @@ const {
   TavilySearchResults,
   createGeminiImageTool,
   createOpenAIImageTools,
-  createVertexAIImageTool,
 } = require('../');
 const {
   createMCPTool,
@@ -52,6 +49,7 @@ const { loadAuthValues } = require('~/server/services/Tools/credentials');
 const { getMCPServerTools } = require('~/server/services/Config');
 const { getMCPServersRegistry } = require('~/config');
 const { getRoleByName } = require('~/models');
+const { vertexToolConstructors } = require('./vertexTools');
 
 /**
  * Validates the availability and authentication of tools for a user based on environment variables or user-specific plugin authentication values.
@@ -191,23 +189,7 @@ const loadTools = async ({
   };
 
   const customConstructors = {
-    vertex_ai_search: async (_toolContextMap) => {
-      const authFields = getAuthFields('vertex_ai_search');
-      const authValues = await loadAuthValues({ userId: user, authFields });
-      const fields = {
-        ...authValues,
-        geminiModel: agent?.model || 'gemini-2.5-pro'
-      };
-      return new GoogleVertexAI(fields);
-    },
-    web_grounding_enterprise: async (_toolContextMap) => {
-      const fields = {
-        geminiModel: agent?.model || 'gemini-2.5-pro',
-        req: options.req,
-        userId: user,
-      };
-      return new WebGroundingEnterprise(fields);
-    },
+    ...vertexToolConstructors({ user, agent, options, getAuthFields }),
     image_gen_oai: async (_toolContextMap, dynamicToolContextMap) => {
       const authFields = getAuthFields('image_gen_oai');
       const authValues = await loadAuthValues({ userId: user, authFields });
@@ -524,13 +506,13 @@ const loadTools = async ({
           config.type === 'all'
             ? await createMCPTools(mcpParams)
             : await createMCPTool({
-              ...mcpParams,
-              availableTools,
-              toolKey: config.toolKey,
-              onAvailableTools: (tools) => {
-                availableTools = tools;
-              },
-            });
+                ...mcpParams,
+                availableTools,
+                toolKey: config.toolKey,
+                onAvailableTools: (tools) => {
+                  availableTools = tools;
+                },
+              });
 
         if (Array.isArray(mcpTool)) {
           loadedTools.push(...mcpTool);

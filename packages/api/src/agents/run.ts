@@ -171,12 +171,12 @@ export function extractInvokedSkillsFromPayload(
       const args =
         typeof rawArgs === 'string'
           ? (() => {
-            try {
-              return JSON.parse(rawArgs) as Record<string, unknown>;
-            } catch {
-              return {};
-            }
-          })()
+              try {
+                return JSON.parse(rawArgs) as Record<string, unknown>;
+              } catch {
+                return {};
+              }
+            })()
           : (rawArgs as Record<string, unknown> | undefined);
       const skillName = args?.skillName;
       if (typeof skillName === 'string' && skillName.length > 0) {
@@ -480,10 +480,10 @@ function resolveSummarizationProvider(
     const resolvedHeaders =
       customEndpointConfig.headers != null
         ? resolveHeaders({
-          headers: customEndpointConfig.headers as Record<string, string>,
-          user: createSafeUser(headerContext.user),
-          body: headerContext.requestBody,
-        })
+            headers: customEndpointConfig.headers as Record<string, string>,
+            user: createSafeUser(headerContext.user),
+            body: headerContext.requestBody,
+          })
         : undefined;
     /**
      * Native Anthropic custom endpoints must build their config with the
