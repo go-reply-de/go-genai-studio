@@ -4,6 +4,7 @@ import type { IndexDefinition, IndexOptions, Model } from 'mongoose';
 import type { IAgentTriggerDeliveryDocument } from '~/types/triggerDelivery';
 import triggerDeliverySchema, { BACKGROUND_POLL_INDEX } from '~/schema/triggerDelivery';
 import { applyTenantIsolation } from '~/models/plugins/tenantIsolation';
+import { applyWeeklyRetention } from '~/models/plugins/weeklyRetention';
 
 interface DeliveryIndexBuildOptions extends CreateIndexesOptions {
   toCreate?: Array<[IndexDefinition, IndexOptions]>;
@@ -17,6 +18,7 @@ export function createAgentTriggerDeliveryModel(
     return existing;
   }
   applyTenantIsolation(triggerDeliverySchema);
+  applyWeeklyRetention(triggerDeliverySchema);
   const model = mongoose.model<IAgentTriggerDeliveryDocument>(
     'AgentTriggerDelivery',
     triggerDeliverySchema,
