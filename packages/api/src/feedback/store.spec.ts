@@ -256,12 +256,7 @@ describe('saveFeedback', () => {
   it('logs a refusal per table with its status, without the text or a user id', async () => {
     const { fn } = fakeFetch(() => new Response('denied', { status: 403 }));
     const lines = await stderrLines(() =>
-      saveFeedback(
-        null,
-        { rating: 'thumbsDown', tag: 'other', text: 'TESTFALL-DIMEAS-01' },
-        ON,
-        fn,
-      ),
+      saveFeedback(null, { rating: 'thumbsDown', tag: 'other', text: 'TESTFALL-01' }, ON, fn),
     );
     expect(lines).toHaveLength(2);
     expect(lines).toEqual(

@@ -203,7 +203,7 @@ a { color: #0c66e4; }
 /** The report page itself, in German like its readers. */
 function renderReport(data, { env, created, page }) {
   const { feedback: f, usage: u } = data;
-  const app = esc(env.APP_TITLE || 'DiMeAs');
+  const app = esc(env.APP_TITLE || 'Go GenAI Studio');
   const before = monthName(data.previousKey);
   const vs = (now, then) => (then === undefined ? '' : `Vormonat ${int(then)}${change(now, then)}`);
   const kpi = (label, value, note) =>

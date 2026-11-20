@@ -29,8 +29,8 @@ reviewed CMEK setting quietly becomes an unreviewed one.
 
 ```bash
 # 1. Enable the feature for the environment, then create the bucket + IAM
-#    environments/uksh/<env>/terragrunt.hcl:  enable_sovereign_inference = true
-cd environments/uksh/<env> && terragrunt apply
+#    environments/<customer>/<env>/terragrunt.hcl:  enable_sovereign_inference = true
+cd environments/<customer>/<env> && terragrunt apply
 ```
 
 You need `roles/iam.serviceAccountUser` on the environment's build SA — the script
@@ -49,7 +49,7 @@ gated** (verified against the HF API: `gated=false`). A token is used only if th
 
 ```bash
 ./scripts/automate_sovereign_setup.sh \
-  --project-id uksh-aw1-dev-genai-portal \
+  --project-id <dev-project-id> \
   --environment sov-dev \
   --cmek-key projects/cmek-.../cryptoKeys/genai-portal-sov-dev
 ```
@@ -58,10 +58,10 @@ gated** (verified against the HF API: `gated=false`). A token is used only if th
 
 ```bash
 ./scripts/automate_sovereign_setup.sh \
-  --project-id uksh-aw1-prod-genai-portal \
+  --project-id <prod-project-id> \
   --environment sov-prod \
   --promote-from sov-dev \
-  --weights-source-project uksh-aw1-dev-genai-portal \
+  --weights-source-project <dev-project-id> \
   --cmek-key projects/cmek-.../cryptoKeys/genai-portal-sov-prod
 ```
 
@@ -145,7 +145,7 @@ Derived from `--environment`, so **always pass it**:
 | Weights bucket | `genai-portal-sov-dev-model-weights` | `genai-portal-sov-prod-model-weights` |
 | Replicas (min/max) | 1 / 2 | 2 / 6 |
 
-`environments/uksh/<env>/terragrunt.hcl` is the source of truth for sizing. The
+`environments/<customer>/<env>/terragrunt.hcl` is the source of truth for sizing. The
 script's internal table applies only when it renders manifests directly, and must be
 kept in step with it.
 

@@ -14,7 +14,7 @@ metadata:
     # API_CPU in the other direction too: the api is a single Node process, so
     # it cannot reach 80% of a multi-core request and would never scale out.
     # Hence the profile-driven target below rather than a fixed 80.
-    io.uksh.replica-bounds-source: "k8s/profiles/*.env"
+    replica-bounds-source: "k8s/profiles/*.env"
 spec:
   minReplicas: ###_API_MIN_REPLICAS###
   maxReplicas: ###_API_MAX_REPLICAS###

@@ -125,7 +125,7 @@ const octoberWeeks = {
 };
 
 const ENV = {
-  APP_TITLE: 'DiMeAs',
+  APP_TITLE: 'Test Studio',
   ENVIRONMENT: 'sov-prod',
   REPORT_BUCKET: 'genai-portal-sov-prod-monitoring-reports',
   PAGE_URL: 'https://admin.example.org/monitoring/',
@@ -184,7 +184,7 @@ describe('monitoring report', () => {
     await app.report.run();
     const { html } = app.calls.uploads[0];
     for (const figure of [
-      'DiMeAs Monatsbericht Oktober 2026',
+      'Test Studio Monatsbericht Oktober 2026',
       'sov-prod',
       '1.240',
       '8.680',
