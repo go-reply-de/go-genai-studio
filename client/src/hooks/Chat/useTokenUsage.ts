@@ -1,28 +1,28 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { useAtomValue, useSetAtom } from 'jotai';
 import { useQueryClient } from '@tanstack/react-query';
+import { useStore, useAtomValue, useSetAtom } from 'jotai';
 import { Constants, QueryKeys } from 'librechat-data-provider';
-import type {
-  TMessage,
-  TConversation,
-  TModelTokenomics,
-  TContextUsageEvent,
-  TContextProjectionRequest,
-} from 'librechat-data-provider';
-import type { BranchTotals, BranchUsage } from '~/utils/tokens';
-import type { ContextSnapshot } from '~/store/usage';
+import { deriveTokenUsageView, pendingToBranchUsage } from '@librechat/chat';
+import type { TMessage, TConversation } from 'librechat-data-provider';
+import type { TokenUsageView } from '@librechat/chat';
 import {
   liveTokensFamily,
   totalUsageFamily,
   removeUsageAtoms,
   hydrateSnapshots,
   pendingUsageFamily,
+  activeUsageResponseIdFamily,
+  subagentUsageFamily,
+  pendingSubagentUsageFamily,
   branchTotalsFamily,
+  overheadKey,
+  getModelOverhead,
   contextSnapshotFamily,
   snapshotsByAnchorFamily,
-} from '~/store/usage';
+} from '~/components/Chat/Input/TokenUsage/store';
 import {
   buildIndex,
+  upsertEntries,
   sumBranch,
   clearIndex,
   mergeUsage,
@@ -30,37 +30,14 @@ import {
   findBranchSnapshotAnchor,
 } from '~/utils';
 import { useLatestMessageId } from '~/hooks/Messages/useLatestMessage';
-import { useContextProjectionQuery } from '~/data-provider';
 import useTokenLimits from './useTokenLimits';
+
+export type { TokenUsageView };
 
 export interface TokenUsageParams {
   index: number;
   conversation: TConversation | null;
   isSubmitting: boolean;
-}
-
-export interface TokenUsageView {
-  usedTokens: number;
-  maxTokens?: number;
-  /** 0–100, clamped; 0 when max is unknown */
-  percent: number;
-  /** True when derived from per-message counts instead of a backend snapshot */
-  isEstimate: boolean;
-  snapshot: ContextSnapshot | null;
-  snapshotActive: boolean;
-  branchTotals: BranchTotals;
-  /** Provider usage along the active branch (matches the gauge), incl. in-flight */
-  branchUsage: BranchUsage;
-  /** Provider usage across all branches of the conversation */
-  totalUsage: BranchUsage;
-  /** Whether any usage is available to display (branch has token usage) */
-  hasUsage: boolean;
-  /** Authoritative branch cost; the cost row is gated on `interface.contextCost` at render */
-  branchCost: number;
-  /** Authoritative cost across all branches (shown when it differs from branch) */
-  totalCost: number;
-  liveTokens: number;
-  rates?: TModelTokenomics;
 }
 
 /**
@@ -73,15 +50,30 @@ export default function useTokenUsage({
   isSubmitting,
 }: TokenUsageParams): TokenUsageView {
   const queryClient = useQueryClient();
+  const usageStore = useStore();
   const conversationKey = conversation?.conversationId ?? Constants.NEW_CONVO;
 
   const tailId = useLatestMessageId(index);
   const snapshot = useAtomValue(contextSnapshotFamily(conversationKey));
   const snapshotsByAnchor = useAtomValue(snapshotsByAnchorFamily(conversationKey));
   const pendingUsage = useAtomValue(pendingUsageFamily(conversationKey));
+  const activeResponseId = useAtomValue(activeUsageResponseIdFamily(conversationKey));
+  const turnInProgress = isSubmitting && activeResponseId != null && activeResponseId === tailId;
   const totalUsageBase = useAtomValue(totalUsageFamily(conversationKey));
-  const branchTotals = useAtomValue(branchTotalsFamily(conversationKey));
+  const storedBranchTotals = useAtomValue(branchTotalsFamily(conversationKey));
+  /** A terminal stream writer updates the shared rollup for its own response.
+   * Project a different viewed tail locally, without writing it back and making
+   * two views of the same conversation compete over the shared atom. */
+  const branchTotals = useMemo(
+    () =>
+      storedBranchTotals.tailId === tailId
+        ? storedBranchTotals
+        : sumBranch(conversationKey, tailId, snapshot?.anchorMessageId),
+    [storedBranchTotals, conversationKey, tailId, snapshot?.anchorMessageId],
+  );
   const liveTokens = useAtomValue(liveTokensFamily(conversationKey));
+  const committedSubagentUsage = useAtomValue(subagentUsageFamily(conversationKey));
+  const pendingSubagentUsage = useAtomValue(pendingSubagentUsageFamily(conversationKey));
   const setBranchTotals = useSetAtom(branchTotalsFamily(conversationKey));
   const setTotalUsage = useSetAtom(totalUsageFamily(conversationKey));
   const limits = useTokenLimits(conversation);
@@ -101,233 +93,154 @@ export default function useTokenUsage({
     return anchor != null ? (snapshotsByAnchor.get(anchor) ?? null) : null;
   }, [conversationKey, branchTotals.tailId, snapshotsByAnchor]);
 
-  const resolvedMax = limits.maxContextTokens;
-
-  /** Project the branch (agents SDK, no model call) ONLY when no persisted/live
-   *  snapshot covers it — snapshot-less branches (G2: pre-feature history,
-   *  imports, never-generated branches). A present snapshot stays authoritative;
-   *  reliable window-switch (G1) detection needs the snapshot to carry its
-   *  model/window (deferred to the fidelity follow-up), and the SDK window
-   *  (reserve-derived) doesn't equal the client-resolved raw window, so we must
-   *  NOT mis-flag a valid snapshot as stale here. Cached + refetched by branch/
-   *  endpoint/model/window/revision. */
-  const projectionParams: TContextProjectionRequest | null =
-    !isSubmitting &&
-    branchSnapshot == null &&
-    conversation?.conversationId != null &&
-    conversation.conversationId !== Constants.NEW_CONVO &&
-    branchTotals.tailId != null &&
-    conversation.endpoint != null
-      ? {
-          conversationId: conversation.conversationId,
-          messageId: branchTotals.tailId,
-          /** Resolved provider/model (e.g. an agent's actual provider, not the
-           *  `agents` endpoint) so the server picks the right tokenizer. */
-          endpoint: limits.endpoint || conversation.endpoint,
-          model: limits.model || conversation.model || undefined,
-          agentId: conversation.agent_id ?? undefined,
-          spec: conversation.spec ?? undefined,
-          maxContextTokens: resolvedMax,
-          /** Content revision so an in-place message edit (same tail id) refetches. */
-          revision: branchTotals.input + branchTotals.output,
-        }
-      : null;
-  const { data: projectionData } = useContextProjectionQuery(projectionParams);
-  const projection = projectionData ?? null;
-
   /** Branch/total provider usage is index-derived; the in-flight response is
-   *  the only live add (the pending holder), counted into both — it sits on the
+   *  the only live add (the pending holder), counted into both, it sits on the
    *  active branch tail and inside the conversation. The backend prices each
    *  call (premium tiers, cache rates), so cost sums authoritatively. */
-  const pendingAsUsage: BranchUsage = useMemo(
-    () => ({
-      input: pendingUsage.input,
-      output: pendingUsage.output,
-      cacheWrite: pendingUsage.cacheWrite,
-      cacheRead: pendingUsage.cacheRead,
-      cost: pendingUsage.costUSD,
-      costKnown: pendingUsage.costKnown,
-    }),
-    [pendingUsage],
-  );
+  const pendingAsUsage = useMemo(() => pendingToBranchUsage(pendingUsage), [pendingUsage]);
   const branchUsage = useMemo(
-    () => mergeUsage(branchTotals.usage, pendingAsUsage),
-    [branchTotals.usage, pendingAsUsage],
+    () => (turnInProgress ? mergeUsage(branchTotals.usage, pendingAsUsage) : branchTotals.usage),
+    [branchTotals.usage, pendingAsUsage, turnInProgress],
   );
   const totalUsage = useMemo(
     () => mergeUsage(totalUsageBase, pendingAsUsage),
     [totalUsageBase, pendingAsUsage],
   );
+  /** The subagent figure mirrors that split: what earlier runs committed plus
+   *  the in-flight run's share, which settles or is discarded with the pending
+   *  usage it sits inside. */
+  const subagentUsage = useMemo(
+    () => mergeUsage(committedSubagentUsage, pendingSubagentUsage),
+    [committedSubagentUsage, pendingSubagentUsage],
+  );
+  /** Do not show the previous response as the current turn during a submission.
+   * Pending contains only provider-confirmed completed calls, not text estimates. */
+  let lastTurnUsage = branchTotals.lastTurnUsage;
+  if (turnInProgress) {
+    lastTurnUsage = pendingUsage.eventCount > 0 ? pendingAsUsage : undefined;
+  }
   const hasUsage =
     branchUsage.input + branchUsage.output + branchUsage.cacheRead + branchUsage.cacheWrite > 0;
 
-  const isSubmittingRef = useRef(isSubmitting);
-  isSubmittingRef.current = isSubmitting;
-  const tailIdRef = useRef(tailId);
-  tailIdRef.current = tailId;
-  const anchorId = snapshot?.anchorMessageId ?? null;
-  const anchorIdRef = useRef(anchorId);
-  anchorIdRef.current = anchorId;
+  const indexedCache = useRef<{ conversationKey: string; messages: TMessage[] | undefined }>();
 
+  /** The messages cache is authoritative once a run settles. Stream deltas do
+   * not rebuild the index, but idle transitions MUST catch up even when the
+   * recovered message has the same id (404/retry-ceiling recovery has no FINAL).
+   * All refresh triggers use this one projection, not separate writer paths. */
   useEffect(() => {
-    /** Cache `updated` events fire on every state transition — rebuild the
-     *  O(n) index only when the data snapshot reference actually changed */
-    let lastIndexed: TMessage[] | undefined;
-    const rebuild = (messages?: TMessage[]) => {
-      if (messages === lastIndexed && messages !== undefined) {
-        return;
+    const queryKey = [QueryKeys.messages, conversationKey];
+    const reconcile = () => {
+      const messages = queryClient.getQueryData<TMessage[]>(queryKey);
+      if (
+        indexedCache.current?.conversationKey !== conversationKey ||
+        messages !== indexedCache.current.messages
+      ) {
+        /** Regeneration temporarily removes the old response and descendants
+         * from the cache. A streaming projection is not a history deletion. */
+        if (isSubmitting || usageStore.get(activeUsageResponseIdFamily(conversationKey)) != null) {
+          upsertEntries(conversationKey, messages ?? []);
+        } else {
+          buildIndex(conversationKey, messages);
+        }
+        hydrateSnapshots(conversationKey, messages);
+        indexedCache.current = { conversationKey, messages };
       }
-      lastIndexed = messages;
-      buildIndex(conversationKey, messages);
-      /** Restore each branch's persisted breakdown (Part A) without clobbering
-       *  a live finalized snapshot for the same response id. */
-      hydrateSnapshots(conversationKey, messages);
-      setBranchTotals(sumBranch(conversationKey, tailIdRef.current, anchorIdRef.current));
+      setBranchTotals(sumBranch(conversationKey, tailId, snapshot?.anchorMessageId));
       setTotalUsage(sumTotalUsage(conversationKey));
     };
-
-    rebuild(queryClient.getQueryData<TMessage[]>([QueryKeys.messages, conversationKey]));
-
+    reconcile();
     const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
-      if (isSubmittingRef.current || event.type !== 'updated') {
-        return;
-      }
-      const queryKey = event.query.queryKey;
+      /** ask() binds before changing the cache. Read that atom synchronously:
+       * this callback can run before React renders isSubmitting=true. */
       if (
-        !Array.isArray(queryKey) ||
-        queryKey[0] !== QueryKeys.messages ||
-        queryKey[1] !== conversationKey
+        isSubmitting ||
+        usageStore.get(activeUsageResponseIdFamily(conversationKey)) != null ||
+        event.type !== 'updated'
       ) {
         return;
       }
-      rebuild(event.query.state.data as TMessage[] | undefined);
+      const key = event.query.queryKey;
+      if (key[0] !== QueryKeys.messages || key[1] !== conversationKey) {
+        return;
+      }
+      const messages = event.query.state.data as TMessage[] | undefined;
+      if (messages !== indexedCache.current?.messages) {
+        reconcile();
+      }
     });
-    return () => {
-      unsubscribe();
-      /** Bound memory to open conversations — drop this one's token index and
-       *  usage atoms on switch/unmount; both rebuild from the query cache on
-       *  return. NEW_CONVO is migrated to its real id by finalizeUsage, so
-       *  leave it alone to avoid racing that handoff. */
+    return unsubscribe;
+  }, [
+    conversationKey,
+    tailId,
+    snapshot?.anchorMessageId,
+    isSubmitting,
+    queryClient,
+    usageStore,
+    setBranchTotals,
+    setTotalUsage,
+  ]);
+
+  /** Lifetime cleanup is independent of projection refreshes. A branch change
+   * or stream completion must not discard sticky usage or replay dedup keys. */
+  useEffect(
+    () => () => {
+      if (indexedCache.current?.conversationKey === conversationKey) {
+        indexedCache.current = undefined;
+      }
+      /** The unsaved conversation is migrated by finalizeUsage. Route changes
+       * can unmount this view before that handoff, so leave its state intact. */
       if (conversationKey !== Constants.NEW_CONVO) {
         clearIndex(conversationKey);
         removeUsageAtoms(conversationKey);
       }
-    };
-  }, [conversationKey, queryClient, setBranchTotals, setTotalUsage]);
+    },
+    [conversationKey],
+  );
 
-  useEffect(() => {
-    /** Re-index from the cache on every tail change (created/finalize during a
-     *  stream AND branch switches). Branch switches don't fire a cache `updated`
-     *  event, so the subscriber below can't catch them; without rebuilding here
-     *  the index stays on whatever the last stream left it — which may have
-     *  dropped the now-viewed branch's response, so sumBranch would find no
-     *  tokens/usage and the gauge + branch cost would blank out. Bounded: tailId
-     *  only shifts on created/finalize/branch-switch, never per chunk. Usage for
-     *  responses whose cache message lacks `metadata.usage` is restored from the
-     *  sticky history inside buildIndex. */
-    buildIndex(
-      conversationKey,
-      queryClient.getQueryData<TMessage[]>([QueryKeys.messages, conversationKey]),
-    );
-    setBranchTotals(sumBranch(conversationKey, tailId, anchorId));
-    setTotalUsage(sumTotalUsage(conversationKey));
-  }, [conversationKey, tailId, anchorId, setBranchTotals, setTotalUsage, queryClient]);
-
-  return useMemo(() => {
-    /** The granular snapshot is for one specific generation. Show the live one
-     *  while streaming, or when its (response-message) anchor is on the viewed
-     *  branch. A null-anchor snapshot must NOT match every branch — that leaked
-     *  one branch's breakdown onto its siblings. */
-    const currentActive =
-      snapshot != null &&
-      (isSubmitting || (snapshot.anchorMessageId != null && branchTotals.containsAnchor));
-
-    /** Precedence: live/active snapshot → persisted branch snapshot → server
-     *  projection (snapshot-less branches, G2) → per-message estimate. The first
-     *  two preserve the pre-projection behavior exactly; the projection only
-     *  slots in ahead of the estimate when no snapshot exists. Snapshot and
-     *  projection share the render-relevant fields, so they render uniformly. */
-    let effective: ContextSnapshot | TContextUsageEvent | null = null;
-    /** A server projection is the SDK's windowing but, in this first cut, omits
-     *  instruction/tool overhead — so it's surfaced as an ESTIMATE (a better one
-     *  than sumBranch), never a false-authoritative number. Real snapshots stay
-     *  authoritative. */
-    let projected = false;
-    if (currentActive) {
-      effective = snapshot;
-    } else if (branchSnapshot != null) {
-      effective = branchSnapshot;
-    } else if (projection != null) {
-      effective = projection;
-      projected = true;
-    }
-
-    if (effective != null) {
-      const breakdown = effective.breakdown;
-      const maxTokens = effective.contextBudget ?? breakdown.maxContextTokens;
-      const instructionTokens = effective.effectiveInstructionTokens ?? breakdown.instructionTokens;
-      const baseUsed =
-        effective.remainingContextTokens != null
-          ? maxTokens - effective.remainingContextTokens
-          : instructionTokens + breakdown.messageTokens;
-      /** The snapshot/projection is pre-invoke: in-flight output rides on
-       *  `liveTokens` (0 unless streaming this branch), the last call's finalized
-       *  output on `completedOutputTokens` (absent on a projection → 0). */
-      const usedTokens =
-        Math.max(0, baseUsed) + liveTokens + (effective.completedOutputTokens ?? 0);
-      return {
-        usedTokens,
-        maxTokens,
-        percent: maxTokens > 0 ? Math.min((usedTokens / maxTokens) * 100, 100) : 0,
-        isEstimate: projected,
-        snapshot: projected ? null : (effective as ContextSnapshot),
-        snapshotActive: !projected,
+  return useMemo(
+    () =>
+      deriveTokenUsageView({
+        snapshot,
+        isSubmitting,
+        turnInProgress,
+        activeResponseId,
         branchTotals,
         branchUsage,
         totalUsage,
+        lastTurnUsage,
         hasUsage,
-        branchCost: branchUsage.cost,
-        totalCost: totalUsage.cost,
         liveTokens,
-        rates: limits.rates,
-      };
-    }
-
-    /** `summaryBaseline` is the compacted-context size from the deepest
-     *  summarized response on the branch (0 if none). The branch walk stops
-     *  there, so input/output are post-summary only — adding the baseline keeps
-     *  the estimate from re-summing the discarded pre-summary history (which
-     *  otherwise pins the gauge at 100% forever after a compaction). */
-    const usedTokens =
-      branchTotals.input + branchTotals.output + branchTotals.summaryBaseline + liveTokens;
-    const maxTokens = limits.maxContextTokens;
-    return {
-      usedTokens,
-      maxTokens,
-      percent:
-        maxTokens != null && maxTokens > 0 ? Math.min((usedTokens / maxTokens) * 100, 100) : 0,
-      isEstimate: true,
-      snapshot: null,
-      snapshotActive: false,
+        limits,
+        branchSnapshot,
+        snapshotsByAnchor,
+        subagentUsage,
+        conversationKey,
+        modelOverhead: getModelOverhead(
+          overheadKey(
+            limits.endpoint ?? conversation?.endpoint,
+            limits.model ?? conversation?.model,
+            conversation?.agent_id,
+          ),
+        ),
+      }),
+    [
+      snapshot,
+      isSubmitting,
+      turnInProgress,
+      activeResponseId,
       branchTotals,
       branchUsage,
       totalUsage,
+      lastTurnUsage,
       hasUsage,
-      branchCost: branchUsage.cost,
-      totalCost: totalUsage.cost,
       liveTokens,
-      rates: limits.rates,
-    };
-  }, [
-    snapshot,
-    isSubmitting,
-    branchTotals,
-    branchUsage,
-    totalUsage,
-    hasUsage,
-    liveTokens,
-    limits,
-    branchSnapshot,
-    projection,
-  ]);
+      limits,
+      branchSnapshot,
+      snapshotsByAnchor,
+      subagentUsage,
+      conversationKey,
+      conversation,
+    ],
+  );
 }

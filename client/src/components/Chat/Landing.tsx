@@ -1,29 +1,32 @@
 import { useMemo, useCallback, useState, useEffect, useRef } from 'react';
+import { HatGlasses } from 'lucide-react';
 import { easings } from '@react-spring/web';
 import { EModelEndpoint } from 'librechat-data-provider';
-import { BirthdayIcon, TooltipAnchor, SplitText } from '@librechat/client';
-import {
-  getIconEndpoint,
-  getEntity,
-  getModelSpec,
-  createConfigHtmlSanitizer,
-  CONFIG_HTML_MEDIA_TAGS,
-  CONFIG_HTML_MEDIA_ATTR,
-} from '~/utils';
+import { BirthdayIcon, TooltipAnchor, SplitText, useRemScale } from '@librechat/client';
 import { useChatContext, useAgentsMapContext, useAssistantsMapContext } from '~/Providers';
+import Description, { isHtmlDescription } from '~/components/ui/Description';
 import { useGetEndpointsQuery, useGetStartupConfig } from '~/data-provider';
+import { getIconEndpoint, getEntity, getModelSpec } from '~/utils';
+import { useLocalize, useAuthContext, useGreeting } from '~/hooks';
+import { useChatSettings } from '~/Providers/ChatSettingsContext';
+import AgentContact from '~/components/Agents/AgentContact';
 import ConvoIcon from '~/components/Endpoints/ConvoIcon';
-import { useLocalize, useAuthContext } from '~/hooks';
+import { announceGreetingSettled } from './welcome';
 
 const containerClassName =
-  'shadow-stroke relative flex h-full items-center justify-center rounded-full bg-white dark:bg-presentation dark:text-white text-black dark:after:shadow-none ';
+  'relative flex h-full items-center justify-center rounded-full bg-presentation text-text-primary';
+
+/** Stable references: fresh literals re-initialized SplitText's springs and
+ * re-rendered every grapheme span on each Landing render. */
+const greetingAnimationFrom = { opacity: 0, transform: 'translate3d(0,50px,0)' };
+const greetingAnimationTo = { opacity: 1, transform: 'translate3d(0,0,0)' };
 
 function getTextSizeClass(text: string | undefined | null) {
   if (!text) {
     return 'text-xl sm:text-2xl';
   }
 
-  if (text.length < 40) {
+  if (text.length < 56) {
     return 'text-2xl sm:text-4xl';
   }
 
@@ -31,7 +34,7 @@ function getTextSizeClass(text: string | undefined | null) {
     return 'text-xl sm:text-2xl';
   }
 
-  return 'text-lg sm:text-md';
+  return 'text-lg sm:text-base';
 }
 
 export default function Landing({ centerFormOnLanding }: { centerFormOnLanding: boolean }) {
@@ -42,6 +45,8 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding: 
   const { data: endpointsConfig } = useGetEndpointsQuery();
   const { user } = useAuthContext();
   const localize = useLocalize();
+  const remScale = useRemScale();
+  const { isTemporary } = useChatSettings();
 
   const [textHasMultipleLines, setTextHasMultipleLines] = useState(false);
   const [lineCount, setLineCount] = useState(1);
@@ -60,7 +65,7 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding: 
     });
   }, [conversation?.endpoint, conversation?.iconURL, endpointsConfig]);
 
-  const { entity, isAgent, isAssistant } = getEntity({
+  const { entity, isAgent } = getEntity({
     endpoint: endpointType,
     agentsMap,
     assistantMap,
@@ -75,56 +80,46 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding: 
 
   const brandedSpecLabel = modelSpec?.showOnLanding ? modelSpec.label : '';
   const brandedSpecDescription = (modelSpec?.showOnLanding && modelSpec.description) || '';
-  const name = entity?.name ?? brandedSpecLabel;
-  const description =
-    (entity?.description || brandedSpecDescription || conversation?.greeting) ?? '';
-  const descriptionIsHTML = description.trim().startsWith('<');
+  const name =
+    isTemporary || startupConfig?.interface?.landingHeading === 'greeting'
+      ? ''
+      : (entity?.name ?? brandedSpecLabel);
+  const description = isTemporary
+    ? localize('com_ui_temporary_description')
+    : ((entity?.description || brandedSpecDescription || conversation?.greeting) ?? '');
+  const descriptionIsHTML = isHtmlDescription(description);
+  const selectedAgent =
+    isAgent && conversation?.agent_id != null ? agentsMap?.[conversation.agent_id] : undefined;
 
-  const sanitizeDescription = useMemo(
-    () =>
-      createConfigHtmlSanitizer({
-        allowedTags: CONFIG_HTML_MEDIA_TAGS,
-        allowedAttr: CONFIG_HTML_MEDIA_ATTR,
-      }),
-    [],
-  );
+  const customWelcome =
+    typeof startupConfig?.interface?.customWelcome === 'string'
+      ? startupConfig.interface.customWelcome
+      : undefined;
 
-  const getGreeting = useCallback(() => {
-    if (typeof startupConfig?.interface?.customWelcome === 'string') {
-      const customWelcome = startupConfig.interface.customWelcome;
-      // Replace {{user.name}} with actual user name if available
-      if (user?.name && customWelcome.includes('{{user.name}}')) {
-        return customWelcome.replace(/{{user.name}}/g, user.name);
-      }
-      return customWelcome;
-    }
+  const scheduledGreeting = useGreeting(user?.name);
 
-    const now = new Date();
-    const hours = now.getHours();
-
-    const dayOfWeek = now.getDay();
-    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-
-    // Early morning (midnight to 4:59 AM)
-    if (hours >= 0 && hours < 5) {
-      return localize('com_ui_late_night');
+  /** The greeting animates a grapheme at a time; when the last one settles the
+   * screen comes alive from that character (the composer takes focus, and a
+   * welcome backdrop can answer) instead of the title simply stopping. Once per
+   * visit: the title remounts when its text changes, such as an agent's name
+   * arriving after the time-based greeting has settled, and the screen has
+   * already come alive by then. */
+  const settledAnnounced = useRef(false);
+  const handleTitleSettled = useCallback(() => {
+    if (settledAnnounced.current) {
+      return;
     }
-    // Morning (6 AM to 11:59 AM)
-    else if (hours < 12) {
-      if (isWeekend) {
-        return localize('com_ui_weekend_morning');
-      }
-      return localize('com_ui_good_morning');
+    const graphemes = contentRef.current?.querySelectorAll<HTMLElement>(
+      '.split-parent .will-change-transform',
+    );
+    const lastGrapheme = graphemes?.[graphemes.length - 1];
+    if (!lastGrapheme) {
+      return;
     }
-    // Afternoon (12 PM to 4:59 PM)
-    else if (hours < 17) {
-      return localize('com_ui_good_afternoon');
-    }
-    // Evening (5 PM to 8:59 PM)
-    else {
-      return localize('com_ui_good_evening');
-    }
-  }, [localize, startupConfig?.interface?.customWelcome, user?.name]);
+    settledAnnounced.current = true;
+    const { left, top, width, height } = lastGrapheme.getBoundingClientRect();
+    announceGreetingSettled(left + width / 2, top + height / 2);
+  }, []);
 
   const handleLineCountChange = useCallback((count: number) => {
     setTextHasMultipleLines(count > 1);
@@ -135,7 +130,7 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding: 
     if (contentRef.current) {
       setContentHeight(contentRef.current.offsetHeight);
     }
-  }, [lineCount, description]);
+  }, [lineCount, description, selectedAgent, remScale]);
 
   const getDynamicMargin = useMemo(() => {
     let margin = 'mb-0';
@@ -157,10 +152,14 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding: 
     return margin;
   }, [lineCount, description, textHasMultipleLines, contentHeight]);
 
-  const greetingText =
-    typeof startupConfig?.interface?.customWelcome === 'string'
-      ? getGreeting()
-      : getGreeting() + (user?.name ? ', ' + user.name : '');
+  const resolvedWelcome =
+    customWelcome != null && user?.name
+      ? customWelcome.replace(/{{user.name}}/g, user.name)
+      : customWelcome;
+
+  const greetingText = isTemporary
+    ? localize('com_ui_temporary')
+    : (resolvedWelcome ?? scheduledGreeting);
 
   return (
     <div
@@ -171,19 +170,27 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding: 
           className={`flex ${textHasMultipleLines ? 'flex-col' : 'flex-col md:flex-row'} items-center justify-center gap-2`}
         >
           <div className={`relative size-10 justify-center ${textHasMultipleLines ? 'mb-2' : ''}`}>
-            <ConvoIcon
-              agentsMap={agentsMap}
-              assistantMap={assistantMap}
-              conversation={conversation}
-              endpointsConfig={endpointsConfig}
-              containerClassName={containerClassName}
-              context="landing"
-              className="h-2/3 w-2/3 text-black dark:text-white"
-              size={41}
-            />
+            <div className="avatar-stroke size-full rounded-full dark:after:shadow-none">
+              {isTemporary ? (
+                <div className={containerClassName}>
+                  <HatGlasses className="text-text-primary h-2/3 w-2/3" aria-hidden="true" />
+                </div>
+              ) : (
+                <ConvoIcon
+                  agentsMap={agentsMap}
+                  assistantMap={assistantMap}
+                  conversation={conversation}
+                  endpointsConfig={endpointsConfig}
+                  containerClassName={containerClassName}
+                  context="landing"
+                  className="text-text-primary h-2/3 w-2/3"
+                  size={41}
+                />
+              )}
+            </div>
             {startupConfig?.showBirthdayIcon && (
               <TooltipAnchor
-                className="absolute bottom-[27px] right-2"
+                className="absolute inset-e-2 bottom-[1.6875rem]"
                 description={localize('com_ui_happy_birthday')}
                 aria-label={localize('com_ui_happy_birthday')}
               >
@@ -191,49 +198,55 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding: 
               </TooltipAnchor>
             )}
           </div>
-          {((isAgent || isAssistant) && name) || name ? (
+          {name ? (
             <div className="flex flex-col items-center gap-0 p-2">
               <SplitText
                 key={`split-text-${name}`}
                 text={name}
-                className={`${getTextSizeClass(name)} font-medium text-text-primary`}
+                className={`${getTextSizeClass(name)} text-text-primary font-medium`}
                 delay={50}
                 textAlign="center"
-                animationFrom={{ opacity: 0, transform: 'translate3d(0,50px,0)' }}
-                animationTo={{ opacity: 1, transform: 'translate3d(0,0,0)' }}
+                animationFrom={greetingAnimationFrom}
+                animationTo={greetingAnimationTo}
                 easing={easings.easeOutCubic}
                 threshold={0}
                 rootMargin="0px"
                 onLineCountChange={handleLineCountChange}
+                onLetterAnimationComplete={handleTitleSettled}
               />
             </div>
           ) : (
             <SplitText
               key={`split-text-${greetingText}${user?.name ? '-user' : ''}`}
               text={greetingText}
-              className={`${getTextSizeClass(greetingText)} font-medium text-text-primary`}
+              className={`${getTextSizeClass(greetingText)} text-text-primary font-medium`}
               delay={50}
               textAlign="center"
-              animationFrom={{ opacity: 0, transform: 'translate3d(0,50px,0)' }}
-              animationTo={{ opacity: 1, transform: 'translate3d(0,0,0)' }}
+              animationFrom={greetingAnimationFrom}
+              animationTo={greetingAnimationTo}
               easing={easings.easeOutCubic}
               threshold={0}
               rootMargin="0px"
               onLineCountChange={handleLineCountChange}
+              onLetterAnimationComplete={handleTitleSettled}
             />
           )}
         </div>
-        {description &&
-          (descriptionIsHTML ? (
-            <div
-              className="animate-fadeIn mt-4 flex max-w-md items-center justify-center gap-2 text-center text-sm font-normal text-text-primary [&_img]:inline-block [&_img]:h-4 [&_img]:w-4"
-              dangerouslySetInnerHTML={{ __html: sanitizeDescription(description) }}
-            />
-          ) : (
-            <div className="animate-fadeIn mt-4 max-w-md text-center text-sm font-normal text-text-primary">
-              {description}
-            </div>
-          ))}
+        <Description
+          allowMedia
+          description={description}
+          className={
+            descriptionIsHTML
+              ? 'animate-fadeIn text-text-primary mt-4 flex max-w-md items-center justify-center gap-2 text-center text-sm font-normal [&_img]:inline-block [&_img]:h-4 [&_img]:w-4'
+              : `animate-fadeIn mt-4 max-w-md text-center text-sm font-normal ${isTemporary ? 'text-text-secondary' : 'text-text-primary'}`
+          }
+        />
+        {selectedAgent && !isTemporary && (
+          <AgentContact
+            agent={selectedAgent}
+            className="animate-fadeIn mt-2 max-w-md justify-center text-center text-sm"
+          />
+        )}
       </div>
     </div>
   );

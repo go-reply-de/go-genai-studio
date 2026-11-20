@@ -4,7 +4,7 @@ services:
     #   context: .
     #   dockerfile: Dockerfile.multi
     #   target: api-build
-    image: registry.librechat.ai/danny-avila/librechat-dev-api:latest
+    image: registry.librechat.ai/librechat-ai/librechat-dev-api:latest
     container_name: LibreChat-API
     ports:
       - 3080:3080
@@ -21,6 +21,7 @@ services:
       - NODE_ENV=production
       - MONGO_URI=mongodb://mongodb:27017/LibreChat
       - MEILI_HOST=http://meilisearch:7700
+      - LIBRECHAT_TEMP_CREDENTIALS_PATH=/app/data/.env.temp
       - RAG_PORT=${RAG_PORT:-8000}
       - RAG_API_URL=http://rag_api:${RAG_PORT:-8000}
       - PROXY=${PROXY:-}
@@ -39,9 +40,10 @@ services:
       - ./uploads:/app/uploads
       - ./logs:/app/api/logs
       - ./skill:/app/skill
+      - librechat-data:/app/data
 
   admin-panel:
-    image: registry.librechat.ai/clickhouse/librechat-admin-panel:latest
+    image: registry.librechat.ai/librechat-ai/librechat-admin-panel:latest
     container_name: admin-panel
     depends_on:
       - api
@@ -56,7 +58,7 @@ services:
       - SESSION_COOKIE_SECURE=${ADMIN_PANEL_SESSION_COOKIE_SECURE:-false}
 
   client:
-    image: nginx:1.27.0-alpine
+    image: docker.io/library/nginx:1.27.0-alpine
     container_name: LibreChat-NGINX
     ports:
       - 80:80
@@ -71,14 +73,14 @@ services:
     container_name: chat-mongodb
     # ports:  # Uncomment this to access mongodb from outside docker, not safe in deployment
     #   - 27018:27017
-    image: mongo:8.0.20
+    image: docker.io/library/mongo:8.0.20
     restart: always
     volumes:
       - ./data-node:/data/db
     command: mongod --noauth
   meilisearch:
     container_name: chat-meilisearch
-    image: getmeili/meilisearch:v1.35.1
+    image: docker.io/getmeili/meilisearch:v1.35.1
     restart: always
     # ports: # Uncomment this to access meilisearch from outside docker
     #   - 7700:7700 # if exposing these ports, make sure your master key is not the default value
@@ -90,7 +92,7 @@ services:
     volumes:
       - ./meili_data_v1.35.1:/meili_data
   vectordb:
-    image: pgvector/pgvector:0.8.0-pg15-trixie
+    image: docker.io/pgvector/pgvector:0.8.0-pg15-trixie
     environment:
       POSTGRES_DB: mydatabase
       POSTGRES_USER: myuser
@@ -99,7 +101,7 @@ services:
     volumes:
       - pgdata2:/var/lib/postgresql/data
   rag_api:
-    image: registry.librechat.ai/danny-avila/librechat-rag-api-dev-lite:latest
+    image: registry.librechat.ai/librechat-ai/librechat-rag-api-dev-lite:latest
     environment:
       - DB_HOST=vectordb
       - RAG_PORT=${RAG_PORT:-8000}
@@ -111,3 +113,4 @@ services:
 
 volumes:
   pgdata2:
+  librechat-data:

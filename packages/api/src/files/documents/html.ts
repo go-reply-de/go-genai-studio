@@ -1007,27 +1007,6 @@ function renderPptxSlidesHtml(slides: PptxSlide[]): string {
   return wrapAsDocument(renderPptxSlidesBody(slides), PPTX_SLIDE_LIST_CSS);
 }
 
-/**
- * Convert a `.pptx` buffer to a slide-list HTML document — text-only
- * preview rendering each slide as a card (slide number, title, body
- * bullets). Honest about NOT preserving complex visual layouts,
- * charts, theming, or embedded media. Used as the safe fallback path
- * when the CDN renderer is disabled, the binary exceeds the embed
- * size cap, or the high-fidelity path can't be reached.
- *
- * Pre-flights through `assertSafeZipSize` so a zip-bomb PPTX can't blow
- * up the slide-XML extraction pass.
- */
-export async function pptxToSlideListHtml(buffer: Buffer): Promise<string> {
-  await assertSafeZipSize(buffer, { name: 'pptx' });
-  const rawSlides = await extractPptxSlideXml(buffer);
-  const slides: PptxSlide[] = rawSlides.map(({ number, xml }) => {
-    const { title, body } = extractSlideText(xml);
-    return { number, title, body };
-  });
-  return renderPptxSlidesHtml(slides);
-}
-
 /* =============================================================================
  * PPTX CDN renderer (high-fidelity path)
  *
@@ -1460,8 +1439,7 @@ export async function pptxToHtml(buffer: Buffer): Promise<string> {
 /**
  * Slide-list path that skips its own `assertSafeZipSize` call — used
  * by `pptxToHtml` after the dispatcher has already validated the
- * buffer. `pptxToSlideListHtml` (public, validating) stays the entry
- * point for tests and direct callers.
+ * buffer.
  */
 async function pptxToSlideListHtmlInternal(buffer: Buffer): Promise<string> {
   const rawSlides = await extractPptxSlideXml(buffer);
@@ -1501,6 +1479,7 @@ export const _internal: {
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+const POTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.template';
 const ODS_MIME = 'application/vnd.oasis.opendocument.spreadsheet';
 const CSV_MIME_PATTERN = /^(text\/csv|application\/csv|text\/comma-separated-values)$/i;
 
@@ -1541,7 +1520,7 @@ function baseMime(mime: string): string {
  * `text/csv`), which then routed to the SPREADSHEET bucket on the
  * client expecting full HTML and got raw text instead.
  */
-export type OfficeHtmlBucket = 'docx' | 'spreadsheet' | 'csv' | 'pptx';
+export type OfficeHtmlBucket = 'docx' | 'spreadsheet' | 'csv' | 'presentation';
 
 const OFFICE_EXTENSIONS: Record<string, OfficeHtmlBucket> = {
   docx: 'docx',
@@ -1549,7 +1528,8 @@ const OFFICE_EXTENSIONS: Record<string, OfficeHtmlBucket> = {
   xlsx: 'spreadsheet',
   xls: 'spreadsheet',
   ods: 'spreadsheet',
-  pptx: 'pptx',
+  pptx: 'presentation',
+  potx: 'presentation',
 };
 
 /**
@@ -1608,8 +1588,8 @@ export function officeHtmlBucket(name: string, mimeType: string): OfficeHtmlBuck
   if (excelMimeTypes.test(normalized) || normalized === ODS_MIME) {
     return 'spreadsheet';
   }
-  if (normalized === PPTX_MIME) {
-    return 'pptx';
+  if (normalized === PPTX_MIME || normalized === POTX_MIME) {
+    return 'presentation';
   }
   return null;
 }
@@ -1632,7 +1612,7 @@ export async function bufferToOfficeHtml(
       return csvToHtml(buffer);
     case 'spreadsheet':
       return excelSheetToHtml(buffer);
-    case 'pptx':
+    case 'presentation':
       return pptxToHtml(buffer);
     default:
       return null;

@@ -9,9 +9,47 @@ import {
 import type { TModelsConfig, TEndpoint } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
 import type { ServerRequest, GetUserKeyValuesFunction, UserKeyValues } from '~/types';
+import type { ServedCustomEndpoint } from '~/endpoints/custom/config';
 import type { FetchModelsParams } from '~/endpoints/models';
+import type { GetAppConfigOptions } from '~/app/service';
+import { isServedCustomEndpoint, resolveServedCustomEndpoints } from '~/endpoints/custom/config';
 import { fetchModels as defaultFetchModels } from '~/endpoints/models';
 import { getTokenConfigKey } from '~/endpoints/custom/initialize';
+import { getAppConfigOptionsFromUser } from '~/app/service';
+
+/**
+ * Built-in endpoints whose configured `models` list replaces their `*_MODELS`
+ * environment list. Read per request, so principal overrides can narrow them.
+ */
+type ConfiguredModelListEndpoint =
+  | EModelEndpoint.openAI
+  | EModelEndpoint.google
+  | EModelEndpoint.anthropic
+  | EModelEndpoint.bedrock;
+
+const CONFIGURED_MODEL_LIST_ENDPOINTS: readonly ConfiguredModelListEndpoint[] = [
+  EModelEndpoint.openAI,
+  EModelEndpoint.google,
+  EModelEndpoint.anthropic,
+  EModelEndpoint.bedrock,
+];
+
+/**
+ * The model list configured for a built-in endpoint in the resolved config, or
+ * `undefined` when none is set. A configured list replaces the environment list
+ * and makes provider discovery unnecessary.
+ */
+export function configuredModelList(
+  appConfig: AppConfig | null | undefined,
+  endpoint: ConfiguredModelListEndpoint,
+): string[] | undefined {
+  const models = appConfig?.endpoints?.[endpoint]?.models;
+  if (!Array.isArray(models)) {
+    return undefined;
+  }
+  return models.filter((model): model is string => typeof model === 'string');
+}
+import { resolveConfigSecret } from '~/admin/secrets';
 import { validateEndpointURL } from '~/auth';
 import { tokenConfigCache } from '~/cache';
 import { isUserProvided } from '~/utils';
@@ -35,7 +73,7 @@ function headersFingerprint(headers: Record<string, string> | undefined): string
 
 interface ResolvedEndpoint {
   name: string;
-  endpoint: TEndpoint;
+  endpoint: ServedCustomEndpoint;
   apiKey: string;
   baseURL: string;
   apiKeyIsUserProvided: boolean;
@@ -43,11 +81,7 @@ interface ResolvedEndpoint {
 }
 
 export interface LoadConfigModelsDeps {
-  getAppConfig: (params: {
-    role?: string;
-    userId?: string;
-    tenantId?: string;
-  }) => Promise<AppConfig>;
+  getAppConfig: (params: GetAppConfigOptions) => Promise<AppConfig>;
   getUserKeyValues: GetUserKeyValuesFunction;
   fetchModels?: (params: FetchModelsParams) => Promise<string[]>;
 }
@@ -55,14 +89,11 @@ export interface LoadConfigModelsDeps {
 export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
   const { getAppConfig, getUserKeyValues, fetchModels = defaultFetchModels } = deps;
 
-  return async function loadConfigModels(req: ServerRequest): Promise<TModelsConfig> {
-    const appConfig =
-      req.config ??
-      (await getAppConfig({
-        role: req.user?.role,
-        userId: req.user?.id,
-        tenantId: req.user?.tenantId,
-      }));
+  return async function loadConfigModels(
+    req: ServerRequest,
+    requestedEndpoint?: string,
+  ): Promise<TModelsConfig> {
+    const appConfig = req.config ?? (await getAppConfig(getAppConfigOptionsFromUser(req.user)));
     if (!appConfig) {
       return {};
     }
@@ -71,38 +102,51 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
     const azureConfig = appConfig.endpoints?.[EModelEndpoint.azureOpenAI];
     const { modelNames } = azureConfig ?? {};
 
-    if (modelNames && azureConfig) {
+    if (
+      modelNames &&
+      azureConfig &&
+      (requestedEndpoint == null || requestedEndpoint === EModelEndpoint.azureOpenAI)
+    ) {
       modelsConfig[EModelEndpoint.azureOpenAI] = modelNames;
     }
 
-    if (azureConfig?.assistants && azureConfig.assistantModels) {
+    if (
+      azureConfig?.assistants &&
+      azureConfig.assistantModels &&
+      (requestedEndpoint == null || requestedEndpoint === EModelEndpoint.azureAssistants)
+    ) {
       modelsConfig[EModelEndpoint.azureAssistants] = azureConfig.assistantModels;
     }
 
-    const bedrockConfig = appConfig.endpoints?.[EModelEndpoint.bedrock];
-    if (bedrockConfig?.models && Array.isArray(bedrockConfig.models)) {
-      modelsConfig[EModelEndpoint.bedrock] = bedrockConfig.models;
+    for (const endpoint of CONFIGURED_MODEL_LIST_ENDPOINTS) {
+      if (requestedEndpoint != null && requestedEndpoint !== endpoint) {
+        continue;
+      }
+      const models = configuredModelList(appConfig, endpoint);
+      if (models) {
+        modelsConfig[endpoint] = models;
+      }
     }
 
     if (!Array.isArray(appConfig.endpoints?.[EModelEndpoint.custom])) {
       return modelsConfig;
     }
 
-    const customEndpoints = (appConfig.endpoints[EModelEndpoint.custom] as TEndpoint[]).filter(
-      (endpoint) =>
-        endpoint.baseURL &&
-        endpoint.apiKey &&
-        endpoint.name &&
-        endpoint.models &&
-        (endpoint.models.fetch || endpoint.models.default),
-    );
+    const definitions = appConfig.endpoints[EModelEndpoint.custom] as TEndpoint[];
+    const selected =
+      requestedEndpoint == null
+        ? undefined
+        : resolveServedCustomEndpoints(definitions).get(requestedEndpoint);
+    let customEndpoints: ServedCustomEndpoint[];
+    if (requestedEndpoint == null) customEndpoints = definitions.filter(isServedCustomEndpoint);
+    else customEndpoints = selected ? [selected] : [];
 
     const fetchPromisesMap: Record<string, Promise<string[]>> = {};
     const uniqueKeyToEndpointsMap: Record<string, string[]> = {};
     /** tokenKey the deduped fetch cached its token config under, so siblings
      *  sharing the fetch can be backfilled with the same config afterward */
     const uniqueKeyToTokenKey: Record<string, string> = {};
-    const endpointsMap: Record<string, TEndpoint> = {};
+    const endpointsMap: Record<string, ServedCustomEndpoint> = {};
     const tenantId = req.user?.tenantId;
 
     const resolved: ResolvedEndpoint[] = [];
@@ -115,7 +159,7 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
       endpointsMap[name] = endpoint;
       modelsConfig[name] = [];
 
-      const resolvedApiKey = extractEnvVariable(apiKey);
+      const resolvedApiKey = resolveConfigSecret(apiKey) ?? '';
       const resolvedBaseURL = extractEnvVariable(baseURL);
       const entry: ResolvedEndpoint = {
         name,
@@ -174,11 +218,11 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
       baseURLIsUserProvided,
     } of resolved) {
       const { models, headers: endpointHeaders } = endpoint;
-      // Include a fingerprint of the configured headers so two admin-trusted
+      // Include the provider and a fingerprint of the headers so two admin-trusted
       // endpoints that happen to share the same baseURL+apiKey but configure
       // different (potentially user-bound) headers don't reuse each other's
       // fetched model list within the same request.
-      const uniqueKey = `${BASE_URL}__${API_KEY}__${headersFingerprint(endpointHeaders)}`;
+      const uniqueKey = `${BASE_URL}__${API_KEY}__${endpoint.provider ?? ''}__${headersFingerprint(endpointHeaders)}`;
 
       if (models?.fetch && !apiKeyIsUserProvided && !baseURLIsUserProvided) {
         if (!fetchPromisesMap[uniqueKey]) {
@@ -188,6 +232,7 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
           uniqueKeyToTokenKey[uniqueKey] = tokenKey;
           fetchPromisesMap[uniqueKey] = fetchModels({
             name,
+            provider: endpoint.provider,
             apiKey: API_KEY,
             baseURL: BASE_URL,
             baseURLIsUserProvided: false,
@@ -225,6 +270,7 @@ export function createLoadConfigModels(deps: LoadConfigModelsDeps) {
               }
               return fetchModels({
                 name,
+                provider: endpoint.provider,
                 apiKey: resolvedApiKey,
                 baseURL: resolvedBaseURL,
                 baseURLIsUserProvided,

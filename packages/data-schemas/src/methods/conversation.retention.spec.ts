@@ -167,19 +167,17 @@ describe('weekly retention on conversation content', () => {
       expect(await messageExpiry(response.messageId)).toEqual(stamped);
     });
 
-    it('stamps imports, recorded messages and direct creates', async () => {
+    it('stamps imports and direct creates', async () => {
       const writtenFrom = new Date();
       const conversationId = uuidv4();
       const imported = unfinishedResponse(conversationId);
-      const recorded = unfinishedResponse(conversationId);
       const created = unfinishedResponse(conversationId);
 
       await methods.bulkSaveMessages([{ ...imported, user }], true);
-      await methods.recordMessage({ ...recorded, user });
       await models.Message.create({ ...created, user });
 
-      expect(await models.Message.countDocuments({ conversationId })).toBe(3);
-      for (const { messageId } of [imported, recorded, created]) {
+      expect(await models.Message.countDocuments({ conversationId })).toBe(2);
+      for (const { messageId } of [imported, created]) {
         expectWeeklyBoundary(await messageExpiry(messageId), writtenFrom);
       }
     });

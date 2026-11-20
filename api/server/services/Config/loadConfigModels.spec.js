@@ -13,6 +13,8 @@ jest.mock('@librechat/data-schemas', () => ({
 }));
 jest.mock('~/models', () => ({
   getUserKeyValues: jest.fn(),
+  initializeMessageBudget: jest.fn(),
+  initializeChannelStorageConfig: jest.fn(),
 }));
 
 const exampleConfig = {
@@ -104,6 +106,7 @@ describe('loadConfigModels', () => {
       role: 'USER',
       userId: 'testUserId',
       tenantId: 'tenant-a',
+      idOnTheSource: undefined,
     });
   });
 

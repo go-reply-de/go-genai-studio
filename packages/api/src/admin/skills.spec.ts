@@ -36,6 +36,8 @@ function createSourceStatus(overrides: Partial<SourceStatus> = {}): SourceStatus
     syncedFileCount: 0,
     deletedSkillCount: 0,
     deletedFileCount: 0,
+    skippedSkillCount: 0,
+    skippedFileCount: 0,
     errorCode: undefined,
     errorMessage: undefined,
     startedAt: undefined,
@@ -51,7 +53,14 @@ function createSourceStatus(overrides: Partial<SourceStatus> = {}): SourceStatus
 function createHandlers({
   statusErrorCode,
   statusErrorMessage,
-}: { statusErrorCode?: string; statusErrorMessage?: string } = {}) {
+  skippedSkillPath = 'skills/broken',
+  skippedSkillErrorMessage = 'skills/broken/SKILL.md: malformed frontmatter',
+}: {
+  statusErrorCode?: string;
+  statusErrorMessage?: string;
+  skippedSkillPath?: string;
+  skippedSkillErrorMessage?: string;
+} = {}) {
   const runner = {
     getStatus: jest.fn(async () => ({
       enabled: true,
@@ -59,6 +68,15 @@ function createHandlers({
       runOnStartup: false,
       sources: [
         createSourceStatus({
+          skippedSkillCount: 1,
+          skippedSkills: [
+            {
+              path: skippedSkillPath,
+              name: 'broken',
+              errorCode: 'SKILL_PARSE_FAILED',
+              errorMessage: skippedSkillErrorMessage,
+            },
+          ],
           errorCode: statusErrorCode,
           errorMessage: statusErrorMessage,
         }),
@@ -77,9 +95,18 @@ function createHandlers({
       status: 'completed' as const,
       sources: [
         createSourceStatus({
-          status: 'succeeded',
+          status: 'partial',
           syncedSkillCount: 1,
           syncedFileCount: 2,
+          skippedSkillCount: 1,
+          skippedSkills: [
+            {
+              path: skippedSkillPath,
+              name: 'broken',
+              errorCode: 'SKILL_PARSE_FAILED',
+              errorMessage: skippedSkillErrorMessage,
+            },
+          ],
           errorCode: statusErrorCode,
           errorMessage: statusErrorMessage,
         }),
@@ -119,6 +146,10 @@ describe('createAdminSkillsSyncHandlers', () => {
             repo: undefined,
             ref: undefined,
             paths: undefined,
+            /* Skipped entries name repository paths, so they are redacted with
+               the rest of the source metadata; the bare count is not. */
+            skippedSkillCount: 1,
+            skippedSkills: undefined,
           }),
         ],
       }),
@@ -233,6 +264,92 @@ describe('createAdminSkillsSyncHandlers', () => {
     );
   });
 
+  it('redacts promoted skipped-skill paths from tenant-scoped status reads', async () => {
+    const { handlers } = createHandlers({
+      statusErrorCode: 'SKILL_PARSE_FAILED',
+      statusErrorMessage: 'skills/broken/SKILL.md: malformed frontmatter',
+    });
+    const res = createResponse();
+
+    await handlers.getSyncStatus(
+      {
+        user: { id: 'user-1', tenantId: 'tenant-a' },
+        skillSyncCanReadCredentials: false,
+      } as never,
+      res,
+    );
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sources: [
+          expect.objectContaining({
+            errorCode: 'SKILL_PARSE_FAILED',
+            errorMessage: 'One or more GitHub skills could not be synchronized',
+            skippedSkills: undefined,
+          }),
+        ],
+      }),
+    );
+  });
+
+  it('does not mistake a promoted skipped-skill path for a credential failure', async () => {
+    const errorMessage = 'skills/credential-helper/SKILL.md: malformed frontmatter';
+    const { handlers } = createHandlers({
+      statusErrorCode: 'SKILL_PARSE_FAILED',
+      statusErrorMessage: errorMessage,
+      skippedSkillPath: 'skills/credential-helper',
+      skippedSkillErrorMessage: errorMessage,
+    });
+    const res = createResponse();
+
+    await handlers.getSyncStatus(
+      {
+        user: { id: 'user-1', tenantId: 'tenant-a' },
+        skillSyncCanReadCredentials: false,
+      } as never,
+      res,
+    );
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sources: [
+          expect.objectContaining({
+            errorCode: 'SKILL_PARSE_FAILED',
+            errorMessage: 'One or more GitHub skills could not be synchronized',
+          }),
+        ],
+      }),
+    );
+  });
+
+  it('preserves a fatal source error that follows an earlier skipped skill', async () => {
+    const { handlers } = createHandlers({
+      statusErrorCode: 'GITHUB_RATE_LIMITED',
+      statusErrorMessage: 'GitHub request failed with HTTP 403',
+    });
+    const res = createResponse();
+
+    await handlers.getSyncStatus(
+      {
+        user: { id: 'user-1', tenantId: 'tenant-a' },
+        skillSyncCanReadCredentials: false,
+      } as never,
+      res,
+    );
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sources: [
+          expect.objectContaining({
+            errorCode: 'GITHUB_RATE_LIMITED',
+            errorMessage: 'GitHub request failed with HTTP 403',
+            skippedSkills: undefined,
+          }),
+        ],
+      }),
+    );
+  });
+
   it('includes credential summaries and source credential metadata for platform status reads', async () => {
     const { handlers } = createHandlers({
       statusErrorCode: 'MISSING_CREDENTIAL',
@@ -254,6 +371,13 @@ describe('createAdminSkillsSyncHandlers', () => {
             ref: 'main',
             paths: ['skills'],
             errorMessage: 'Missing GitHub credential "github-skills-prod"',
+            skippedSkillCount: 1,
+            skippedSkills: [
+              expect.objectContaining({
+                path: 'skills/broken',
+                errorCode: 'SKILL_PARSE_FAILED',
+              }),
+            ],
           }),
         ],
       }),
@@ -450,5 +574,69 @@ describe('createAdminSkillsSyncAccess', () => {
       skillSyncCanReadCredentials: true,
     });
     expect(next).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('skill sync credential audit entries', () => {
+  function build(overrides: Record<string, jest.Mock> = {}) {
+    const recordAuditEntry = jest.fn().mockResolvedValue(undefined);
+    const handlers = createAdminSkillsSyncHandlers({
+      runner: { getStatus: jest.fn(), runOnce: jest.fn() } as never,
+      upsertCredential: jest.fn().mockResolvedValue({
+        provider: 'github',
+        credentialKey: 'github-skills-prod',
+        credentialPresent: true,
+        tokenFingerprint: 'abcd',
+      }),
+      deleteCredential: jest.fn().mockResolvedValue({ deleted: true }),
+      recordAuditEntry,
+      ...overrides,
+    });
+    return { handlers, recordAuditEntry };
+  }
+  const req = (extra: Record<string, unknown> = {}) =>
+    ({
+      user: { id: 'admin-1', name: 'Admin', tenantId: 'tenant-a' },
+      params: { credentialKey: 'github-skills-prod' },
+      body: { token: 'ghp_supersecrettoken' },
+      headers: {},
+      ...extra,
+    }) as never;
+
+  it('records skill_credential.set on the platform chain without the token', async () => {
+    const { handlers, recordAuditEntry } = build();
+
+    await handlers.setCredential(req(), createResponse());
+
+    expect(recordAuditEntry).toHaveBeenCalledTimes(1);
+    const input = recordAuditEntry.mock.calls[0][0];
+    expect(input).toEqual(
+      expect.objectContaining({
+        action: 'skill_credential.set',
+        target: { type: 'skill_credential', id: 'github-skills-prod', name: 'github' },
+        tenantId: undefined,
+      }),
+    );
+    expect(JSON.stringify(input)).not.toContain('ghp_supersecrettoken');
+  });
+
+  it('records skill_credential.deleted only when something was deleted', async () => {
+    const missing = build({ deleteCredential: jest.fn().mockResolvedValue({ deleted: false }) });
+    await missing.handlers.deleteCredential(req(), createResponse());
+    expect(missing.recordAuditEntry).not.toHaveBeenCalled();
+
+    const { handlers, recordAuditEntry } = build();
+    await handlers.deleteCredential(req(), createResponse());
+    expect(recordAuditEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'skill_credential.deleted' }),
+    );
+  });
+
+  it('records nothing for an invalid credential key', async () => {
+    const { handlers, recordAuditEntry } = build();
+
+    await handlers.setCredential(req({ params: { credentialKey: 'bad key!' } }), createResponse());
+
+    expect(recordAuditEntry).not.toHaveBeenCalled();
   });
 });

@@ -1,3 +1,9 @@
+export type {
+  PermissionPrincipalStorage,
+  PermissionPrincipalChange,
+  PermissionPrincipalRecord,
+  PermissionPrincipalData,
+} from './methods/provisioning';
 export * from './app';
 export * from './admin';
 export * from './common';
@@ -5,9 +11,61 @@ export * from './crypto';
 export * from './schema';
 export * from './utils';
 export { createModels } from './models';
+export { createSlackWorkspaceStorage } from './methods/slackWorkspace';
+export { createSlackRouteStorage } from './methods/slackRoute';
+export { createSlackDispatchStorage } from './methods/slackDispatch';
+export type { SlackDispatchStorage } from './methods/slackDispatch';
+export type { SlackRouteStorage } from './methods/slackRoute';
+export type { SlackRouteRecord } from './models/slackRoute';
+export type {
+  SlackWorkspaceStorage,
+  SlackWorkspaceMetadata,
+  SlackWorkspaceInstallResult,
+} from './methods/slackWorkspace';
+export type {
+  SlackWorkspaceRecord,
+  SlackInstallRecord,
+  SlackClaimedInstall,
+  SlackInstallGeneration,
+} from './models/slackWorkspace';
+export { createResponseStorage, sameResponseTerminalReceipt } from './methods/response';
+export type {
+  ResponseOwner,
+  ResponseStorage,
+  ResponseExecutionGuard,
+  ResponseCleanupIdentity,
+  ResponseReservation,
+  ResponseReservationResult,
+  ResponseMutationResult,
+  ResponseReviewCheckpoint,
+  ResponseResumeIntent,
+  ResponseResumeReservation,
+  ResponseResumeResult,
+  ResponseTerminalReceipt,
+  StoredResponseRecord,
+  StoredResponseStatus,
+} from './methods/response';
 export {
   createMethods,
+  createToolFavoriteMethods,
+  createChannelIdentityStorage,
+  createChannelFeedbackStorage,
+  ChannelFeedbackAuthorityError,
+  CHANNEL_FEEDBACK_VOTE_SLOTS_HARD_MAX,
+  CHANNEL_FEEDBACK_RECEIPT_RETENTION_MS,
+  channelFeedbackReactionIdentity,
+  isLaterChannelFeedbackEvent,
+  createChannelRunStorage,
+  createChannelSummaryStorage,
+  CHANNEL_SUMMARY_MAX_PRIOR_ROWS,
+  ChannelRunConflict,
+  createSkillDeletionPersistenceAdapter,
+  AGENT_OWNER_CONTACT_RESOLVED_FIELD,
+  AgentSortCursorError,
+  CLIENT_MESSAGE_SELECT,
+  SUBAGENT_TRANSCRIPT_SOURCE_BYTE_LIMIT,
   RoleConflictError,
+  RoleDeletionError,
   DEFAULT_REFRESH_TOKEN_EXPIRY,
   DEFAULT_SESSION_EXPIRY,
   tokenValues,
@@ -16,19 +74,72 @@ export {
   defaultRate,
   createTxMethods,
   permissionBitSupersets,
+  PERM_BITS_WRITE_ATTEMPTS,
   partitionIssues,
   validateSkillName,
   validateSkillBody,
   validateRelativePath,
   inferSkillFileCategory,
+  filterExistingSkillIds,
   validateSkillFrontmatter,
+  getCanonicalSkillFrontmatterKey,
+  normalizeSkillFrontmatterKeys,
   validateSkillDescription,
   deriveStructuredFrontmatterFields,
+  runAfterTransaction,
   AUDIT_SCHEMA_VERSION,
   MAX_AUDIT_EXPORT_ROWS,
   MAX_AUDIT_LOG_LIMIT,
   MAX_AUDIT_VERIFY_ROWS,
+  MAX_TOOL_FAVORITES,
+  AgentTriggerDeliveryConflictError,
+  AgentQueuedTurnCapacityError,
+  AgentQueuedTurnConflictError,
+  AgentQueuedTurnLaneRetiredError,
+  recordAgentEventActorReceiptMetric,
+  setAgentEventActorReceiptMetricObserver,
+  MCPAuthorityProofError,
+  createMCPAuthorizationFenceRetryStorage,
+  MAX_MCP_AUTHORITY_TARGETS,
+  InvalidAvailableProjectFilesCursorError,
+  parseAvailableProjectFilesCursor,
+  MAX_AVAILABLE_PROJECT_FILES_LIMIT,
+  DEFAULT_AVAILABLE_PROJECT_FILES_LIMIT,
+  createMCPAuthorityBootRevision,
+  createMCPAuthorityConfigSourceRevision,
+  createMCPAuthorityCredentialRevision,
+  createMCPAuthorityDatabaseSourceRevision,
+  digestMCPAuthorityValue,
 } from './methods';
+export { FAVORITE_ITEM_TYPES } from './types/favorite';
+export {
+  AGENT_EVENT_ACTOR_SUMMARY_VERSION,
+  MAX_AGENT_EVENT_ACTOR_DISCOVERED_TOOLS,
+  MAX_AGENT_EVENT_ACTOR_ENCODING_LENGTH,
+  MAX_AGENT_EVENT_ACTOR_SKILLS,
+  MAX_AGENT_EVENT_ACTOR_SUMMARY_LENGTH,
+  MAX_AGENT_EVENT_ACTOR_TOOL_NAME_LENGTH,
+} from './types/convo';
+export {
+  COMPACTION_SEMANTIC_INDEX_PROJECTION_VERSION,
+  MAX_COMPACTION_SEMANTIC_INDEX_ENTRIES,
+  MAX_COMPACTION_SEMANTIC_INDEX_IDENTITY_LENGTH,
+  MAX_COMPACTION_SEMANTIC_INDEX_SOURCE_CONTENT_INDEX,
+  MAX_COMPACTION_SEMANTIC_INDEX_TEXT_LENGTH,
+  isCompactionSemanticIndexProjection,
+} from './types/compaction';
+export {
+  AGENT_BACKGROUND_TOOL_RESULT_STORAGE_MAX_CHARS,
+  AGENT_TRIGGER_WORKER_CAPABILITY_BACKGROUND_COMPLETION_RECEIPT_V2,
+  AGENT_TRIGGER_WORKER_CAPABILITY_BACKGROUND_COMPLETION_BATCH_V3,
+  AGENT_TRIGGER_WORKER_CAPABILITY_BACKGROUND_COMPLETION_V1,
+  AGENT_TRIGGER_WORKER_CAPABILITY_DETACHED_ACTION_V1,
+  AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V1,
+  AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V2,
+  AGENT_TRIGGER_WORKER_CAPABILITY_QUEUED_TURN_V3,
+  AGENT_TRIGGER_WORKER_CAPABILITY_RESPONSES_V1,
+  AGENT_TRIGGER_WORKER_CAPABILITY_RESPONSES_RESUME_V1,
+} from './types/triggerDelivery';
 export type * from './types';
 export type * from './methods';
 export {
@@ -40,17 +151,64 @@ export {
   AUDIT_ACTION_CATEGORY,
 } from './types/admin';
 export { GENESIS_HASH, PLATFORM_CHAIN_KEY } from './schema/auditLog';
-export { default as logger } from './config/winston';
+export type { AgentChannelRecord } from './models/channel';
+export { default as logger, baseLogFormat } from './config/winston';
 export { default as meiliLogger } from './config/meiliLogger';
-export { redactMessage } from './config/parsers';
+export { jsonTruncateFormat, redactMessage } from './config/parsers';
 export {
   tenantStorage,
   getTenantId,
   getUserId,
   getRequestId,
+  getRequestMethod,
+  getRequestPath,
   runAsSystem,
   scopedCacheKey,
   SYSTEM_TENANT_ID,
+  isReservedTenantId,
 } from './config/tenantContext';
 export type { TenantContext } from './config/tenantContext';
-export { dropSupersededTenantIndexes, dropSupersededPromptGroupIndexes } from './migrations';
+export {
+  MCPServerNameMigrationError,
+  createMCPAuthorityLookupIndexes,
+  dropSupersededTenantIndexes,
+  migrateTenantIndexes,
+  dropSupersededPromptGroupIndexes,
+  backfillMCPServerNormalizedNames,
+  backfillSearchTokens,
+  warnOnMissingSearchTokens,
+} from './migrations';
+export type { SearchTokenBackfillResult } from './migrations';
+
+export { createBrowserSetupStore, createBrowserSetupBackend } from './methods/browserSetup';
+export type * from './types/browserSetup';
+export type * from './types/codeEnvironmentSetup';
+
+export * from './checkpoints/types';
+export * from './checkpoints/identity';
+export { createMongoCheckpointRepository } from './checkpoints/mongo';
+export type { MongoCheckpointRepositoryOptions } from './checkpoints/mongo';
+export {
+  createCheckpointCatalog,
+  checkpointStorageKey,
+  CHECKPOINT_STORAGE_COLLECTION,
+} from './checkpoints/catalog';
+export type { CheckpointStorageRecord } from './checkpoints/catalog';
+export { createCheckpointDeletionJournal, checkpointDeletionTarget } from './checkpoints/journal';
+export { createActorCheckpointPruning } from './checkpoints/pruning';
+export { isCheckpointDatabaseAvailable } from './checkpoints/database';
+
+export { setupCheckpointIndexes } from './checkpoints/indexes';
+export {
+  CheckpointTooLargeError,
+  CHECKPOINT_HARD_LIMIT_BYTES,
+  CHECKPOINT_WARN_BYTES,
+} from './checkpoints/limits';
+export * from './postgres/backend';
+export * from './postgres/pool';
+export * from './postgres/migrations';
+export * from './postgres/favorite';
+export * from './postgres/import';
+export * from './postgres/mongo';
+
+export { migrateMCPReservationIndex } from './migrations/mcpReservations';

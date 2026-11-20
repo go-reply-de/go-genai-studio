@@ -1,11 +1,12 @@
 const express = require('express');
 const { generateCheckAccess } = require('@librechat/api');
 const { PermissionTypes, Permissions, PermissionBits } = require('librechat-data-provider');
-const { requireJwtAuth, configMiddleware, canAccessAgentResource } = require('~/server/middleware');
+const { configMiddleware, canAccessAgentResource } = require('~/server/middleware');
 const v1 = require('~/server/controllers/agents/v1');
 const { getRoleByName } = require('~/models');
 const actions = require('./actions');
 const tools = require('./tools');
+const channels = require('./channels');
 
 const router = express.Router();
 const avatar = express.Router();
@@ -21,8 +22,6 @@ const checkAgentCreate = generateCheckAccess({
   getRoleByName,
 });
 
-router.use(requireJwtAuth);
-
 /**
  * Agent actions route.
  * @route GET|POST /agents/actions
@@ -34,6 +33,7 @@ router.use('/actions', configMiddleware, actions);
  * @route GET /agents/tools
  */
 router.use('/tools', configMiddleware, tools);
+router.use('/:agentId/channels', channels);
 
 /**
  * Get all agent categories with counts
@@ -46,7 +46,7 @@ router.get('/categories', v1.getAgentCategories);
  * @param {AgentCreateParams} req.body - The agent creation parameters.
  * @returns {Agent} 201 - Success response - application/json
  */
-router.post('/', checkAgentCreate, v1.createAgent);
+router.post('/', checkAgentCreate, configMiddleware, v1.createAgent);
 
 /**
  * Retrieves basic agent information (VIEW permission required).
@@ -81,6 +81,23 @@ router.get(
   }),
   (req, res) => v1.getAgent(req, res, true), // Expanded version
 );
+
+/**
+ * Retrieves an agent's version history (EDIT permission required).
+ * Loaded lazily so the editor doesn't transfer large histories up front.
+ * @route GET /agents/:id/versions
+ * @param {string} req.params.id - Agent identifier.
+ * @returns {Agent[]} 200 - Agent version history - application/json
+ */
+router.get(
+  '/:id/versions',
+  checkAgentAccess,
+  canAccessAgentResource({
+    requiredPermission: PermissionBits.EDIT,
+    resourceIdParam: 'id',
+  }),
+  v1.getAgentVersions,
+);
 /**
  * Updates an agent.
  * @route PATCH /agents/:id
@@ -91,10 +108,12 @@ router.get(
 router.patch(
   '/:id',
   checkAgentCreate,
+  configMiddleware,
   canAccessAgentResource({
     requiredPermission: PermissionBits.EDIT,
     resourceIdParam: 'id',
   }),
+  configMiddleware,
   v1.updateAgent,
 );
 
@@ -107,10 +126,12 @@ router.patch(
 router.post(
   '/:id/duplicate',
   checkAgentCreate,
+  configMiddleware,
   canAccessAgentResource({
     requiredPermission: PermissionBits.EDIT,
     resourceIdParam: 'id',
   }),
+  configMiddleware,
   v1.duplicateAgent,
 );
 
@@ -140,10 +161,12 @@ router.delete(
 router.post(
   '/:id/revert',
   checkAgentCreate,
+  configMiddleware,
   canAccessAgentResource({
     requiredPermission: PermissionBits.EDIT,
     resourceIdParam: 'id',
   }),
+  configMiddleware,
   v1.revertAgentVersion,
 );
 

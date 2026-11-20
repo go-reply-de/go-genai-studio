@@ -8,8 +8,13 @@ jest.mock('node:dns', () => {
 
 import dns from 'node:dns';
 import http from 'node:http';
+import type { AxiosRequestConfig } from 'axios';
 import type { LookupFunction } from 'node:net';
-import { createSSRFSafeAgents, createSSRFSafeUndiciConnect } from './agent';
+import {
+  createSSRFSafeAgents,
+  createSSRFSafeUndiciConnect,
+  applySSRFSafeAgentIfDirect,
+} from './agent';
 
 type LookupCallback = (
   err: NodeJS.ErrnoException | null,
@@ -72,6 +77,18 @@ describe('createSSRFSafeAgents', () => {
     expect(internal.createConnection).toBeInstanceOf(Function);
   });
 
+  it('blocks a translated private literal before dialing a redirect target', () => {
+    const dial = jest.spyOn(httpAgentPrototype, 'createConnection').mockReturnValue({});
+    const agents = createSSRFSafeAgents(null, null, { blockLiteralHosts: true });
+    const internal = agents.httpAgent as unknown as {
+      createConnection: (options: Record<string, unknown>) => unknown;
+    };
+    expect(() => internal.createConnection({ host: '::ffff:0:a00:1', port: 80 })).toThrow(
+      expect.objectContaining({ code: 'ESSRF' }),
+    );
+    expect(dial).not.toHaveBeenCalled();
+  });
+
   it('should scope allowedAddresses by the request port in the HTTP agent lookup', async () => {
     mockDnsResult('10.0.0.5', 4);
     let lookupError: NodeJS.ErrnoException | null = null;
@@ -119,6 +136,47 @@ describe('createSSRFSafeUndiciConnect', () => {
 
     expect(result.err).toBeTruthy();
     expect(result.err!.code).toBe('ESSRF');
+  });
+
+  it.each(['::ffff:0:a9fe:a9fe', '0:0:0:0:ffff:0:169.254.169.254'])(
+    'blocks translated private DNS answer %s in single and all-address lookups',
+    async (address) => {
+      const connect = createSSRFSafeUndiciConnect();
+      for (const all of [false, true]) {
+        if (all) {
+          mockDnsAllResult([
+            { address: '2606:4700:4700::1111', family: 6 },
+            { address, family: 6 },
+          ]);
+        } else {
+          mockDnsResult(address, 6);
+        }
+        const error = await new Promise<NodeJS.ErrnoException | null>((resolve) => {
+          connect.lookup('translated.example.com', { all }, (err) => resolve(err));
+        });
+        expect(error?.code).toBe('ESSRF');
+      }
+    },
+  );
+
+  it('allows a translated public DNS answer', async () => {
+    mockDnsResult('::ffff:0:808:808', 6);
+    const connect = createSSRFSafeUndiciConnect();
+    const error = await new Promise<NodeJS.ErrnoException | null>((resolve) => {
+      connect.lookup('public.example.com', {}, (err) => resolve(err));
+    });
+    expect(error).toBeNull();
+  });
+
+  it('keeps translated DNS exemptions scoped to the connection port', async () => {
+    mockDnsResult('0:0:0:0:ffff:0:10.0.0.1', 6);
+    for (const port of ['8080', '8081']) {
+      const connect = createSSRFSafeUndiciConnect(['[::ffff:0:a00:1]:8080'], port);
+      const error = await new Promise<NodeJS.ErrnoException | null>((resolve) => {
+        connect.lookup('translated.example.com', {}, (err) => resolve(err));
+      });
+      expect(error?.code ?? null).toBe(port === '8080' ? null : 'ESSRF');
+    }
   });
 
   it('lookup should allow public IPs', async () => {
@@ -328,5 +386,177 @@ describe('SSRF agents — allowedAddresses exemption', () => {
     const result = await runLookup(lookup, 'private.example.com');
     expect(result.err).toBeTruthy();
     expect(result.err!.code).toBe('ESSRF');
+  });
+});
+
+describe('applySSRFSafeAgentIfDirect', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
+  });
+
+  function spyLookup(hostname: string, port: number) {
+    const captured: { err: NodeJS.ErrnoException | null; address: string } = {
+      err: null,
+      address: '',
+    };
+    jest.spyOn(httpAgentPrototype, 'createConnection').mockImplementation(((
+      options: Record<string, unknown>,
+    ) => {
+      (options.lookup as LookupFunction)(hostname, {}, (err, address) => {
+        captured.err = err;
+        captured.address = address as string;
+      });
+      return {};
+    }) as never);
+    return {
+      drive(agent: unknown) {
+        (agent as { createConnection: (o: Record<string, unknown>) => unknown }).createConnection({
+          host: hostname,
+          port,
+        });
+        return captured;
+      },
+    };
+  }
+
+  it('attaches both agents and disables redirects for a direct http(s) request', () => {
+    const config: AxiosRequestConfig = {};
+    applySSRFSafeAgentIfDirect(config, 'https://api.example.com/v1');
+    expect(config.httpAgent).toBeDefined();
+    expect(config.httpsAgent).toBeDefined();
+    expect(config.maxRedirects).toBe(0);
+  });
+
+  it('rejects a target resolving to a private IP with ESSRF through the real lookup', () => {
+    mockDnsResult('10.0.0.5', 4);
+    const probe = spyLookup('internal.example.com', 80);
+    const config: AxiosRequestConfig = {};
+    applySSRFSafeAgentIfDirect(config, 'http://internal.example.com');
+    const result = probe.drive(config.httpAgent);
+    expect(result.err).toBeTruthy();
+    expect(result.err!.code).toBe('ESSRF');
+  });
+
+  it('exempts a host:port present in allowedAddresses through the real lookup', () => {
+    mockDnsResult('10.0.0.5', 4);
+    const probe = spyLookup('ollama.internal', 11434);
+    const config: AxiosRequestConfig = {};
+    applySSRFSafeAgentIfDirect(config, 'http://ollama.internal:11434', ['ollama.internal:11434']);
+    const result = probe.drive(config.httpAgent);
+    expect(result.err).toBeNull();
+    expect(result.address).toBe('10.0.0.5');
+  });
+
+  it('throws on a non-http(s) scheme', () => {
+    expect(() => applySSRFSafeAgentIfDirect({}, 'file:///etc/passwd')).toThrow();
+    expect(() => applySSRFSafeAgentIfDirect({}, 'gopher://example.com')).toThrow();
+  });
+
+  it('throws on a malformed url', () => {
+    expect(() => applySSRFSafeAgentIfDirect({}, 'not a url')).toThrow();
+  });
+
+  it('preserves an existing proxy and still disables redirects', () => {
+    const config: AxiosRequestConfig = { proxy: { host: '127.0.0.1', port: 8080 } };
+    applySSRFSafeAgentIfDirect(config, 'https://api.example.com');
+    expect(config.httpAgent).toBeUndefined();
+    expect(config.httpsAgent).toBeUndefined();
+    expect(config.maxRedirects).toBe(0);
+  });
+
+  it('preserves a pre-set agent and still disables redirects', () => {
+    const preset = new http.Agent();
+    const config: AxiosRequestConfig = { httpAgent: preset };
+    applySSRFSafeAgentIfDirect(config, 'https://api.example.com');
+    expect(config.httpAgent).toBe(preset);
+    expect(config.httpsAgent).toBeUndefined();
+    expect(config.maxRedirects).toBe(0);
+  });
+
+  it('blocks a literal private IPv4 host that skips the agent DNS lookup', () => {
+    let code: string | undefined;
+    try {
+      applySSRFSafeAgentIfDirect({}, 'http://127.0.0.1:9000');
+    } catch (err) {
+      code = (err as NodeJS.ErrnoException).code;
+    }
+    expect(code).toBe('ESSRF');
+  });
+
+  it('blocks a literal private IPv6 host', () => {
+    let code: string | undefined;
+    try {
+      applySSRFSafeAgentIfDirect({}, 'http://[::1]:9000');
+    } catch (err) {
+      code = (err as NodeJS.ErrnoException).code;
+    }
+    expect(code).toBe('ESSRF');
+  });
+
+  it.each(['::ffff:0:a00:1', '0:0:0:0:ffff:0:169.254.169.254'])(
+    'blocks translated private literal %s even with a configured proxy',
+    (address) => {
+      expect(() =>
+        applySSRFSafeAgentIfDirect(
+          { proxy: { host: '127.0.0.1', port: 8080 } },
+          `http://[${address}]/`,
+        ),
+      ).toThrow(expect.objectContaining({ code: 'ESSRF' }));
+    },
+  );
+
+  it('exempts a literal private IP present in allowedAddresses', () => {
+    const config: AxiosRequestConfig = {};
+    applySSRFSafeAgentIfDirect(config, 'http://127.0.0.1:9000', ['127.0.0.1:9000']);
+    expect(config.httpAgent).toBeDefined();
+    expect(config.maxRedirects).toBe(0);
+  });
+
+  it('allows a public literal IP', () => {
+    const config: AxiosRequestConfig = {};
+    applySSRFSafeAgentIfDirect(config, 'http://8.8.8.8:80');
+    expect(config.httpAgent).toBeDefined();
+  });
+
+  it('exempts a literal private IP on the default http port when the URL omits it', () => {
+    const config: AxiosRequestConfig = {};
+    applySSRFSafeAgentIfDirect(config, 'http://127.0.0.1', ['127.0.0.1:80']);
+    expect(config.httpAgent).toBeDefined();
+  });
+
+  it('exempts a literal private IP on the default https port when the URL omits it', () => {
+    const config: AxiosRequestConfig = {};
+    applySSRFSafeAgentIfDirect(config, 'https://127.0.0.1', ['127.0.0.1:443']);
+    expect(config.httpsAgent).toBeDefined();
+  });
+
+  it('blocks a literal private IP even when a proxy is already configured', () => {
+    let code: string | undefined;
+    try {
+      applySSRFSafeAgentIfDirect(
+        { proxy: { host: '127.0.0.1', port: 8080 } },
+        'http://169.254.169.254',
+      );
+    } catch (err) {
+      code = (err as NodeJS.ErrnoException).code;
+    }
+    expect(code).toBe('ESSRF');
+  });
+
+  it('exempts an IPv4-mapped IPv6 literal listed in allowedAddresses', () => {
+    const config: AxiosRequestConfig = {};
+    applySSRFSafeAgentIfDirect(config, 'http://[::ffff:127.0.0.1]:8080', [
+      '[::ffff:127.0.0.1]:8080',
+    ]);
+    expect(config.httpAgent).toBeDefined();
+  });
+
+  it('exempts a fully expanded ULA literal listed in allowedAddresses', () => {
+    const config: AxiosRequestConfig = {};
+    applySSRFSafeAgentIfDirect(config, 'http://[fd00:0:0:0:0:0:0:1]:8080', [
+      '[fd00:0:0:0:0:0:0:1]:8080',
+    ]);
+    expect(config.httpAgent).toBeDefined();
   });
 });

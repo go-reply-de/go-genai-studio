@@ -17,6 +17,9 @@ import type {
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import type { Types } from 'mongoose';
 import type { GitHubSkillSyncRunner } from '~/skills/sync';
+import type { ServerRequest } from '~/types/http';
+import type { RecordAuditEntry } from './audit';
+import { createAdminAuditEmitter } from './audit';
 
 export type AdminSkillsRequest = Request & {
   user?: {
@@ -61,6 +64,9 @@ export type AdminSkillSyncDeps = {
     provider: SkillSyncProvider,
     credentialKey: string,
   ) => Promise<{ deleted: boolean }>;
+  /** Optional audit emission for credential changes; fail-open unless `auditFailClosed`. */
+  recordAuditEntry?: RecordAuditEntry;
+  auditFailClosed?: boolean;
 };
 
 export type AdminSkillSyncAccessDeps = {
@@ -113,14 +119,29 @@ function isCredentialError(status: ISkillSyncStatus): boolean {
   );
 }
 
+function isPromotedSkippedSkillError(status: ISkillSyncStatus): boolean {
+  const firstSkippedSkill = status.skippedSkills?.[0];
+  return Boolean(
+    firstSkippedSkill &&
+      status.errorCode === firstSkippedSkill.errorCode &&
+      status.errorMessage === firstSkippedSkill.errorMessage,
+  );
+}
+
 function serializeErrorMessage(
   status: ISkillSyncStatus,
   { includeCredentialMetadata }: { includeCredentialMetadata: boolean },
 ): string | undefined {
-  if (includeCredentialMetadata || !isCredentialError(status)) {
+  if (includeCredentialMetadata) {
     return status.errorMessage;
   }
-  return 'GitHub skill sync credentials are not available';
+  if (isPromotedSkippedSkillError(status)) {
+    return 'One or more GitHub skills could not be synchronized';
+  }
+  if (isCredentialError(status)) {
+    return 'GitHub skill sync credentials are not available';
+  }
+  return status.errorMessage;
 }
 
 function serializeSourceStatus(
@@ -149,6 +170,13 @@ function serializeSourceStatus(
     syncedFileCount: status.syncedFileCount,
     deletedSkillCount: status.deletedSkillCount,
     deletedFileCount: status.deletedFileCount,
+    skippedSkillCount: status.skippedSkillCount ?? 0,
+    /* The per-skill entries name repository paths, so they follow the same
+       visibility rule as owner/repo/paths rather than the bare count. */
+    skippedSkills: includePrivateSourceMetadata ? status.skippedSkills : undefined,
+    skippedFileCount: status.skippedFileCount ?? 0,
+    /* Same rule: `path`/`skillPath` name repository paths, unlike the count. */
+    skippedFiles: includePrivateSourceMetadata ? status.skippedFiles : undefined,
     createdAt: toIso(status.createdAt),
     updatedAt: toIso(status.updatedAt),
   };
@@ -337,6 +365,12 @@ export function createAdminSkillsSyncAccess(deps: AdminSkillSyncAccessDeps): Adm
 }
 
 export function createAdminSkillsSyncHandlers(deps: AdminSkillSyncDeps): AdminSkillsSyncHandlers {
+  const emitAudit = createAdminAuditEmitter({
+    recordAuditEntry: deps.recordAuditEntry,
+    failClosed: deps.auditFailClosed,
+    logPrefix: '[adminSkills]',
+  });
+
   function getRunner(req: Request): GitHubSkillSyncRunner {
     const runner = deps.getRunner?.(req) ?? deps.runner;
     if (!runner) {
@@ -389,6 +423,13 @@ export function createAdminSkillsSyncHandlers(deps: AdminSkillSyncDeps): AdminSk
       token: token.trim(),
       userId: getUserObjectId(req),
     });
+    /** Credentials are platform-level, so entries go to the platform chain. */
+    await emitAudit(req as unknown as ServerRequest, {
+      action: 'skill_credential.set',
+      severity: 'warning',
+      target: { type: 'skill_credential', id: credentialKey, name: 'github' },
+      tenantId: undefined,
+    });
     return res.status(200).json(serializeCredential(credential));
   }
 
@@ -398,6 +439,14 @@ export function createAdminSkillsSyncHandlers(deps: AdminSkillSyncDeps): AdminSk
       return res.status(400).json({ error: 'Invalid credential key' });
     }
     const result = await deps.deleteCredential('github', credentialKey);
+    if (result.deleted) {
+      await emitAudit(req as unknown as ServerRequest, {
+        action: 'skill_credential.deleted',
+        severity: 'warning',
+        target: { type: 'skill_credential', id: credentialKey, name: 'github' },
+        tenantId: undefined,
+      });
+    }
     return res.status(200).json({ credentialKey, deleted: result.deleted });
   }
 

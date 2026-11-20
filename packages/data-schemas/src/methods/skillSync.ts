@@ -4,6 +4,8 @@ import type {
   ISkillSyncStatus,
   SkillSyncProvider,
   SkillSyncRunStatus,
+  ISkillSyncSkippedFile,
+  ISkillSyncSkippedSkill,
   ISkillSyncStatusDocument,
   ISkillSyncCredential,
   ISkillSyncCredentialDocument,
@@ -46,6 +48,10 @@ export type SkillSyncStatusInput = {
   syncedFileCount?: number;
   deletedSkillCount?: number;
   deletedFileCount?: number;
+  skippedSkillCount?: number;
+  skippedSkills?: ISkillSyncSkippedSkill[];
+  skippedFileCount?: number;
+  skippedFiles?: ISkillSyncSkippedFile[];
 };
 
 export type SkillSyncLockInput = {
@@ -79,11 +85,6 @@ export type SkillSyncMethods = {
     credentialKey: string,
   ) => Promise<SkillSyncCredentialSummary | null>;
   listSkillSyncStatuses: (provider: SkillSyncProvider) => Promise<ISkillSyncStatus[]>;
-  getSkillSyncStatus: (
-    provider: SkillSyncProvider,
-    sourceId: string,
-    tenantId?: string,
-  ) => Promise<ISkillSyncStatus | null>;
   upsertSkillSyncStatus: (input: SkillSyncStatusInput) => Promise<ISkillSyncStatus>;
   tryAcquireSkillSyncLock: (params: SkillSyncLockInput) => Promise<boolean>;
   refreshSkillSyncLock: (params: SkillSyncLockInput) => Promise<boolean>;
@@ -199,24 +200,12 @@ export function createSkillSyncMethods(mongoose: typeof import('mongoose')): Ski
     return rows;
   }
 
-  async function getSkillSyncStatus(
-    provider: SkillSyncProvider,
-    sourceId: string,
-    tenantId?: string,
-  ): Promise<ISkillSyncStatus | null> {
-    const Status = mongoose.models.SkillSyncStatus as Model<ISkillSyncStatusDocument>;
-    const row = await Status.findOne({
-      provider,
-      sourceId,
-      ...tenantStatusCondition(tenantId),
-    }).lean<ISkillSyncStatus | null>();
-    return row ?? null;
-  }
-
   async function upsertSkillSyncStatus(input: SkillSyncStatusInput): Promise<ISkillSyncStatus> {
     const Status = mongoose.models.SkillSyncStatus as Model<ISkillSyncStatusDocument>;
     const now = new Date();
-    const success = input.status === 'succeeded';
+    /* A partial run published skills, so it advances `lastSuccessAt` the same
+       way a clean run does; the dropped skills live in `skippedSkills`. */
+    const success = input.status === 'succeeded' || input.status === 'partial';
     const failure = input.status === 'failed';
     const setPayload: Partial<ISkillSyncStatus> = {
       status: input.status,
@@ -231,6 +220,10 @@ export function createSkillSyncMethods(mongoose: typeof import('mongoose')): Ski
       syncedFileCount: input.syncedFileCount ?? 0,
       deletedSkillCount: input.deletedSkillCount ?? 0,
       deletedFileCount: input.deletedFileCount ?? 0,
+      skippedSkillCount: input.skippedSkillCount ?? 0,
+      skippedSkills: input.skippedSkills ?? [],
+      skippedFileCount: input.skippedFileCount ?? 0,
+      skippedFiles: input.skippedFiles ?? [],
       ...(success ? { lastSuccessAt: input.finishedAt ?? now } : {}),
       ...(failure ? { lastFailureAt: input.finishedAt ?? now } : {}),
     };
@@ -373,7 +366,6 @@ export function createSkillSyncMethods(mongoose: typeof import('mongoose')): Ski
     getSkillSyncCredentialToken,
     getSkillSyncCredentialSummary,
     listSkillSyncStatuses,
-    getSkillSyncStatus,
     upsertSkillSyncStatus,
     tryAcquireSkillSyncLock,
     refreshSkillSyncLock,

@@ -1,14 +1,17 @@
 import { memo } from 'react';
 import { BookOpen } from 'lucide-react';
 import { ContentTypes } from 'librechat-data-provider';
-import type { SearchResultData, TMessage } from 'librechat-data-provider';
+import type { SearchResultData, TMessageContentParts } from 'librechat-data-provider';
 
 const GROUNDING_TOOL = 'web_grounding_enterprise';
 const HEADING = 'Quellen und weiterführende Literatur';
 
+/** A streaming message can have holes where a part has not arrived yet. */
+type MessageContent = Array<TMessageContentParts | undefined> | undefined;
+
 /** The single-agent view has no source list of its own; the parallel view renders LibreChat's panel. */
 export function hasGroundingSources(
-  content: TMessage['content'],
+  content: MessageContent,
   searchResults?: Record<string, SearchResultData>,
 ): boolean {
   const parts = content ?? [];
@@ -45,7 +48,7 @@ function GroundingSources({
   searchResults,
   isSubmitting = false,
 }: {
-  message: TMessage;
+  message: { content?: MessageContent };
   searchResults?: Record<string, SearchResultData>;
   /** True while the agent is still answering; the sources arrive before its text. */
   isSubmitting?: boolean;
@@ -56,9 +59,9 @@ function GroundingSources({
   return (
     <section
       aria-label={HEADING}
-      className="mt-6 rounded-xl border border-border-medium bg-surface-secondary p-4"
+      className="border-border-medium bg-surface-secondary mt-6 rounded-xl border p-4"
     >
-      <h3 className="mb-3 flex items-center gap-2 text-base font-semibold text-text-primary">
+      <h3 className="text-text-primary mb-3 flex items-center gap-2 text-base font-semibold">
         <BookOpen className="h-5 w-5 shrink-0" aria-hidden="true" />
         {HEADING}
       </h3>
@@ -69,7 +72,7 @@ function GroundingSources({
               href={source.link}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex h-full items-center rounded-lg border border-border-light bg-surface-primary px-3 py-2 text-sm font-medium text-text-primary transition-all duration-300 hover:bg-surface-hover"
+              className="border-border-light bg-surface-primary text-text-primary hover:bg-surface-hover flex h-full items-center rounded-lg border px-3 py-2 text-sm font-medium transition-all duration-300"
             >
               <span className="truncate">{source.title}</span>
             </a>

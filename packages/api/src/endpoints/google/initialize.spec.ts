@@ -26,6 +26,7 @@ jest.mock('~/utils', () => ({
 }));
 
 import { initializeGoogle } from './initialize';
+import { resolveConfigHeaders } from '~/utils/headers';
 
 function createDb(): EndpointDbMethods {
   return {
@@ -68,6 +69,107 @@ describe('initializeGoogle', () => {
 
   afterAll(() => {
     process.env = originalEnv;
+  });
+
+  it.each([EModelEndpoint.google, Providers.VERTEXAI])(
+    'carries configured rates into %s chat and Agent initialization',
+    async (endpoint) => {
+      process.env.GOOGLE_KEY = 'test-key';
+      process.env.VERTEX_PROJECT_ID = 'test-project';
+      mockLoadServiceKey.mockResolvedValue(null);
+      mockGetGoogleConfig.mockImplementationOnce((credentials, options) =>
+        jest.requireActual('./llm').getGoogleConfig(credentials, options),
+      );
+      const req = createReq();
+      if (!req.config) throw new Error('Expected initialized test config');
+      req.config.endpoints = {
+        google: {
+          tokenConfig: {
+            'gemini-2.5-flash': { prompt: 0, completion: 0, cacheRead: 0 },
+          },
+        },
+      };
+      const result = await initializeGoogle({
+        runtime: { appConfig: req.config, user: req.user, requestBody: {} },
+        endpoint,
+        model_parameters: { model: 'models/gemini-2.5-flash' },
+        db: createDb(),
+      });
+      expect(result.endpointTokenConfig).toEqual({
+        'models/gemini-2.5-flash': { prompt: 0, completion: 0, cacheRead: 0, read: 0 },
+        'gemini-2.5-flash': { prompt: 0, completion: 0, cacheRead: 0, read: 0 },
+      });
+      expect(result.provider).toBe(
+        endpoint === EModelEndpoint.google ? Providers.GOOGLE : Providers.VERTEXAI,
+      );
+    },
+  );
+
+  it.each(['google', 'all'])(
+    'resolves %s agent headers after initialization without touching provider auth',
+    async (endpoint) => {
+      const apiKey = 'literal-${NOT_AN_ENV_VAR}-{{LIBRECHAT_AGENT_ID}}';
+      process.env.GOOGLE_KEY = apiKey;
+      process.env.GOOGLE_AUTH_HEADER = 'true';
+      mockIsEnabled.mockImplementation((value) => value === 'true');
+      mockGetGoogleConfig.mockImplementationOnce((credentials, options) =>
+        jest.requireActual('./llm').getGoogleConfig(credentials, options),
+      );
+      const req = createReq();
+      if (!req.config) throw new Error('Expected initialized test config');
+      const configuredHeaders = { 'X-Agent-Id': '{{LIBRECHAT_AGENT_ID}}' };
+      req.config.endpoints =
+        endpoint === 'google'
+          ? { google: { headers: configuredHeaders } }
+          : { all: { headers: configuredHeaders } };
+      const result = await initializeGoogle({
+        req,
+        endpoint: EModelEndpoint.google,
+        model_parameters: { model: 'gemini-2.5-flash' },
+        db: createDb(),
+      });
+      const headers = (result.llmConfig as { customHeaders?: Record<string, string> })
+        .customHeaders;
+      expect(headers?.['X-Agent-Id']).toBe('{{LIBRECHAT_AGENT_ID}}');
+      expect(headers?.Authorization).toBe(`Bearer ${apiKey}`);
+      resolveConfigHeaders({ llmConfig: result.llmConfig, agent: { id: 'agent_root' } });
+      const resolved = (result.llmConfig as { customHeaders?: Record<string, string> })
+        .customHeaders;
+      expect(resolved?.['X-Agent-Id']).toBe('agent_root');
+      expect(resolved?.Authorization).toBe(`Bearer ${apiKey}`);
+    },
+  );
+
+  it.each([
+    ['google', 'Authorization'],
+    ['google', 'authorization'],
+    ['all', 'Authorization'],
+    ['all', 'authorization'],
+  ])('resolves operator %s %s without provider-managed auth', async (endpoint, name) => {
+    process.env.GOOGLE_KEY = 'test-key';
+    mockIsEnabled.mockImplementation((value) => value === 'true');
+    mockGetGoogleConfig.mockImplementationOnce((credentials, options) =>
+      jest.requireActual('./llm').getGoogleConfig(credentials, options),
+    );
+    const req = createReq();
+    if (!req.config) throw new Error('Expected initialized test config');
+    const headers = { [name]: 'Bearer {{LIBRECHAT_USER_TENANT_ID}}/{{LIBRECHAT_AGENT_ID}}' };
+    req.config.endpoints = endpoint === 'google' ? { google: { headers } } : { all: { headers } };
+    const result = await initializeGoogle({
+      req,
+      endpoint: EModelEndpoint.google,
+      model_parameters: { model: 'gemini-2.5-flash' },
+      db: createDb(),
+    });
+    const runConfig = { ...result.llmConfig };
+    resolveConfigHeaders({
+      llmConfig: runConfig,
+      tenantId: 'tenant-one',
+      agent: { id: 'agent_root' },
+    });
+    expect((runConfig as { customHeaders?: Record<string, string> }).customHeaders?.[name]).toBe(
+      'Bearer tenant-one/agent_root',
+    );
   });
 
   it('forces Vertex AI ADC config and ignores GOOGLE_KEY for vertexai endpoint', async () => {
@@ -129,6 +231,27 @@ describe('initializeGoogle', () => {
     );
   });
 
+  it('loads the stored API key when a resumed request omits expiry metadata', async () => {
+    process.env.GOOGLE_KEY = 'user_provided';
+    const db = createDb();
+
+    await initializeGoogle({
+      req: createReq(),
+      endpoint: EModelEndpoint.google,
+      model_parameters: { model: 'gemini-2.5-flash' },
+      db,
+    });
+
+    expect(db.getUserKey).toHaveBeenCalledWith({
+      userId: 'user-1',
+      name: EModelEndpoint.google,
+    });
+    expect(mockCheckUserKeyExpiry).not.toHaveBeenCalled();
+
+    const [credentials] = getGoogleConfigCall();
+    expect(credentials).toBe('user-google-key');
+  });
+
   it('resolves configured headers at init (merged over endpoints.all) before getGoogleConfig', async () => {
     process.env.GOOGLE_KEY = 'test-api-key';
 
@@ -163,5 +286,62 @@ describe('initializeGoogle', () => {
       'X-Conversation-Id': 'convo-9',
       'X-User-Id': 'user-1',
     });
+  });
+});
+
+describe('initializeGoogle streamRate resolution', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.GOOGLE_KEY = 'test-api-key';
+  });
+
+  async function initWithConfig(
+    endpointsConfig: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const req = createReq();
+    (req as unknown as { config: Record<string, unknown> }).config = {
+      endpoints: endpointsConfig,
+    };
+    const result = await initializeGoogle({
+      req,
+      endpoint: EModelEndpoint.google,
+      model_parameters: { model: 'gemini-2.5-flash' },
+      db: createDb(),
+    });
+    return result.llmConfig as Record<string, unknown>;
+  }
+
+  it('wires the endpoint streamRate into llmConfig._lc_stream_delay', async () => {
+    const llmConfig = await initWithConfig({ [EModelEndpoint.google]: { streamRate: 25 } });
+    expect(llmConfig._lc_stream_delay).toBe(25);
+  });
+
+  it('preserves the endpoint streamRate when `endpoints.all` exists without one', async () => {
+    const llmConfig = await initWithConfig({
+      [EModelEndpoint.google]: { streamRate: 25 },
+      all: { activityLabel: true },
+    });
+    expect(llmConfig._lc_stream_delay).toBe(25);
+  });
+
+  it('lets `endpoints.all.streamRate` override the endpoint value', async () => {
+    const llmConfig = await initWithConfig({
+      [EModelEndpoint.google]: { streamRate: 25 },
+      all: { streamRate: 10 },
+    });
+    expect(llmConfig._lc_stream_delay).toBe(10);
+  });
+
+  it('lets `endpoints.all.streamRate: 0` disable smoothing explicitly', async () => {
+    const llmConfig = await initWithConfig({
+      [EModelEndpoint.google]: { streamRate: 25 },
+      all: { streamRate: 0 },
+    });
+    expect(llmConfig._lc_stream_delay).toBe(0);
+  });
+
+  it('leaves the delay unset when neither level configures a streamRate', async () => {
+    const llmConfig = await initWithConfig({ all: { activityLabel: true } });
+    expect(llmConfig._lc_stream_delay).toBeUndefined();
   });
 });

@@ -1,4 +1,9 @@
 import { logger } from '@librechat/data-schemas';
+import type { AppConfig } from '@librechat/data-schemas';
+import { getScoreDestinations, type LangfuseScoreDestination } from './destinations';
+import { isLangfuseTraceAllowed } from './policy';
+import { mergeHeaders } from '~/utils/headers';
+import { redirectPolicyFor } from './utils';
 
 export type LangfuseFeedback = {
   rating?: 'thumbsUp' | 'thumbsDown';
@@ -10,41 +15,47 @@ export type LangfuseFeedbackMetadata = Record<string, string | number | boolean 
 
 export type SendFeedbackScoreParams = {
   traceId: string;
+  /** Stable source-specific identity; omitted for the existing browser feedback score. */
+  scoreId?: string;
+  /** Retained provider identity date for durable channel feedback updates. */
+  scoreTimestamp?: string;
+  signal?: AbortSignal;
+  /** Internal dispatch fence for callers holding a bounded export lease. Never serialized. */
+  assertActive?: () => void;
+  sampled?: boolean;
+  destinationIds?: string[];
   feedback?: LangfuseFeedback | null;
   metadata?: LangfuseFeedbackMetadata;
   observationId?: string;
+  appConfig?: AppConfig;
+  /**
+   * Must mirror the value used when the trace was generated. `destinationIds`
+   * only restricts feedback to destinations that carry a stable id, so a caller
+   * that opts out of central export has to re-assert it here for destinations
+   * whose project identity is unknown.
+   */
+  centralTraceExportEnabled?: boolean;
+  /**
+   * Whether the message belongs to a temporary chat. Checked on its own because
+   * a resumed turn's response stores no trace record to carry the decision.
+   */
+  isTemporary?: boolean | null;
 };
 
-const DEFAULT_BASE_URL = 'https://cloud.langfuse.com';
-const BASE =
-  process.env.LANGFUSE_BASE_URL ??
-  process.env.LANGFUSE_HOST ??
-  process.env.LANGFUSE_BASEURL ??
-  DEFAULT_BASE_URL;
-
-function isFalseEnv(value?: string): boolean {
-  return value != null && ['0', 'false', 'no', 'off'].includes(value.trim().toLowerCase());
-}
-
-function isSampleRateEnabled(value?: string): boolean {
-  if (value == null || value.trim() === '') {
-    return true;
-  }
-  const parsed = Number(value);
-  return !Number.isFinite(parsed) || parsed !== 0;
-}
-
-const ENABLED =
-  Boolean(process.env.LANGFUSE_PUBLIC_KEY && process.env.LANGFUSE_SECRET_KEY) &&
-  !isFalseEnv(process.env.LANGFUSE_TRACING_ENABLED) &&
-  isSampleRateEnabled(process.env.LANGFUSE_SAMPLE_RATE);
-const AUTHORIZATION = ENABLED
-  ? 'Basic ' +
-    Buffer.from(`${process.env.LANGFUSE_PUBLIC_KEY}:${process.env.LANGFUSE_SECRET_KEY}`).toString(
-      'base64',
-    )
-  : undefined;
 const ENVIRONMENT = process.env.LANGFUSE_TRACING_ENVIRONMENT;
+
+type LangfuseScorePayload = {
+  id: string;
+  traceId: string;
+  name: 'user-feedback';
+  timestamp?: string;
+  value: number;
+  dataType: 'BOOLEAN';
+  comment?: string;
+  metadata: Record<string, string | number | boolean>;
+  observationId?: string;
+  environment?: string;
+};
 
 function cleanMetadata(
   metadata: LangfuseFeedbackMetadata,
@@ -61,31 +72,63 @@ function cleanMetadata(
   );
 }
 
-export async function sendFeedbackScore({
+async function deleteScore(
+  destination: LangfuseScoreDestination,
+  scoreId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(
+    `${destination.baseUrl}/api/public/scores/${encodeURIComponent(scoreId)}`,
+    {
+      method: 'DELETE',
+      signal,
+      headers: mergeHeaders(destination.headers, { Authorization: destination.authorization }),
+      ...redirectPolicyFor(destination.headers),
+    },
+  );
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`score delete ${res.status}: ${await res.text()}`);
+  }
+}
+
+async function createScore(
+  destination: LangfuseScoreDestination,
+  payload: LangfuseScorePayload,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${destination.baseUrl}/api/public/scores`, {
+    method: 'POST',
+    signal,
+    headers: mergeHeaders(destination.headers, {
+      Authorization: destination.authorization,
+      'Content-Type': 'application/json',
+    }),
+    body: JSON.stringify(payload),
+    ...redirectPolicyFor(destination.headers),
+  });
+  if (!res.ok) {
+    throw new Error(`score create ${res.status}: ${await res.text()}`);
+  }
+}
+
+function buildScorePayload({
+  scoreId,
+  scoreTimestamp,
   traceId,
   feedback,
-  metadata = {},
+  metadata,
   observationId,
-}: SendFeedbackScoreParams): Promise<void> {
-  if (!ENABLED || !AUTHORIZATION || !traceId) {
-    return;
-  }
-
-  const scoreId = `feedback-${traceId}`;
-
-  if (!feedback?.rating) {
-    const res = await fetch(`${BASE}/api/public/scores/${encodeURIComponent(scoreId)}`, {
-      method: 'DELETE',
-      headers: { Authorization: AUTHORIZATION },
-    });
-    if (!res.ok && res.status !== 404) {
-      throw new Error(`langfuse score delete ${res.status}: ${await res.text()}`);
-    }
-    return;
-  }
-
-  const body = {
+}: {
+  scoreId: string;
+  scoreTimestamp?: string;
+  traceId: string;
+  feedback: LangfuseFeedback;
+  metadata: LangfuseFeedbackMetadata;
+  observationId?: string;
+}): LangfuseScorePayload {
+  return {
     id: scoreId,
+    ...(scoreTimestamp ? { timestamp: scoreTimestamp } : {}),
     traceId,
     name: 'user-feedback',
     value: feedback.rating === 'thumbsUp' ? 1 : 0,
@@ -95,14 +138,81 @@ export async function sendFeedbackScore({
     ...(observationId ? { observationId } : {}),
     ...(ENVIRONMENT ? { environment: ENVIRONMENT } : {}),
   };
+}
 
-  const res = await fetch(`${BASE}/api/public/scores`, {
-    method: 'POST',
-    headers: { Authorization: AUTHORIZATION, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    throw new Error(`langfuse score create ${res.status}: ${await res.text()}`);
+export async function sendFeedbackScore({
+  traceId,
+  scoreId: requestedScoreId,
+  scoreTimestamp,
+  signal,
+  assertActive,
+  sampled,
+  destinationIds,
+  feedback,
+  metadata = {},
+  observationId,
+  appConfig,
+  centralTraceExportEnabled,
+  isTemporary,
+}: SendFeedbackScoreParams): Promise<void> {
+  assertActive?.();
+  signal?.throwIfAborted();
+  if (!traceId || !isLangfuseTraceAllowed(appConfig, isTemporary)) {
+    return;
   }
-  logger.debug(`[langfuse] feedback score sent for trace ${traceId} (${feedback.rating})`);
+
+  const destinationIdSet = destinationIds == null ? undefined : new Set(destinationIds);
+  const destinations = (
+    await getScoreDestinations(appConfig, traceId, sampled, { centralTraceExportEnabled })
+  ).filter(({ id }) => destinationIdSet == null || (id != null && destinationIdSet.has(id)));
+  assertActive?.();
+  signal?.throwIfAborted();
+  if (destinations.length === 0) {
+    return;
+  }
+
+  const scoreId = requestedScoreId ?? `feedback-${traceId}`;
+  const payload = feedback?.rating
+    ? buildScorePayload({ scoreId, scoreTimestamp, traceId, feedback, metadata, observationId })
+    : undefined;
+
+  const results = await Promise.allSettled(
+    destinations.map((destination) =>
+      payload
+        ? createScore(destination, payload, signal)
+        : deleteScore(destination, scoreId, signal),
+    ),
+  );
+  const failures: string[] = [];
+
+  results.forEach((result, index) => {
+    const destination = destinations[index];
+    if (!destination) {
+      return;
+    }
+    if (result.status === 'fulfilled') {
+      logger.debug(
+        `[langfuse] ${destination.name} feedback score ${
+          payload ? 'sent' : 'deleted'
+        } for trace ${traceId} (${feedback?.rating ?? 'none'})`,
+      );
+      return;
+    }
+
+    logger.error(
+      `[langfuse] ${destination.name} feedback score ${
+        payload ? 'send' : 'delete'
+      } failed for trace ${traceId}:`,
+      result.reason,
+    );
+    failures.push(
+      `langfuse ${destination.name} score ${payload ? 'create' : 'delete'} failed: ${
+        result.reason instanceof Error ? result.reason.message : String(result.reason)
+      }`,
+    );
+  });
+
+  if (failures.length > 0) {
+    throw new Error(failures.join('; '));
+  }
 }

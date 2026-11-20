@@ -1,4 +1,7 @@
+const { maxWorkers, workerIdleMemoryLimit } = require('../config/jest.workers.cjs');
+
 const esModules = [
+  '@librechat/agents',
   'openid-client',
   'oauth4webapi',
   'jose',
@@ -6,7 +9,15 @@ const esModules = [
   '@langchain/langgraph-checkpoint',
   '@langchain/langgraph-sdk',
   '@mistralai/mistralai',
+  '@modelcontextprotocol/ext-apps',
   'uuid',
+  'sanitize-html',
+  'htmlparser2',
+  'domhandler',
+  'domelementtype',
+  'domutils',
+  'dom-serializer',
+  'entities',
 ].join('|');
 
 module.exports = {
@@ -14,7 +25,8 @@ module.exports = {
   clearMocks: true,
   roots: ['<rootDir>'],
   coverageDirectory: 'coverage',
-  maxWorkers: '50%',
+  maxWorkers,
+  workerIdleMemoryLimit,
   testTimeout: 30000, // 30 seconds timeout for all tests
   setupFiles: ['./test/jestSetup.js', './test/__mocks__/logger.js'],
   moduleNameMapper: {
@@ -24,10 +36,13 @@ module.exports = {
     '^openid-client$': '<rootDir>/test/__mocks__/openid-client.js',
   },
   transform: {
-    '\\.[jt]sx?$': [
+    '\\.[cm]?[jt]sx?$': [
       'babel-jest',
       {
-        presets: [['@babel/preset-env', { targets: { node: 'current' } }]],
+        presets: [
+          ['@babel/preset-env', { targets: { node: 'current' } }],
+          '@babel/preset-typescript',
+        ],
       },
     ],
   },
