@@ -19,6 +19,7 @@ function vertexToolConstructors({ user, agent, options, getAuthFields }) {
       const authValues = await loadAuthValues({ userId: user, authFields });
       return new GoogleVertexAI({
         ...authValues,
+        isAgent: !!agent,
         geminiModel: agent?.model || DEFAULT_GEMINI_MODEL,
       });
     },
