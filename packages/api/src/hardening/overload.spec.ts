@@ -48,6 +48,16 @@ describe('errorStatus', () => {
     expect(errorStatus(undefined)).toBeUndefined();
     expect(errorStatus('429')).toBeUndefined();
   });
+
+  it('reads the status when a getter on the error throws', () => {
+    const error = Object.defineProperty({ status: 429 }, 'message', {
+      get() {
+        throw new Error('provider content');
+      },
+    });
+    expect(errorStatus(error)).toBe(429);
+    expect(overloadErrorText(error)).toBeDefined();
+  });
 });
 
 describe('isRetryableStatus', () => {

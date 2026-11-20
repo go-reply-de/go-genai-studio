@@ -1,14 +1,6 @@
 import { logger } from '@librechat/data-schemas';
 import { ErrorTypes } from 'librechat-data-provider';
 
-/** Where LangChain, fetch and the Vertex SDK put the HTTP status of a failed model call. */
-interface StatusError {
-  status?: string | number;
-  message?: string;
-  response?: { status?: number };
-  cause?: { code?: string | number };
-}
-
 export interface OverloadRetryOptions {
   /** Total tries, the first one included. */
   attempts?: number;
@@ -26,22 +18,34 @@ const OVERLOAD_INFO =
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-function httpStatus(value: string | number | undefined): number | undefined {
+function httpStatus(value: unknown): number | undefined {
   return typeof value === 'number' && value >= 100 && value < 600 ? value : undefined;
 }
 
-/** Reads the status from the response, then the Vertex SDK's cause, then the message. */
-export function errorStatus(error: unknown): number | undefined {
-  if (typeof error !== 'object' || error === null) {
+/** A provider error can carry getters that throw, so each field is read on its own. */
+function field(value: unknown, key: string): unknown {
+  if (typeof value !== 'object' || value === null) {
     return undefined;
   }
-  const { response, status, cause, message } = error as StatusError;
+  try {
+    return (value as Record<string, unknown>)[key];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Reads the status where LangChain, fetch and the Vertex SDK put it: the response, the error,
+ * the Vertex SDK's cause, then the message.
+ */
+export function errorStatus(error: unknown): number | undefined {
+  const message = field(error, 'message');
   const fromMessage =
     typeof message === 'string' ? STATUS_IN_MESSAGE.exec(message)?.[1] : undefined;
   return (
-    httpStatus(response?.status) ??
-    httpStatus(status) ??
-    httpStatus(cause?.code) ??
+    httpStatus(field(field(error, 'response'), 'status')) ??
+    httpStatus(field(error, 'status')) ??
+    httpStatus(field(field(error, 'cause'), 'code')) ??
     (fromMessage == null ? undefined : Number(fromMessage))
   );
 }
