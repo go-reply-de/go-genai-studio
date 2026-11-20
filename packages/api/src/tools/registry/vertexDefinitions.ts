@@ -1,4 +1,4 @@
-import type { ExtendedJsonSchema, ToolRegistryDefinition } from './definitions';
+import type { ExtendedJsonSchema } from './schema';
 
 /** Web Grounding Enterprise tool JSON schema */
 export const webGroundingEnterpriseSchema: ExtendedJsonSchema = {
@@ -30,20 +30,20 @@ export const vertexAISearchSchema: ExtendedJsonSchema = {
   required: ['query'],
 };
 
-/** Registry entries for the Vertex AI tools, spread into `toolDefinitions`. */
-export const vertexToolDefinitions: Record<string, ToolRegistryDefinition> = {
+/** Registry entries for the Vertex AI tools; `toolDefinitions` checks their shape where it spreads them. */
+export const vertexToolDefinitions = {
   web_grounding_enterprise: {
     name: 'web_grounding_enterprise',
     description:
       "Use the GDPR-compliant 'web_grounding_enterprise' tool to retrieve search results from the web.",
     schema: webGroundingEnterpriseSchema,
-    toolType: 'builtin',
+    toolType: 'builtin' as const,
   },
   vertex_ai_search: {
     name: 'vertex_ai_search',
     description:
       "Use the 'vertex_ai_search' tool to retrieve search results from a Vertex AI Search data store relevant to your input.",
     schema: vertexAISearchSchema,
-    toolType: 'builtin',
+    toolType: 'builtin' as const,
   },
 };
