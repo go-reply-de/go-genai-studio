@@ -135,11 +135,12 @@ spec:
                 configMapKeyRef:
                   key: APP_TITLE
                   name: env
-            - name: ADMIN_PANEL_URL
-              valueFrom:
-                configMapKeyRef:
-                  key: ADMIN_PANEL_URL
-                  name: env
+            # Goes with its env.yaml key: a reference to a missing key keeps the pod from starting.
+            - name: ADMIN_PANEL_URL ###_ADMIN_ONLY###
+              valueFrom: ###_ADMIN_ONLY###
+                configMapKeyRef: ###_ADMIN_ONLY###
+                  key: ADMIN_PANEL_URL ###_ADMIN_ONLY###
+                  name: env ###_ADMIN_ONLY###
             - name: ASSISTANTS_API_KEY
               valueFrom:
                 configMapKeyRef:
