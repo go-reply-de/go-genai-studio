@@ -1,6 +1,7 @@
 import { logger, getWeeklyReset } from '@librechat/data-schemas';
 import type { OrphanUploadDeps } from './orphans';
 import { sweepStaleUploads, STALE_UPLOAD_MS } from './uploads';
+import { getSafeErrorMetadata } from '~/utils/errors';
 import { ensureLogsExpiryIndex } from './logs';
 import { sweepOrphanUploads } from './orphans';
 
@@ -19,8 +20,7 @@ export interface RetentionMaintenanceDeps extends OrphanUploadDeps {
 
 /** File system errors name the path, and with it the uploaded file name, so log neither. */
 function safeError(error: unknown): Record<string, unknown> {
-  const failure = error as NodeJS.ErrnoException | null;
-  return { type: failure?.name ?? 'UnknownError', code: failure?.code };
+  return { ...getSafeErrorMetadata(error), code: (error as NodeJS.ErrnoException | null)?.code };
 }
 
 /**
