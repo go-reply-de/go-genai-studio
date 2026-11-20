@@ -88,7 +88,7 @@ afterEach(async () => {
 
 describe('sweepStaleUploads', () => {
   it('removes staged uploads past the cutoff and keeps fresh ones', async () => {
-    const stale = await place(uploadsPath, 'temp/user-a/TESTFALL-DIMEAS-01.pdf', 2 * HOUR_MS);
+    const stale = await place(uploadsPath, 'temp/user-a/TESTFALL-01.pdf', 2 * HOUR_MS);
     const otherStale = await place(uploadsPath, 'temp/user-b/synthetic.png', 3 * HOUR_MS);
     const fresh = await place(uploadsPath, 'temp/user-a/in-flight.pdf', 60_000);
 

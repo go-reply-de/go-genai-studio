@@ -325,8 +325,8 @@ FATAL: gs://${MODELS_BUCKET} does not exist.
 
 This bucket is managed by Terraform, not by this script. Create it by setting
   enable_sovereign_inference = true
-in environments/uksh/${ENVIRONMENT}/terragrunt.hcl, then:
-  terragrunt apply --working-dir environments/uksh/${ENVIRONMENT}
+in environments/<customer>/${ENVIRONMENT}/terragrunt.hcl of the setup repo, then:
+  terragrunt apply --working-dir environments/<customer>/${ENVIRONMENT}
 MSG
   exit 1
 fi

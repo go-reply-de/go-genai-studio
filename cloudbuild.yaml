@@ -587,10 +587,11 @@ steps:
 substitutions:
   # Selects k8s/profiles/<name>.env for workload sizing. "default" keeps every
   # environment on the values it ran before per-environment sizing existed;
-  # the uksh sov-* environments set this to "sovereign".
+  # the sovereign environments set this to "sovereign".
   _PROFILE: "default"
-  # rwo keeps every environment on ReadWriteOnce disks; the uksh sov-* set this to
-  # rwx via terraform (api_files_rwx = true) to allow more than one api replica.
+  # rwo keeps every environment on ReadWriteOnce disks; the sovereign environments
+  # set this to rwx via terraform (api_files_rwx = true) to allow more than one
+  # api replica.
   _API_FILES_MODE: "rwo"
   _API_FILES_BUCKET_NAME: ""
   # Applies k8s/protected-application.yaml. False is the safe default: a trigger

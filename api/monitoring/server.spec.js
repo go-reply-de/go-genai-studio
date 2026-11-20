@@ -6,7 +6,7 @@ const { createMonitoring } = require('./server');
 
 /** October 2026 has ended, so it is compared with all of September. */
 const NOVEMBER = () => new Date('2026-11-05T10:00:00Z');
-const ENV = { FEEDBACK_DATASET: 'feedback', APP_TITLE: 'DiMeAs', ENVIRONMENT: 'sov-dev' };
+const ENV = { FEEDBACK_DATASET: 'feedback', APP_TITLE: 'Test Studio', ENVIRONMENT: 'sov-dev' };
 
 const REVIEWER = { 'X-Goog-Authenticated-User-Email': 'accounts.google.com:reviewer@example.org' };
 const ACTION = { ...REVIEWER, 'X-Monitoring-Page': '1', 'Content-Type': 'application/json' };
@@ -128,13 +128,13 @@ describe('monitoring server', () => {
         headers: { 'X-Goog-Authenticated-User-Email': 'accounts.google.com:a&b.rev@example.org' },
       })
     ).text();
-    expect(page).toContain('<b id="app">DiMeAs</b>');
+    expect(page).toContain('<b id="app">Test Studio</b>');
     expect(page).toContain('<span class="badge" id="env">sov-dev</span>');
     expect(page).toContain('Angemeldet als a&amp;b.rev@example.org');
     expect(page).toContain('<span class="avatar" id="avatar" aria-hidden="true">AB</span>');
     expect(page).toContain('data-month="2026-09"');
     expect(page).toContain('<span id="month-title">September 2026</span>');
-    expect(page).toContain('<title>September 2026 · DiMeAs Feedback</title>');
+    expect(page).toContain('<title>September 2026 · Test Studio Feedback</title>');
     expect(page).not.toContain('{{');
 
     const fallback = await (await app.request('/?m=2026-13', { headers: REVIEWER })).text();
@@ -629,7 +629,7 @@ describe('Nutzung tab', () => {
     const res = await app.request('/usage?m=2026-09', { headers: REVIEWER });
     expect(res.status).toBe(200);
     const page = await res.text();
-    expect(page).toContain('<title>September 2026 · DiMeAs Nutzung</title>');
+    expect(page).toContain('<title>September 2026 · Test Studio Nutzung</title>');
     expect(page).toContain('data-month="2026-09"');
     expect(page).toContain('data-default-split="purpose"');
     expect(page).toContain('<script src="usage.js" defer></script>');

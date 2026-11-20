@@ -259,7 +259,7 @@ describe('createAdminRequestAudit', () => {
                 name: 'proxy',
                 baseURL: 'https://llm.example.org',
                 apiKey: 'sk-live-123',
-                headers: { Authorization: 'Bearer abc', 'X-Org': 'uksh' },
+                headers: { Authorization: 'Bearer abc', 'X-Org': 'example' },
               },
               { name: 'env-backed', apiKey: '${PROXY_API_KEY}' },
             ],
