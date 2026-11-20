@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ==============================================================================
-# UKSH Sovereign Cloud - Model Inference & Embedding Validation
+# Sovereign Cloud - Model Inference & Embedding Validation
 #
 # Verifies that generation and embeddings are served from inside the cluster,
 # that Gemma 4's tool-calling protocol works (the agents endpoint depends on it),
@@ -49,7 +49,7 @@ run_in_cluster "curl -sS --max-time 120 -X POST http://${VLLM_SERVICE}/v1/chat/c
   -d '{
     \"model\": \"${GEMMA_MODEL}\",
     \"messages\": [
-      {\"role\": \"system\", \"content\": \"Du bist ein medizinischer KI-Assistent für das UKSH. Antworte praezise und auf Deutsch.\"},
+      {\"role\": \"system\", \"content\": \"Du bist ein medizinischer KI-Assistent. Antworte praezise und auf Deutsch.\"},
       {\"role\": \"user\", \"content\": \"Nenne in drei Saetzen die wichtigsten Kontraindikationen fuer eine MRT-Untersuchung.\"}
     ],
     \"max_tokens\": 300,
@@ -92,7 +92,7 @@ run_in_cluster "curl -sS --max-time 60 -X POST http://${TEI_SERVICE}/v1/embeddin
   -H 'Content-Type: application/json' \
   -d '{
     \"model\": \"${EMBEDDING_MODEL}\",
-    \"input\": \"Universitaetsklinikum Schleswig-Holstein DiMeAs RAG Dokumentenanalyse\"
+    \"input\": \"Medizinische Leitlinie RAG Dokumentenanalyse\"
   }' | tr ',' '\n' | grep -c '^-\?[0-9]' | sed 's/^/embedding dimension: /'"
 echo ""
 

@@ -534,7 +534,7 @@ describe('WebGroundingEnterprise client wiring', () => {
     fs.writeFileSync(
       key,
       JSON.stringify({
-        project_id: 'uksh-pub-dev-genai-portal',
+        project_id: 'example-pub-dev-genai-portal',
         client_email: 'sa@x',
         private_key: 'k',
       }),
