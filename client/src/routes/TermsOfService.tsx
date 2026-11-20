@@ -26,25 +26,26 @@ function TermsOfService() {
     ? modalContent.join('\n\n')
     : modalContent || 'The Terms of Service content could not be loaded.';
 
+  // Theme colours throughout: `prose` reads the theme, so a fixed white card turns its text unreadable in dark mode.
   return (
-    <div className="min-h-screen items-center bg-gray-50 py-12 font-['Inter',_sans-serif] text-gray-800">
+    <div className="bg-surface-secondary text-text-primary min-h-screen py-12">
       <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
         <header className="mb-10 text-center">
-          <h1 className="text-4xl font-bold text-gray-900">
+          <h1 className="text-text-primary text-4xl font-bold">
             {localize('com_ui_terms_of_service')}
           </h1>
-          <p className="mt-2 text-lg text-gray-600">
+          <p className="text-text-secondary mt-2 text-lg">
             {localize('com_ui_tos_instructions' as TranslationKeys)}
           </p>
         </header>
 
-        <main className="rounded-lg bg-white p-8 shadow-md">
-          <div className="prose prose-lg mx-auto">
+        <main className="bg-surface-primary rounded-lg p-8 shadow-md">
+          <div className="prose mx-auto">
             <ReactMarkdown rehypePlugins={[rehypeRaw]}>{content}</ReactMarkdown>
           </div>
         </main>
 
-        <footer className="mt-10 text-center text-sm text-gray-500">
+        <footer className="text-text-tertiary mt-10 text-center text-sm">
           <p>
             {localize('com_ui_tos_copyright' as TranslationKeys, {
               0: String(new Date().getFullYear()),
