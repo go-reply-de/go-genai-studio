@@ -6,7 +6,7 @@ metadata:
 spec:
   domains:
     - ###DOMAIN###
-    - admin.###DOMAIN###
+    - admin.###DOMAIN### ###_ADMIN_ONLY###
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -27,20 +27,19 @@ spec:
   #
   # Flow style on purpose: the render step deletes this by line.
   tls: [{ secretName: ###_TLS_SECRET_NAME### }]
-  rules:
-    # Only resolves when the admin panel is deployed (admin_panel_enabled=true
-    # in Terraform for this environment); otherwise this backend is unhealthy
-    # but the rest of the ingress (main app on the primary domain) is unaffected.
-    - host: admin.###DOMAIN###
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: admin-service
-                port:
-                  number: 3000
+  # Rendered only with the admin panel: a backend on a missing Service fails
+  # the whole Ingress, so GKE stops syncing the load balancer.
+  rules: ###_ADMIN_ONLY###
+    - host: admin.###DOMAIN### ###_ADMIN_ONLY###
+      http: ###_ADMIN_ONLY###
+        paths: ###_ADMIN_ONLY###
+          - path: / ###_ADMIN_ONLY###
+            pathType: Prefix ###_ADMIN_ONLY###
+            backend: ###_ADMIN_ONLY###
+              service: ###_ADMIN_ONLY###
+                name: admin-service ###_ADMIN_ONLY###
+                port: ###_ADMIN_ONLY###
+                  number: 3000 ###_ADMIN_ONLY###
   defaultBackend:
     service:
       name: api-service

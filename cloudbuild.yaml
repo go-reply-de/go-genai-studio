@@ -162,6 +162,12 @@ steps:
         else
           sed -i -e "/###_RWX_ONLY###/d" -e "s|[[:space:]]*###_RWO_ONLY###||g" "$file"
         fi
+        # Without the admin panel its host, certificate domain and UI link go too.
+        if [ "${_ADMIN_PANEL_ENABLED}" = "true" ]; then
+          sed -i -e "s|[[:space:]]*###_ADMIN_ONLY###||g" "$file"
+        else
+          sed -i -e "/###_ADMIN_ONLY###/d" "$file"
+        fi
         # No reservation deletes both lines: "specific" without one leaves the pod Pending.
         if [ -z "${_GPU_RESERVATION_NAME}" ]; then
           sed -i -e "/###_RESERVATION_AFFINITY###/d" -e "/###_GPU_RESERVATION_NAME###/d" "$file"
