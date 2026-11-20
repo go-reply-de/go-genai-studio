@@ -340,6 +340,26 @@ steps:
     - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
 
 - name: "gcr.io/cloud-builders/kubectl"
+  id: 'Deploy RAG autoscaler'
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      # Removed where the profile gives rag no room to grow, so lowering the max
+      # takes effect. rag.yaml resets replicas to the min; the HPA scales back up.
+      RAG_MIN_REPLICAS=$(sed -n 's/^RAG_MIN_REPLICAS=//p' /workspace/render-vars.env)
+      RAG_MAX_REPLICAS=$(sed -n 's/^RAG_MAX_REPLICAS=//p' /workspace/render-vars.env)
+      if [ "$$RAG_MAX_REPLICAS" -le "$$RAG_MIN_REPLICAS" ]; then
+        echo "RAG_MAX_REPLICAS is '$$RAG_MAX_REPLICAS' for profile '${_PROFILE}', removing any rag autoscaler."
+        kubectl delete hpa rag --namespace=${_GKE_NAMESPACE} --ignore-not-found
+        exit 0
+      fi
+      kubectl apply -f ./k8s/rag-hpa.yaml --namespace=${_GKE_NAMESPACE}
+  env:
+    - "CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER_NAME}"
+    - "CLOUDSDK_COMPUTE_REGION=$LOCATION"
+
+- name: "gcr.io/cloud-builders/kubectl"
   id: 'Deploy Redis'
   entrypoint: bash
   args:
