@@ -885,16 +885,16 @@ metadata:
   annotations:
     iam.gke.io/gcp-service-account: ###_K8S_SA_EMAIL###
 ---
-# Without this, a node drain can evict every api pod at once. maxUnavailable 1
-# drains one at a time, so one keeps serving. Expressed as maxUnavailable rather
-# than minAvailable so a single-replica environment can still be drained.
+# rwo runs a single api pod, so an eviction is an outage: it follows the stores'
+# STORE_MIN_AVAILABLE. rwx runs several, and draining one at a time keeps one serving.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: api
   namespace: ###_GKE_NAMESPACE###
 spec:
-  maxUnavailable: 1
+  minAvailable: ###_STORE_MIN_AVAILABLE### ###_RWO_ONLY###
+  maxUnavailable: 1 ###_RWX_ONLY###
   selector:
     matchLabels:
       app: api
