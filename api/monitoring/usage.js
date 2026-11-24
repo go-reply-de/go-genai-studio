@@ -143,11 +143,18 @@ function totals(month, upTo = month.days.length) {
   };
 }
 
-/** The accounts at the end of each day with figures, oldest first, as [YYYY-MM-DD, count]. */
-const growthOf = (loaded) =>
-  loaded.flatMap((data) =>
-    data.days.flatMap((d, i) => (d ? [[`${data.month}-${pad(i + 1)}`, d.accounts]] : [])),
-  );
+/** The accounts at the end of the last day before `from` (YYYY-MM-DD); null before the exporter ran. */
+function accountsBefore(loaded, from) {
+  let count = null;
+  for (const data of loaded) {
+    data.days.forEach((d, i) => {
+      if (d && `${data.month}-${pad(i + 1)}` < from) {
+        count = d.accounts;
+      }
+    });
+  }
+  return count;
+}
 
 /**
  * Every model of these months, the one with the most input first, so a model keeps its colour
@@ -451,7 +458,7 @@ function createUsage({ credentials, fetchFn = fetch, now = () => new Date() }) {
       months: all,
       trend,
       models: modelOrder(loaded),
-      growth: growthOf(loaded),
+      accountsBefore: accountsBefore(loaded, current.period.from),
     };
   }
 
@@ -504,8 +511,8 @@ function createUsage({ credentials, fetchFn = fetch, now = () => new Date() }) {
       trend,
       months: all,
       models: modelOrder(loaded),
-      // Every day, not only the interval's, so the graph shows where the interval stands.
-      growth: growthOf(await everyMonth(all)),
+      // The day before the interval can lie in a month outside it.
+      accountsBefore: accountsBefore(await everyMonth(all), from),
     };
   }
 

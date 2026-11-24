@@ -1833,8 +1833,7 @@ mark.hint {
   }
 }
 
-/* Nutzerkonten insgesamt, Wer nutzt wie viel? */
-.growth,
+/* Wer nutzt wie viel? */
 .groups {
   display: grid;
   gap: 16px;
@@ -1842,47 +1841,9 @@ mark.hint {
   padding-top: 24px;
   border-top: 1px solid var(--border-light);
 }
-.growth .lane-head,
 .groups .lane-head {
   align-items: center;
 }
-.growth-box {
-  min-height: 240px;
-}
-.growth-band {
-  fill: var(--surface-secondary);
-}
-/* Drawn over the days' hit areas, so the pointer passes through to them. */
-.day-chart .growth-area,
-.day-chart .growth-line,
-.day-chart .growth-dot,
-.growth-mark {
-  pointer-events: none;
-}
-.day-chart .growth-area {
-  fill: var(--series-1);
-  fill-opacity: 0.12;
-}
-.day-chart .growth-line {
-  fill: none;
-  stroke: var(--series-1);
-  stroke-width: 2;
-  stroke-linejoin: round;
-}
-.day-chart .growth-dot {
-  fill: var(--series-1);
-}
-.day-chart text.growth-end {
-  fill: var(--text-primary);
-  font-weight: 600;
-}
-.growth-mark {
-  display: none;
-}
-.linked .growth-mark {
-  display: inline;
-}
-.growth-now,
 .groups-week {
   font-size: 15px;
   color: var(--text-secondary);

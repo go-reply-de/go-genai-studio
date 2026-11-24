@@ -480,20 +480,18 @@ describe('user accounts', () => {
     ]);
   });
 
-  it('lists every day since the exporter started for the graph, up to the running hour', async () => {
+  it('gives the count before the month, and none before the exporter ran', async () => {
     const app = start({ up: [[{}, accounts]] });
-    const { growth } = await app.usage.view('2026-10');
-    expect(growth[0]).toEqual(['2026-08-05', 3]);
-    expect(growth).toContainEqual(['2026-10-10', 5]);
-    expect(growth.at(-1)).toEqual(['2026-11-05', 4]);
-    expect(growth).toHaveLength(93);
+    expect((await app.usage.view('2026-10')).accountsBefore).toBe(3);
+    expect((await app.usage.view('2026-11')).accountsBefore).toBe(4);
+    expect((await app.usage.view('2026-08')).accountsBefore).toBeNull();
   });
 
-  it('gives an interval the graph of every day, not only its own', async () => {
+  it('gives an interval the count of the day before it, also from an earlier month', async () => {
     const app = start({ up: [[{}, accounts]] });
-    const view = await app.usage.interval('2026-10-05', '2026-10-12');
-    expect(view.totals.accounts).toBe(5);
-    expect(view.growth[0][0]).toBe('2026-08-05');
-    expect(view.growth.at(-1)[0]).toBe('2026-11-05');
+    const inside = await app.usage.interval('2026-10-15', '2026-10-25');
+    expect([inside.accountsBefore, inside.totals.accounts]).toEqual([5, 4]);
+    const across = await app.usage.interval('2026-10-01', '2026-10-12');
+    expect([across.accountsBefore, across.totals.accounts]).toEqual([3, 5]);
   });
 });
