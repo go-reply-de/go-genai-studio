@@ -1435,12 +1435,7 @@ mark.hint {
 .stats.three {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
-/* The Nutzung lane has no users card: users are only counted per week, in their own list. */
-.stats.two {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-.stats.three .value,
-.stats.two .value {
+.stats.three .value {
   font-size: 22px;
 }
 .day-box {
@@ -1800,17 +1795,14 @@ mark.hint {
   .month-nav[data-span='true'] .month-heading {
     font-size: 18px;
   }
-  .stats.three,
-  .stats.two {
+  .stats.three {
     grid-template-columns: minmax(0, 1fr);
   }
   .stats.three .stat,
-  .stats.three .stat:nth-child(3),
-  .stats.two .stat {
+  .stats.three .stat:nth-child(3) {
     border-left: 0;
   }
-  .stats.three .stat + .stat,
-  .stats.two .stat + .stat {
+  .stats.three .stat + .stat {
     border-top: 1px solid var(--border-light);
   }
   .trend button,
@@ -1841,7 +1833,8 @@ mark.hint {
   }
 }
 
-/* Wer nutzt wie viel? */
+/* Nutzerkonten insgesamt, Wer nutzt wie viel? */
+.growth,
 .groups {
   display: grid;
   gap: 16px;
@@ -1849,9 +1842,47 @@ mark.hint {
   padding-top: 24px;
   border-top: 1px solid var(--border-light);
 }
+.growth .lane-head,
 .groups .lane-head {
   align-items: center;
 }
+.growth-box {
+  min-height: 240px;
+}
+.growth-band {
+  fill: var(--surface-secondary);
+}
+/* Drawn over the days' hit areas, so the pointer passes through to them. */
+.day-chart .growth-area,
+.day-chart .growth-line,
+.day-chart .growth-dot,
+.growth-mark {
+  pointer-events: none;
+}
+.day-chart .growth-area {
+  fill: var(--series-1);
+  fill-opacity: 0.12;
+}
+.day-chart .growth-line {
+  fill: none;
+  stroke: var(--series-1);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.day-chart .growth-dot {
+  fill: var(--series-1);
+}
+.day-chart text.growth-end {
+  fill: var(--text-primary);
+  font-weight: 600;
+}
+.growth-mark {
+  display: none;
+}
+.linked .growth-mark {
+  display: inline;
+}
+.growth-now,
 .groups-week {
   font-size: 15px;
   color: var(--text-secondary);

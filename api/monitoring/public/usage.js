@@ -273,6 +273,7 @@ function apply(data, key) {
   renderTrends();
   renderWeekList();
   renderCharts();
+  renderGrowth();
   MonitoringGroups.show(key);
 }
 
@@ -360,6 +361,26 @@ function renderWeekList() {
   more.setAttribute('aria-expanded', String(state.allWeeks));
 }
 
+const accountsText = (n) => (n === 1 ? t('accountsOne') : t('accountsMany', { n: int(n) }));
+const longDay = (iso) => `${T.longDate(dayOf(iso), monthOf(iso))} ${iso.slice(0, 4)}`;
+
+/** Since the last count before the month or interval, or its first count where none is older. */
+function accountsChange() {
+  const { growth, period, totals } = state.data;
+  if (totals.accounts === null || !growth.length) {
+    return '';
+  }
+  const before =
+    growth.filter(([d]) => d < period.from).at(-1) ?? growth.find(([d]) => d >= period.from);
+  const n = totals.accounts - before[1];
+  const change = `${n < 0 ? '−' : '+'}${int(Math.abs(n))}`;
+  if (state.span) {
+    return n ? t('accountsSpan', { change }) : t('accountsSpanNone');
+  }
+  const month = T.months[monthOf(period.from) - 1];
+  return n ? t('accountsMonth', { change, month }) : t('accountsMonthNone', { month });
+}
+
 function renderStats() {
   const { totals: c, previous: p } = state.data;
   const vs = (now, before, format) =>
@@ -370,6 +391,8 @@ function renderStats() {
   $('p-conversations').textContent = vs(c.conversations, p?.conversations, int);
   $('k-messages').textContent = int(c.messages);
   $('p-messages').textContent = vs(c.messages, p?.messages, int);
+  $('k-accounts').textContent = c.accounts === null ? '–' : int(c.accounts);
+  $('p-accounts').textContent = accountsChange();
   // Per request over the days with tokens; the exporter counts a prompt and its answer as two messages.
   const requests = state.data.days.reduce((n, d) => n + (d?.tokens ? d.messages : 0), 0) / 2;
   for (const field of ['input', 'output']) {
@@ -593,6 +616,85 @@ function renderCharts() {
   lanes.lift(lanes.lifted());
 }
 
+/** Every day's accounts since the exporter started, as one line; the shown month or interval is shaded. */
+function renderGrowth() {
+  const { growth, period } = state.data;
+  const svg = $('growth-chart');
+  const rect = $('growth-box').getBoundingClientRect();
+  const [w, h] = [Math.round(rect.width) || 600, Math.round(rect.height) || 240];
+  // Room on the right for the latest count.
+  const [left, right, y0, y1] = [GUTTER, w - 44, h - 30, 10];
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  const last = growth.at(-1);
+  $('growth-now').textContent = last
+    ? t('growthNow', {
+        count: accountsText(last[1]),
+        date: longDay(last[0]),
+        since: longDay(growth[0][0]),
+      })
+    : '';
+  if (!last) {
+    svg.innerHTML =
+      `<line class="grid" x1="${left}" x2="${right}" y1="${y0}" y2="${y0}"/>` +
+      `<text class="empty" x="${(left + right) / 2}" y="${(y0 + y1) / 2}" text-anchor="middle">${esc(t('growthEmpty'))}</text>`;
+    return;
+  }
+  const top = niceMax(Math.max(...growth.map(([, v]) => v)));
+  const step = (right - left) / growth.length;
+  const x = (i) => left + (i + 0.5) * step;
+  const y = (v) => y0 - (num(v) / top) * (y0 - y1);
+  const shown = growth.flatMap(([d], i) => (d >= period.from && d <= period.to ? [i] : []));
+  let out = shown.length
+    ? `<rect class="growth-band" x="${left + shown[0] * step}" y="${y1}" width="${shown.length * step}" height="${y0 - y1}" rx="4"/>`
+    : '';
+  out += [0, top / 2, top]
+    .map(
+      (v) =>
+        `<line class="grid" x1="${left}" x2="${right}" y1="${y(v)}" y2="${y(v)}"/>` +
+        `<text x="${left - 8}" y="${y(v) + 4}" text-anchor="end">${int(v)}</text>`,
+    )
+    .join('');
+  // A label on each first of the month, with the year in January, where it has room.
+  let labelled = -Infinity;
+  growth.forEach(([d], i) => {
+    out += `<g data-day="${i + 1}"><rect class="hit" x="${left + i * step}" y="${y1}" width="${step}" height="${y0 - y1}"/></g>`;
+    const m = monthOf(d);
+    if ((dayOf(d) === 1 || (i === 0 && dayOf(d) <= 15)) && x(i) - labelled > 48) {
+      const name = m === 1 ? `${T.short[0]} ${d.slice(0, 4)}` : T.short[m - 1];
+      out += `<text x="${x(i)}" y="${y0 + 22}">${esc(name)}</text>`;
+      labelled = x(i);
+    }
+  });
+  const line = growth.map(([, v], i) => `${x(i)},${y(v)}`).join(' ');
+  const end = growth.length - 1;
+  out += `<polygon class="growth-area" points="${x(0)},${y0} ${line} ${x(end)},${y0}"/>`;
+  out += `<polyline class="growth-line" points="${line}"/>`;
+  out += `<circle class="growth-dot" cx="${x(end)}" cy="${y(last[1])}" r="4"/>`;
+  out += `<text class="growth-end" x="${x(end) + 10}" y="${y(last[1]) + 4}">${int(last[1])}</text>`;
+  out += `<g class="growth-mark" id="growth-mark"><line class="today-line" y1="${y1}" y2="${y0}"/><circle class="growth-dot" r="4"/></g>`;
+  svg.innerHTML = out;
+  state.growthPoint = (i) => [x(i), y(growth[i][1])];
+  growthHover.lift(growthHover.lifted());
+}
+
+function describeGrowth(n) {
+  const entry = n ? state.data.growth[n - 1] : null;
+  if (!entry) {
+    $('growth-day').textContent = t('growthHint');
+    return;
+  }
+  const [cx, cy] = state.growthPoint(n - 1);
+  const mark = $('growth-mark');
+  mark.querySelector('line').setAttribute('x1', cx);
+  mark.querySelector('line').setAttribute('x2', cx);
+  mark.querySelector('circle').setAttribute('cx', cx);
+  mark.querySelector('circle').setAttribute('cy', cy);
+  $('growth-day').textContent = t('growthDay', {
+    date: longDay(entry[0]),
+    count: accountsText(entry[1]),
+  });
+}
+
 function renderUsageTable() {
   const { weekly } = state.slots;
   $('usage-table').innerHTML =
@@ -796,6 +898,11 @@ const lanes = MonitoringShell.columnHover({
   columns: () => state.slots.flatMap((s, i) => (s.day ? [i + 1] : [])),
   onLift: describeDay,
 });
+const growthHover = MonitoringShell.columnHover({
+  root: $('growth'),
+  columns: () => (state.data?.growth || []).map((_, i) => i + 1),
+  onLift: describeGrowth,
+});
 $('lanes').addEventListener('click', (event) => {
   const split = event.target.closest('[data-split]');
   if (split && state.data) {
@@ -837,6 +944,7 @@ document.addEventListener('visibilitychange', () => {
 new ResizeObserver(() => {
   if (state.data) {
     renderCharts();
+    renderGrowth();
   }
 }).observe($('lanes'));
 

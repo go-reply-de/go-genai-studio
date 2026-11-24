@@ -452,3 +452,48 @@ describe('usage around the change of month', () => {
     ]);
   });
 });
+
+describe('user accounts', () => {
+  // 3 accounts from 5 August, 5 from 10 October 12:00 in Berlin, 4 after a deletion on 20 October.
+  const accounts = (t) => {
+    if (t <= SINCE_AUG_5) {
+      return undefined;
+    }
+    if (t > Date.parse('2026-10-20T08:00:00Z')) {
+      return 4;
+    }
+    return t > Date.parse('2026-10-10T10:00:00Z') ? 5 : 3;
+  };
+
+  it('keeps the count at the end of each day, and the last one for the month', async () => {
+    const app = start({ up: [[{}, accounts]] });
+    const view = await app.usage.view('2026-10');
+    expect([view.days[8].accounts, view.days[9].accounts, view.days[19].accounts]).toEqual([
+      3, 5, 4,
+    ]);
+    expect(view.totals.accounts).toBe(4);
+    expect(view.trend.map((m) => [m.month, m.accounts])).toEqual([
+      ['2026-08', 3],
+      ['2026-09', 3],
+      ['2026-10', 4],
+      ['2026-11', 4],
+    ]);
+  });
+
+  it('lists every day since the exporter started for the graph, up to the running hour', async () => {
+    const app = start({ up: [[{}, accounts]] });
+    const { growth } = await app.usage.view('2026-10');
+    expect(growth[0]).toEqual(['2026-08-05', 3]);
+    expect(growth).toContainEqual(['2026-10-10', 5]);
+    expect(growth.at(-1)).toEqual(['2026-11-05', 4]);
+    expect(growth).toHaveLength(93);
+  });
+
+  it('gives an interval the graph of every day, not only its own', async () => {
+    const app = start({ up: [[{}, accounts]] });
+    const view = await app.usage.interval('2026-10-05', '2026-10-12');
+    expect(view.totals.accounts).toBe(5);
+    expect(view.growth[0][0]).toBe('2026-08-05');
+    expect(view.growth.at(-1)[0]).toBe('2026-11-05');
+  });
+});
