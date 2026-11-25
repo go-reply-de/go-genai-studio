@@ -2,8 +2,9 @@ import { useEffect } from 'react';
 import type { TStartupConfig } from 'librechat-data-provider';
 import { installSpeechSettingsLock } from '~/utils/speechSettingsLock';
 import { installFaviconFallback } from '~/utils/faviconPlaceholder';
-import { installLocalVoiceGuard } from '~/utils/speechGuard';
 import { installFeedbackTextHint } from '~/utils/feedbackTextHint';
+import { installLocalVoiceGuard } from '~/utils/speechGuard';
+import useTranscribeSpeech from './useTranscribeSpeech';
 import useLocalSpeechOnly from './useLocalSpeechOnly';
 import i18n from '~/locales/i18n';
 
@@ -18,8 +19,10 @@ export default function useHardening(startupConfig?: TStartupConfig) {
   const speechLocalOnly = readFlag(startupConfig, 'speechLocalOnly');
   const strictBrowserEgress = readFlag(startupConfig, 'strictBrowserEgress');
   const feedbackTexts = readFlag(startupConfig, 'feedbackTexts');
+  const speechTranscribe = readFlag(startupConfig, 'speechTranscribe');
 
   useLocalSpeechOnly(speechLocalOnly);
+  useTranscribeSpeech(speechTranscribe);
 
   useEffect(() => {
     if (!speechLocalOnly || typeof window.speechSynthesis === 'undefined') {

@@ -43,6 +43,7 @@ function render(startupConfig: TStartupConfig) {
         conversationMode: useRecoilValue(store.conversationMode),
         cloudBrowserVoices: useRecoilValue(store.cloudBrowserVoices),
         engineTTS: useRecoilValue(store.engineTTS),
+        engineSTT: useRecoilValue(store.engineSTT),
       };
     },
     { wrapper },
@@ -79,6 +80,7 @@ describe('useHardening', () => {
       conversationMode: true,
       cloudBrowserVoices: true,
       engineTTS: 'external',
+      engineSTT: 'browser',
     });
     expect(synth.getVoices()).toHaveLength(2);
     expect(failFavicon().src).toContain('google.com/s2/favicons');
@@ -97,11 +99,23 @@ describe('useHardening', () => {
       conversationMode: false,
       cloudBrowserVoices: false,
       engineTTS: 'browser',
+      engineSTT: 'browser',
     });
     expect(synth.getVoices().map((voice) => voice.name)).toEqual(['Anna']);
     expect(failFavicon().src).toBe(FAVICON_PLACEHOLDER);
 
     unmount();
     expect(synth.getVoices()).toHaveLength(2);
+  });
+
+  it('sends dictation to Gemini Transcribe and locks the engine choice', () => {
+    const { result, unmount } = render({ ...baseConfig, speechTranscribe: true } as TStartupConfig);
+
+    expect(result.current.engineSTT).toBe('external');
+    expect(result.current.speechToText).toBe(true);
+    expect(document.documentElement.classList.contains('transcribe-speech-locked')).toBe(true);
+
+    unmount();
+    expect(document.documentElement.classList.contains('transcribe-speech-locked')).toBe(false);
   });
 });

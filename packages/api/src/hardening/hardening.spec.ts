@@ -4,7 +4,7 @@ import mongoose from 'mongoose';
 import request from 'supertest';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { createModels, createMethods, logger } from '@librechat/data-schemas';
-import type { IRole } from '@librechat/data-schemas';
+import type { AppConfig, IRole } from '@librechat/data-schemas';
 import type { AddressInfo } from 'net';
 import type { HardeningMethods } from './start';
 import type { CappedRole } from './caps';
@@ -14,9 +14,12 @@ import {
   STRICT_PERMISSIONS_POLICY,
 } from './egress';
 import { applyRolePermissionCaps, parseRolePermissionCaps } from './caps';
+import { startTranscribeService } from '~/speech/transcribe';
 import { createStartupConfigFlags } from './config';
 import { createSpeechAccessGate } from './speech';
 import { startHardening } from './start';
+
+jest.mock('~/speech/transcribe', () => ({ startTranscribeService: jest.fn() }));
 
 jest.mock('@librechat/data-schemas', () => ({
   ...jest.requireActual('@librechat/data-schemas'),
@@ -284,5 +287,18 @@ describe('startHardening', () => {
     expect(config.headers['content-security-policy']).toBe(STRICT_EGRESS_POLICY);
     expect(config.headers['permissions-policy']).toBe(STRICT_PERMISSIONS_POLICY);
     await request(app).post('/api/files/speech/stt').expect(403);
+  });
+
+  it('flags the startup config while the Gemini Transcribe listener runs', async () => {
+    jest.mocked(startTranscribeService).mockResolvedValueOnce({} as http.Server);
+    const appConfig = {} as AppConfig;
+    const app = express();
+
+    await startHardening({ app, appConfig, methods: methods() });
+    mountAppRoutes(app);
+
+    expect(startTranscribeService).toHaveBeenCalledWith(appConfig);
+    const config = await request(app).get('/api/config').expect(200);
+    expect(config.body).toEqual({ appTitle: 'Synthetic', speechTranscribe: true });
   });
 });
