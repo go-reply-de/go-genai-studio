@@ -639,6 +639,7 @@ const MonitoringShell = (() => {
     isoDate,
     shiftDay,
     weekSpan,
+    calendarWeek,
     columnsOf,
     spanKey,
     spanOf,

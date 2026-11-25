@@ -64,7 +64,7 @@ spec:
                 - name: REPORT_BUCKET
                   value: "###_APPLICATION###-###ENVIRONMENT###-monitoring-reports"
                 - name: PAGE_URL
-                  value: "https://admin.###DOMAIN###/monitoring/"
+                  value: "https://admin.###DOMAIN###/monitoring/feedback"
                 - name: USAGE_TOKEN_SPLIT
                   value: "###_USAGE_TOKEN_SPLIT###"
               resources:

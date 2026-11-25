@@ -452,3 +452,46 @@ describe('usage around the change of month', () => {
     ]);
   });
 });
+
+describe('user accounts', () => {
+  // 3 accounts from 5 August, 5 from 10 October 12:00 in Berlin, 4 after a deletion on 20 October.
+  const accounts = (t) => {
+    if (t <= SINCE_AUG_5) {
+      return undefined;
+    }
+    if (t > Date.parse('2026-10-20T08:00:00Z')) {
+      return 4;
+    }
+    return t > Date.parse('2026-10-10T10:00:00Z') ? 5 : 3;
+  };
+
+  it('keeps the count at the end of each day, and the last one for the month', async () => {
+    const app = start({ up: [[{}, accounts]] });
+    const view = await app.usage.view('2026-10');
+    expect([view.days[8].accounts, view.days[9].accounts, view.days[19].accounts]).toEqual([
+      3, 5, 4,
+    ]);
+    expect(view.totals.accounts).toBe(4);
+    expect(view.trend.map((m) => [m.month, m.accounts])).toEqual([
+      ['2026-08', 3],
+      ['2026-09', 3],
+      ['2026-10', 4],
+      ['2026-11', 4],
+    ]);
+  });
+
+  it('gives the count before the month, and none before the exporter ran', async () => {
+    const app = start({ up: [[{}, accounts]] });
+    expect((await app.usage.view('2026-10')).accountsBefore).toBe(3);
+    expect((await app.usage.view('2026-11')).accountsBefore).toBe(4);
+    expect((await app.usage.view('2026-08')).accountsBefore).toBeNull();
+  });
+
+  it('gives an interval the count of the day before it, also from an earlier month', async () => {
+    const app = start({ up: [[{}, accounts]] });
+    const inside = await app.usage.interval('2026-10-15', '2026-10-25');
+    expect([inside.accountsBefore, inside.totals.accounts]).toEqual([5, 4]);
+    const across = await app.usage.interval('2026-10-01', '2026-10-12');
+    expect([across.accountsBefore, across.totals.accounts]).toEqual([3, 5]);
+  });
+});

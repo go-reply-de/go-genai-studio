@@ -1,5 +1,5 @@
 'use strict';
-/* global MonitoringShell */
+/* global MonitoringShell, MonitoringGroups */
 
 const {
   T,
@@ -135,6 +135,8 @@ async function show(key) {
   state.failed = '';
   clearTimeout(state.timer);
   picker.renderNav(key);
+  // The groups load on their own, so a failing usage query does not hide them.
+  MonitoringGroups.show(key);
   const hit = state.cache.get(key);
   if (hit) {
     apply(hit.data, key);
@@ -271,6 +273,7 @@ function apply(data, key) {
   renderTrends();
   renderWeekList();
   renderCharts();
+  MonitoringGroups.show(key);
 }
 
 /** An interval's length, how fresh it is and from which day it has figures. */
@@ -357,6 +360,21 @@ function renderWeekList() {
   more.setAttribute('aria-expanded', String(state.allWeeks));
 }
 
+/** Since the last count before the month or interval, or its first count where none is older. */
+function accountsChange() {
+  const { accountsBefore, days, period, totals } = state.data;
+  if (totals.accounts === null) {
+    return '';
+  }
+  const n = totals.accounts - (accountsBefore ?? days.find(Boolean).accounts);
+  const change = `${n < 0 ? '−' : '+'}${int(Math.abs(n))}`;
+  if (state.span) {
+    return n ? t('accountsSpan', { change }) : t('accountsSpanNone');
+  }
+  const month = T.months[monthOf(period.from) - 1];
+  return n ? t('accountsMonth', { change, month }) : t('accountsMonthNone', { month });
+}
+
 function renderStats() {
   const { totals: c, previous: p } = state.data;
   const vs = (now, before, format) =>
@@ -367,6 +385,8 @@ function renderStats() {
   $('p-conversations').textContent = vs(c.conversations, p?.conversations, int);
   $('k-messages').textContent = int(c.messages);
   $('p-messages').textContent = vs(c.messages, p?.messages, int);
+  $('k-accounts').textContent = c.accounts === null ? '–' : int(c.accounts);
+  $('p-accounts').textContent = accountsChange();
   // Per request over the days with tokens; the exporter counts a prompt and its answer as two messages.
   const requests = state.data.days.reduce((n, d) => n + (d?.tokens ? d.messages : 0), 0) / 2;
   for (const field of ['input', 'output']) {

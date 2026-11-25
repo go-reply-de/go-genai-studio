@@ -97,14 +97,14 @@ describe('monitoring server', () => {
   it('answers health checks without IAP and nothing else', async () => {
     app = await start(() => Response.json({ jobComplete: true }));
     expect((await app.request('/healthz')).status).toBe(200);
-    expect((await app.request('/')).status).toBe(403);
+    expect((await app.request('/feedback')).status).toBe(403);
     expect((await app.request('/api/month?m=2026-10')).status).toBe(403);
     expect(app.fn).not.toHaveBeenCalled();
   });
 
   it('serves the page with a strict content security policy', async () => {
     app = await start(() => Response.json({ jobComplete: true }));
-    const res = await app.request('/', { headers: REVIEWER });
+    const res = await app.request('/feedback', { headers: REVIEWER });
     expect(res.status).toBe(200);
     expect(res.headers.get('content-security-policy')).toContain("script-src 'self'");
     expect(res.headers.get('content-security-policy')).toContain("font-src 'self'");
@@ -116,15 +116,22 @@ describe('monitoring server', () => {
     expect((await app.request('/theme.js', { headers: REVIEWER })).status).toBe(200);
     expect((await app.request('/hints.js', { headers: REVIEWER })).status).toBe(200);
     expect((await app.request('/i18n.js', { headers: REVIEWER })).status).toBe(200);
-    expect((await app.request('', { headers: REVIEWER })).headers.get('location')).toBe(
-      '/monitoring/',
-    );
+  });
+
+  it('sends the bare prefix and the old address to the Feedback tab, keeping the month', async () => {
+    app = await start(() => Response.json({ jobComplete: true }));
+    const location = async (path) =>
+      (await app.request(path, { headers: REVIEWER })).headers.get('location');
+    expect(await location('')).toBe('/monitoring/feedback');
+    expect(await location('/')).toBe('/monitoring/feedback');
+    expect(await location('/?m=2026-09')).toBe('/monitoring/feedback?m=2026-09');
+    expect(app.fn).not.toHaveBeenCalled();
   });
 
   it('writes the reviewer, the app and the month into the page', async () => {
     app = await start(bigQuery());
     const page = await (
-      await app.request('/?m=2026-09', {
+      await app.request('/feedback?m=2026-09', {
         headers: { 'X-Goog-Authenticated-User-Email': 'accounts.google.com:a&b.rev@example.org' },
       })
     ).text();
@@ -137,14 +144,14 @@ describe('monitoring server', () => {
     expect(page).toContain('<title>September 2026 · Test Studio Feedback</title>');
     expect(page).not.toContain('{{');
 
-    const fallback = await (await app.request('/?m=2026-13', { headers: REVIEWER })).text();
+    const fallback = await (await app.request('/feedback?m=2026-13', { headers: REVIEWER })).text();
     expect(fallback).toContain('data-month="2026-11"');
   });
 
   it('speaks English when the reviewer chose it or the browser prefers it', async () => {
     app = await start(bigQuery());
     const page = async (headers) =>
-      (await app.request('/?m=2026-10', { headers: { ...REVIEWER, ...headers } })).text();
+      (await app.request('/feedback?m=2026-10', { headers: { ...REVIEWER, ...headers } })).text();
     const chosen = await page({ Cookie: 'other=1; monitoring-lang=en' });
     expect(chosen).toContain('<html lang="en">');
     expect(chosen).toContain('<span id="month-title">October 2026</span>');
@@ -164,7 +171,7 @@ describe('monitoring server', () => {
 
   it('starts the month queries while the page itself is served', async () => {
     app = await start(bigQuery({ months: ['2026-11'] }));
-    expect((await app.request('/', { headers: REVIEWER })).status).toBe(200);
+    expect((await app.request('/feedback', { headers: REVIEWER })).status).toBe(200);
     await waitFor(() => app.queries.length === 3);
     expect(app.queries).toHaveLength(3);
     expect((await app.request('/api/month?m=2026-11', { headers: REVIEWER })).status).toBe(200);
@@ -350,7 +357,7 @@ describe('monitoring server', () => {
 
   it('writes an interval into the page header of both tabs', async () => {
     app = await start(bigQuery());
-    for (const route of ['/', '/usage']) {
+    for (const route of ['/feedback', '/usage']) {
       const page = await (
         await app.request(`${route}?from=2026-01-15&to=2026-07-20`, { headers: REVIEWER })
       ).text();
@@ -616,11 +623,11 @@ describe('Nutzung tab', () => {
 
   it('links both tabs and marks the open one', async () => {
     app = await start(bigQuery());
-    const feedback = await (await app.request('/', { headers: REVIEWER })).text();
+    const feedback = await (await app.request('/feedback', { headers: REVIEWER })).text();
     const usage = await (await app.request('/usage', { headers: REVIEWER })).text();
-    expect(feedback).toMatch(/<a href="\.\/" aria-current="page">Feedback<\/a>/);
+    expect(feedback).toMatch(/<a href="feedback" aria-current="page">Feedback<\/a>/);
     expect(feedback).toMatch(/<a href="usage">Nutzung<\/a>/);
-    expect(usage).toMatch(/<a href="\.\/">Feedback<\/a>/);
+    expect(usage).toMatch(/<a href="feedback">Feedback<\/a>/);
     expect(usage).toMatch(/<a href="usage" aria-current="page">Nutzung<\/a>/);
   });
 
@@ -694,6 +701,128 @@ describe('Nutzung tab', () => {
     app = await start(noBigQuery);
     expect((await app.request('/usage')).status).toBe(403);
     expect((await app.request('/api/usage?m=2026-10')).status).toBe(403);
+    expect(app.fn).not.toHaveBeenCalled();
+  });
+});
+
+describe('usage groups', () => {
+  let app;
+  afterEach(async () => {
+    await app?.close();
+    app = undefined;
+  });
+
+  /** A stored row as BigQuery returns it: strings, and NULL for a group without upper bound. */
+  const row = (...values) => ({ f: values.map((v) => ({ v: v === null ? null : String(v) })) });
+  const ROWS = [
+    row('2026-10-26', 10, null, 6, 52, 65),
+    row('2026-10-26', 3, 9, 12, 37, 29),
+    row('2026-10-26', 1, 2, 16, 11, 6),
+    row('2026-11-02', 3, null, 8, 70, 80),
+    row('2026-11-02', 1, 2, 7, 30, 20),
+  ];
+  const stored = (body) =>
+    Response.json({
+      jobComplete: true,
+      rows: body.query.includes('.usage_groups`') ? ROWS : [],
+    });
+
+  it('answers every stored week with its groups, marking the running one', async () => {
+    app = await start(stored);
+    const res = await app.request('/api/groups', { headers: REVIEWER });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      weeks: [
+        {
+          week: '2026-10-26',
+          running: false,
+          groups: [
+            {
+              top: 'power',
+              bottom: 'power',
+              min: 10,
+              max: null,
+              users: 6,
+              conversations: 52,
+              tokens: 65,
+            },
+            {
+              top: 'regular',
+              bottom: 'regular',
+              min: 3,
+              max: 9,
+              users: 12,
+              conversations: 37,
+              tokens: 29,
+            },
+            {
+              top: 'occasional',
+              bottom: 'occasional',
+              min: 1,
+              max: 2,
+              users: 16,
+              conversations: 11,
+              tokens: 6,
+            },
+          ],
+        },
+        {
+          week: '2026-11-02',
+          running: true,
+          groups: [
+            {
+              top: 'power',
+              bottom: 'regular',
+              min: 3,
+              max: null,
+              users: 8,
+              conversations: 70,
+              tokens: 80,
+            },
+            {
+              top: 'occasional',
+              bottom: 'occasional',
+              min: 1,
+              max: 2,
+              users: 7,
+              conversations: 30,
+              tokens: 20,
+            },
+          ],
+        },
+      ],
+    });
+    expect(app.queries.map((q) => q.query.match(/`[^`]+`/)[0])).toEqual([
+      '`synthetic-project.feedback.usage_groups`',
+    ]);
+  });
+
+  it('asks BigQuery again only after five minutes', async () => {
+    let clock = NOVEMBER().getTime();
+    app = await start(stored, { now: () => new Date(clock) });
+    await app.request('/api/groups', { headers: REVIEWER });
+    clock += 4 * 60 * 1000;
+    await app.request('/api/groups', { headers: REVIEWER });
+    expect(app.queries).toHaveLength(1);
+    clock += 2 * 60 * 1000;
+    await app.request('/api/groups', { headers: REVIEWER });
+    expect(app.queries).toHaveLength(2);
+  });
+
+  it('reports a failing BigQuery', async () => {
+    app = await start(() => new Response('denied', { status: 403 }));
+    const lines = await stdoutLines(async () => {
+      const res = await app.request('/api/groups', { headers: REVIEWER });
+      expect(res.status).toBe(502);
+    });
+    expect(lines).toEqual([
+      expect.objectContaining({ severity: 'ERROR', message: 'groups query failed' }),
+    ]);
+  });
+
+  it('needs IAP like every other page', async () => {
+    app = await start(stored);
+    expect((await app.request('/api/groups')).status).toBe(403);
     expect(app.fn).not.toHaveBeenCalled();
   });
 });

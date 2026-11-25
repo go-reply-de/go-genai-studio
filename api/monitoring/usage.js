@@ -139,7 +139,21 @@ function totals(month, upTo = month.days.length) {
     recorded: counted.length > 0,
     weekly: average(weeks),
     weekMax: weeks.length ? Math.max(...weeks) : null,
+    accounts: days.at(-1)?.accounts ?? null,
   };
+}
+
+/** The accounts at the end of the last day before `from` (YYYY-MM-DD); null before the exporter ran. */
+function accountsBefore(loaded, from) {
+  let count = null;
+  for (const data of loaded) {
+    data.days.forEach((d, i) => {
+      if (d && `${data.month}-${pad(i + 1)}` < from) {
+        count = d.accounts;
+      }
+    });
+  }
+  return count;
 }
 
 /**
@@ -299,8 +313,10 @@ function createUsage({ credentials, fetchFn = fetch, now = () => new Date() }) {
           }
         }
       };
-      perDay('up', (i) => {
+      // The hours come in order, so a day keeps its last count of accounts.
+      perDay('up', (i, v) => {
         days[i] ??= { conversations: 0, messages: 0, users: 0, tokens: null };
+        days[i].accounts = v;
       });
       const add = (field) => (i, v) => {
         if (days[i]) {
@@ -402,16 +418,17 @@ function createUsage({ credentials, fetchFn = fetch, now = () => new Date() }) {
     return hit ? hit.data : fetchMonth(y, m, key);
   }
 
+  /** Every month the exporter has figures for, oldest first. */
+  const everyMonth = (all) =>
+    Promise.all([...all].reverse().map((k) => month(...k.split('-').map(Number))));
+
   /** Everything the tab shows for a month: its days, the month before, and every month's totals. */
   async function view(key) {
     const [y, m] = key.split('-').map(Number);
     const [py, pm] = m === 1 ? [y - 1, 12] : [y, m - 1];
     const previousKey = `${py}-${pad(pm)}`;
     const all = await months();
-    const [current, loaded] = await Promise.all([
-      month(y, m),
-      Promise.all([...all].reverse().map((k) => month(...k.split('-').map(Number)))),
-    ]);
+    const [current, loaded] = await Promise.all([month(y, m), everyMonth(all)]);
     const trend = loaded.map((data) => ({
       month: data.month,
       running: data.period.running,
@@ -441,6 +458,7 @@ function createUsage({ credentials, fetchFn = fetch, now = () => new Date() }) {
       months: all,
       trend,
       models: modelOrder(loaded),
+      accountsBefore: accountsBefore(loaded, current.period.from),
     };
   }
 
@@ -493,6 +511,8 @@ function createUsage({ credentials, fetchFn = fetch, now = () => new Date() }) {
       trend,
       months: all,
       models: modelOrder(loaded),
+      // The day before the interval can lie in a month outside it.
+      accountsBefore: accountsBefore(await everyMonth(all), from),
     };
   }
 
