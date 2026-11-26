@@ -31,11 +31,12 @@ describe('installTranscribeSpeechLock', () => {
     new Recognition().start();
   }
 
-  it('locks the speech-to-text engine dropdown', () => {
+  it('hides the speech-to-text engine choice', () => {
     const uninstall = installTranscribeSpeechLock(document, window);
     const rules = document.getElementById('transcribe-speech-lock')?.textContent ?? '';
 
     expect(document.documentElement.classList.contains('transcribe-speech-locked')).toBe(true);
+    expect(rules).toContain('div:has(> #engine-stt-dropdown-label) { display: none; }');
     expect(rules).toContain(
       '[aria-labelledby="engine-stt-dropdown-label"] { pointer-events: none;',
     );

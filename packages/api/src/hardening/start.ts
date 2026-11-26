@@ -35,7 +35,7 @@ export interface HardeningOptions<R extends CappedRole = CappedRole> {
  * Registers the deployment hardening ahead of the routers. Errors always reach the console
  * without their request; every other piece stays off until its env is set:
  * STRICT_BROWSER_EGRESS, SPEECH_LOCAL_ONLY, ROLE_PERMISSION_CAPS and RETENTION_WEEKLY_RESET.
- * Gemini Transcribe starts when the STT url in the config points at 127.0.0.1.
+ * Dictation goes to Gemini Transcribe when the STT url in the config points at 127.0.0.1.
  */
 export async function startHardening<R extends CappedRole>({
   app,
@@ -53,7 +53,7 @@ export async function startHardening<R extends CappedRole>({
     app.use('/api/files/speech', createSpeechAccessGate());
   }
 
-  const speechTranscribe = (await startTranscribeService(appConfig)) != null;
+  const speechTranscribe = await startTranscribeService(app, appConfig);
 
   const flags: StartupConfigFlags = {
     ...(strictBrowserEgress && { strictBrowserEgress: true }),

@@ -3,7 +3,7 @@ const LOCK_CLASS = 'transcribe-speech-locked';
 const ENGINE_DROPDOWN = '[aria-labelledby="engine-stt-dropdown-label"]';
 
 const RULES = [
-  `:root.${LOCK_CLASS} :has(> ${ENGINE_DROPDOWN}) { cursor: not-allowed; }`,
+  `:root.${LOCK_CLASS} div:has(> #engine-stt-dropdown-label) { display: none; }`,
   `:root.${LOCK_CLASS} ${ENGINE_DROPDOWN} { pointer-events: none; opacity: 0.5; }`,
 ].join('\n');
 
@@ -14,8 +14,8 @@ type RecognitionWindow = Window & {
 };
 
 /**
- * Keeps dictation on the server's transcription: the engine choice is locked, and the browser
- * engine, which streams audio to the browser vendor, cannot start. Returns the uninstaller.
+ * Keeps dictation on the server's transcription: the engine choice is hidden, and the browser's
+ * own recognizer, which streams audio to the browser vendor, cannot start. Returns the uninstaller.
  */
 export function installTranscribeSpeechLock(doc: Document, win: Window): () => void {
   doc.documentElement.classList.add(LOCK_CLASS);

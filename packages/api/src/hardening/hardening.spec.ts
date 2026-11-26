@@ -289,15 +289,15 @@ describe('startHardening', () => {
     await request(app).post('/api/files/speech/stt').expect(403);
   });
 
-  it('flags the startup config while the Gemini Transcribe listener runs', async () => {
-    jest.mocked(startTranscribeService).mockResolvedValueOnce({} as http.Server);
+  it('flags the startup config while dictation goes to Gemini Transcribe', async () => {
+    jest.mocked(startTranscribeService).mockResolvedValueOnce(true);
     const appConfig = {} as AppConfig;
     const app = express();
 
     await startHardening({ app, appConfig, methods: methods() });
     mountAppRoutes(app);
 
-    expect(startTranscribeService).toHaveBeenCalledWith(appConfig);
+    expect(startTranscribeService).toHaveBeenCalledWith(app, appConfig);
     const config = await request(app).get('/api/config').expect(200);
     expect(config.body).toEqual({ appTitle: 'Synthetic', speechTranscribe: true });
   });

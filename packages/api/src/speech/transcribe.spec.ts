@@ -2,14 +2,17 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import http from 'http';
+import WebSocket from 'ws';
+import express from 'express';
 import type { AppConfig } from '@librechat/data-schemas';
 import type { AddressInfo } from 'net';
-import type { TranscribeRequest, VertexClient } from './transcribe';
+import type { VertexLiveEvents, VertexLiveStream } from './vertexLive';
+import type { TranscribeEndpointOptions } from './transcribe';
 import {
-  createTranscribeServer,
-  getTranscribeTarget,
+  TRANSCRIBE_PATH,
+  createTranscribeEndpoint,
+  getTranscribeModel,
   startTranscribeService,
-  transcribeWithGemini,
 } from './transcribe';
 
 jest.mock('@librechat/data-schemas', () => ({
@@ -17,6 +20,7 @@ jest.mock('@librechat/data-schemas', () => ({
   logger: { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() },
 }));
 
+const ORIGIN = 'https://studio.example';
 const originalEnv = { ...process.env };
 
 afterEach(() => {
@@ -24,270 +28,273 @@ afterEach(() => {
   jest.clearAllMocks();
 });
 
-function sttConfig(url: string, apiKey = 'local'): AppConfig {
-  return {
-    speech: { stt: { openai: { url, apiKey, model: 'gemini-3.5-transcribe' } } },
-  } as AppConfig;
+function sttConfig(url: string, model = 'gemini-3.5-transcribe-live'): AppConfig {
+  return { speech: { stt: { openai: { url, apiKey: 'loopback', model } } } } as AppConfig;
 }
 
-function vertexReply(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
+async function until(check: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() > deadline) {
+      throw new Error('condition not met in time');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+type Message = { type: string; text?: string; code?: string };
+
+const last = (messages: Message[]) => messages[messages.length - 1];
+
+interface Client {
+  socket: WebSocket;
+  messages: Message[];
+  closed: Promise<number>;
+}
+
+const openSockets: WebSocket[] = [];
+
+function closeSockets() {
+  openSockets.splice(0).forEach((socket) => socket.terminate());
+}
+
+function connect(port: number, origin = ORIGIN, urlPath = TRANSCRIBE_PATH): Promise<Client> {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}${urlPath}`, { origin });
+    openSockets.push(socket);
+    const messages: Message[] = [];
+    const closed = new Promise<number>((done) => socket.on('close', (code) => done(code)));
+    socket.on('message', (data) => messages.push(JSON.parse(data.toString())));
+    socket.once('open', () => resolve({ socket, messages, closed }));
+    socket.once('error', reject);
   });
 }
 
-async function freePort(): Promise<number> {
-  const probe = http.createServer();
-  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
-  const { port } = probe.address() as AddressInfo;
-  await new Promise<void>((resolve) => probe.close(() => resolve()));
-  return port;
+function start(client: Client, token = 'good-token', language?: string) {
+  client.socket.send(JSON.stringify({ type: 'start', token, ...(language && { language }) }));
 }
 
-async function listen(server: http.Server): Promise<number> {
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  return (server.address() as AddressInfo).port;
-}
-
-function upload(fields: {
-  file?: Blob;
-  name?: string;
-  model?: string;
-  language?: string;
-}): FormData {
-  const form = new FormData();
-  if (fields.file) form.append('file', fields.file, fields.name ?? 'audio.webm');
-  form.append('model', fields.model ?? 'gemini-3.5-transcribe');
-  if (fields.language) form.append('language', fields.language);
-  return form;
-}
-
-describe('getTranscribeTarget', () => {
-  it('returns the port, path and key when the STT url points at 127.0.0.1', () => {
-    const target = getTranscribeTarget(sttConfig('http://127.0.0.1:3081/v1/audio/transcriptions'));
-    expect(target).toEqual({ port: 3081, path: '/v1/audio/transcriptions', apiKey: 'local' });
+describe('getTranscribeModel', () => {
+  it('returns the model when the STT url points at 127.0.0.1', () => {
+    expect(getTranscribeModel(sttConfig('http://127.0.0.1:3081/v1/audio/transcriptions'))).toBe(
+      'gemini-3.5-transcribe-live',
+    );
   });
 
-  it('ignores an STT url on another host', () => {
+  it('returns null for an STT url on another host', () => {
     expect(
-      getTranscribeTarget(sttConfig('https://api.openai.com/v1/audio/transcriptions')),
+      getTranscribeModel(sttConfig('https://api.openai.com/v1/audio/transcriptions')),
     ).toBeNull();
   });
 
   it('returns null without an STT config', () => {
-    expect(getTranscribeTarget({} as AppConfig)).toBeNull();
-    expect(getTranscribeTarget(undefined)).toBeNull();
-  });
-
-  it('resolves a key the config takes from the environment, as the STT upload does', () => {
-    process.env.STT_LOOPBACK_KEY = 'from-env';
-    const target = getTranscribeTarget(
-      sttConfig('http://127.0.0.1:3081/v1/audio/transcriptions', '${STT_LOOPBACK_KEY}'),
-    );
-    expect(target?.apiKey).toBe('from-env');
-  });
-
-  it('returns null without a key, so the listener never accepts an unauthenticated upload', () => {
-    expect(
-      getTranscribeTarget(sttConfig('http://127.0.0.1:3081/v1/audio/transcriptions', '')),
-    ).toBeNull();
+    expect(getTranscribeModel({} as AppConfig)).toBeNull();
+    expect(getTranscribeModel(undefined)).toBeNull();
   });
 });
 
-describe('transcribeWithGemini', () => {
-  const input: TranscribeRequest = {
-    audio: Buffer.from('abc'),
-    mimeType: 'audio/webm',
-    model: 'gemini-3.5-transcribe',
-    language: 'de',
-  };
+describe('transcribe endpoint', () => {
+  let server: http.Server;
+  let port: number;
+  let vertex: { events: VertexLiveEvents; stream: jest.Mocked<VertexLiveStream> } | undefined;
+  let openStream: jest.Mock;
 
-  function client(reply: Response, location = 'eu') {
-    const fetchMock = jest.fn().mockResolvedValue(reply);
-    const vertex: VertexClient = {
-      project: 'synthetic-project',
-      location,
-      getToken: async () => 'synthetic-token',
-      fetch: fetchMock,
-    };
-    return { vertex, fetchMock };
+  async function listen(overrides: Partial<TranscribeEndpointOptions> = {}) {
+    server = http.createServer();
+    createTranscribeEndpoint({
+      openStream,
+      verifyUser: (token) => (token === 'good-token' ? 'user-1' : null),
+      allowedOrigin: ORIGIN,
+      ...overrides,
+    })(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    port = (server.address() as AddressInfo).port;
   }
 
-  it('sends the audio to the multi-region endpoint and returns the transcript', async () => {
-    const { vertex, fetchMock } = client(
-      vertexReply({ candidates: [{ content: { parts: [{ text: 'Metoprolol 47,5 mg ' }] } }] }),
-    );
+  async function readyClient(language?: string): Promise<Client> {
+    const client = await connect(port);
+    start(client, 'good-token', language);
+    await until(() => vertex != null);
+    vertex?.events.onReady();
+    await until(() => client.messages.some((m) => m.type === 'ready'));
+    return client;
+  }
 
-    const text = await transcribeWithGemini(input, vertex);
-
-    expect(text).toBe('Metoprolol 47,5 mg');
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe(
-      'https://aiplatform.eu.rep.googleapis.com/v1/projects/synthetic-project/locations/eu/publishers/google/models/gemini-3.5-transcribe:generateContent',
-    );
-    expect(init.headers.Authorization).toBe('Bearer synthetic-token');
-    expect(JSON.parse(init.body)).toEqual({
-      contents: [
-        { role: 'user', parts: [{ inlineData: { mimeType: 'audio/webm', data: 'YWJj' } }] },
-      ],
-      generationConfig: { audioTranscriptionConfig: { mode: 'VERBATIM', languageCodes: ['de'] } },
+  beforeEach(() => {
+    vertex = undefined;
+    openStream = jest.fn(async (_language: string | undefined, events: VertexLiveEvents) => {
+      const stream = { send: jest.fn(), end: jest.fn(), close: jest.fn() };
+      vertex = { events, stream };
+      return stream;
     });
   });
-
-  it('lets the model detect the language when the client sends none', async () => {
-    const { vertex, fetchMock } = client(vertexReply({ candidates: [] }));
-
-    await transcribeWithGemini({ ...input, language: undefined }, vertex);
-
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.generationConfig.audioTranscriptionConfig).toEqual({ mode: 'VERBATIM' });
-  });
-
-  it('uses the global host for the global location', async () => {
-    const { vertex, fetchMock } = client(vertexReply({ candidates: [] }), 'global');
-
-    await transcribeWithGemini(input, vertex);
-
-    expect(fetchMock.mock.calls[0][0]).toMatch(
-      /^https:\/\/aiplatform\.googleapis\.com\/v1\/projects\/synthetic-project\/locations\/global\//,
-    );
-  });
-
-  it('returns an empty transcript when the model hears no speech', async () => {
-    const { vertex } = client(vertexReply({ candidates: [{ finishReason: 'STOP' }] }));
-    await expect(transcribeWithGemini(input, vertex)).resolves.toBe('');
-  });
-
-  it('fails with the status when Vertex refuses the request', async () => {
-    const { vertex } = client(vertexReply({ error: { message: 'Resource exhausted' } }, 429));
-    await expect(transcribeWithGemini(input, vertex)).rejects.toThrow('429');
-  });
-});
-
-describe('createTranscribeServer', () => {
-  const target = { port: 0, path: '/v1/audio/transcriptions', apiKey: 'local' };
-  let server: http.Server | undefined;
 
   afterEach(async () => {
-    await new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()));
-    server = undefined;
+    closeSockets();
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
   });
 
-  async function start(transcribe: jest.Mock, options?: { maxBytes?: number }): Promise<string> {
-    server = createTranscribeServer(target, transcribe, options);
-    const port = await listen(server);
-    return `http://127.0.0.1:${port}`;
-  }
+  it('streams a dictation and finishes once stopped', async () => {
+    await listen();
+    const client = await readyClient('de-DE');
+    expect(openStream.mock.calls[0][0]).toBe('de-DE');
 
-  it('answers an OpenAI-style upload with the transcript', async () => {
-    const transcribe = jest.fn().mockResolvedValue('Pantoprazol 40 mg');
-    const base = await start(transcribe);
+    client.socket.send(Buffer.from([1, 2, 3, 4]));
+    await until(() => (vertex?.stream.send.mock.calls.length ?? 0) > 0);
+    expect(vertex?.stream.send).toHaveBeenCalledWith(Buffer.from([1, 2, 3, 4]));
 
-    const res = await fetch(`${base}/v1/audio/transcriptions`, {
-      method: 'POST',
-      headers: { Authorization: 'Bearer local' },
-      body: upload({ file: new Blob(['abc'], { type: 'audio/webm' }), language: 'de' }),
-    });
+    vertex?.events.onSpeech(true);
+    vertex?.events.onInterim('Apixaban');
+    vertex?.events.onFinal('Apixaban 5 mg.');
+    vertex?.events.onSpeech(false);
+    client.socket.send(JSON.stringify({ type: 'stop' }));
 
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ text: 'Pantoprazol 40 mg' });
-    expect(transcribe).toHaveBeenCalledWith({
-      audio: Buffer.from('abc'),
-      mimeType: 'audio/webm',
-      model: 'gemini-3.5-transcribe',
-      language: 'de',
-    });
+    expect(await client.closed).toBe(1000);
+    expect(client.messages).toEqual([
+      { type: 'ready' },
+      { type: 'interim', text: 'Apixaban' },
+      { type: 'final', text: 'Apixaban 5 mg.' },
+      { type: 'done' },
+    ]);
+    expect(vertex?.stream.end).toHaveBeenCalled();
+    expect(vertex?.stream.close).toHaveBeenCalled();
   });
 
-  it('takes the audio type from the file name when the part has none', async () => {
-    const transcribe = jest.fn().mockResolvedValue('');
-    const base = await start(transcribe);
+  it('waits for the speech to end before it finishes a stopped dictation', async () => {
+    await listen();
+    const client = await readyClient();
 
-    await fetch(`${base}/v1/audio/transcriptions`, {
-      method: 'POST',
-      headers: { Authorization: 'Bearer local' },
-      body: upload({ file: new Blob(['abc']), name: 'audio.wav' }),
-    });
+    vertex?.events.onSpeech(true);
+    client.socket.send(JSON.stringify({ type: 'stop' }));
+    await until(() => (vertex?.stream.end.mock.calls.length ?? 0) > 0);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(client.messages.map((m) => m.type)).toEqual(['ready']);
 
-    expect(transcribe.mock.calls[0][0].mimeType).toBe('audio/wav');
+    vertex?.events.onFinal('Kein Fieber.');
+    vertex?.events.onSpeech(false);
+
+    expect(await client.closed).toBe(1000);
+    expect(client.messages.slice(1)).toEqual([
+      { type: 'final', text: 'Kein Fieber.' },
+      { type: 'done' },
+    ]);
   });
 
-  it('sends webm as audio when the upload labels it video/webm, as the STT upload does', async () => {
-    const transcribe = jest.fn().mockResolvedValue('');
-    const base = await start(transcribe);
+  it('finishes a stopped dictation after the stop timeout if speech never ends', async () => {
+    await listen({ stopTimeoutMs: 30 });
+    const client = await readyClient();
 
-    await fetch(`${base}/v1/audio/transcriptions`, {
-      method: 'POST',
-      headers: { Authorization: 'Bearer local' },
-      body: upload({ file: new Blob(['abc'], { type: 'video/webm' }), name: 'audio.webm' }),
-    });
+    vertex?.events.onSpeech(true);
+    client.socket.send(JSON.stringify({ type: 'stop' }));
 
-    expect(transcribe.mock.calls[0][0].mimeType).toBe('audio/webm');
+    expect(await client.closed).toBe(1000);
+    expect(last(client.messages)).toEqual({ type: 'done' });
   });
 
-  it('refuses a request without the configured key', async () => {
-    const transcribe = jest.fn();
-    const base = await start(transcribe);
+  it('ends a session at the time limit', async () => {
+    await listen({ maxSessionMs: 30 });
+    const client = await readyClient();
 
-    const res = await fetch(`${base}/v1/audio/transcriptions`, {
-      method: 'POST',
-      headers: { Authorization: 'Bearer other' },
-      body: upload({ file: new Blob(['abc'], { type: 'audio/webm' }) }),
-    });
-
-    expect(res.status).toBe(401);
-    expect(transcribe).not.toHaveBeenCalled();
+    expect(await client.closed).toBe(1000);
+    expect(last(client.messages)).toEqual({ type: 'done' });
+    expect(vertex?.stream.end).toHaveBeenCalled();
   });
 
-  it('refuses other paths', async () => {
-    const base = await start(jest.fn());
-    const res = await fetch(`${base}/v1/models`, { headers: { Authorization: 'Bearer local' } });
-    expect(res.status).toBe(404);
+  it('ignores audio that arrives before Vertex AI is ready', async () => {
+    await listen();
+    const client = await connect(port);
+    start(client);
+    await until(() => vertex != null);
+
+    client.socket.send(Buffer.from([1, 2]));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(vertex?.stream.send).not.toHaveBeenCalled();
   });
 
-  it('refuses an upload above the size limit', async () => {
-    const transcribe = jest.fn();
-    const base = await start(transcribe, { maxBytes: 1024 });
+  it('passes only language tags on to Vertex AI', async () => {
+    await listen();
+    const client = await connect(port);
+    start(client, 'good-token', 'de-DE"; drop');
+    await until(() => vertex != null);
 
-    const res = await fetch(`${base}/v1/audio/transcriptions`, {
-      method: 'POST',
-      headers: { Authorization: 'Bearer local' },
-      body: upload({ file: new Blob([Buffer.alloc(4096)], { type: 'audio/webm' }) }),
-    });
-
-    expect(res.status).toBe(413);
-    expect(transcribe).not.toHaveBeenCalled();
+    expect(openStream.mock.calls[0][0]).toBeUndefined();
   });
 
-  it('answers 400 when the upload has no audio file', async () => {
-    const base = await start(jest.fn());
+  it('refuses a session with an invalid token', async () => {
+    await listen();
+    const client = await connect(port);
+    start(client, 'forged-token');
 
-    const res = await fetch(`${base}/v1/audio/transcriptions`, {
-      method: 'POST',
-      headers: { Authorization: 'Bearer local' },
-      body: upload({}),
-    });
-
-    expect(res.status).toBe(400);
+    expect(await client.closed).toBe(1008);
+    expect(client.messages).toEqual([{ type: 'error', code: 'unauthorized' }]);
+    expect(openStream).not.toHaveBeenCalled();
   });
 
-  it('reports a failed transcription as 502', async () => {
-    const base = await start(jest.fn().mockRejectedValue(new Error('Vertex answered 429')));
+  it('closes a session that never starts', async () => {
+    await listen({ startTimeoutMs: 30 });
+    const client = await connect(port);
 
-    const res = await fetch(`${base}/v1/audio/transcriptions`, {
-      method: 'POST',
-      headers: { Authorization: 'Bearer local' },
-      body: upload({ file: new Blob(['abc'], { type: 'audio/webm' }) }),
-    });
+    expect(await client.closed).toBe(1008);
+    expect(client.messages).toEqual([{ type: 'error', code: 'bad_request' }]);
+  });
 
-    expect(res.status).toBe(502);
-    expect(await res.json()).toEqual({ error: { message: 'Transcription failed' } });
+  it('allows two sessions per user, for the hand-over between them, and refuses a third', async () => {
+    await listen();
+    const clients = [await connect(port), await connect(port), await connect(port)];
+    clients.forEach((client) => start(client));
+
+    await until(() => clients[2].messages.length > 0);
+
+    expect(clients[2].messages).toEqual([{ type: 'error', code: 'busy' }]);
+    expect(openStream).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports Vertex AI failing during a dictation', async () => {
+    await listen();
+    const client = await readyClient();
+
+    vertex?.events.onClose(new Error('Vertex AI closed 1011'));
+
+    expect(await client.closed).toBe(1011);
+    expect(last(client.messages)).toEqual({ type: 'error', code: 'unavailable' });
+  });
+
+  it('reports a Vertex AI session that cannot be opened', async () => {
+    openStream.mockRejectedValueOnce(new Error('no token'));
+    await listen();
+    const client = await connect(port);
+    start(client);
+
+    expect(await client.closed).toBe(1011);
+    expect(client.messages).toEqual([{ type: 'error', code: 'unavailable' }]);
+  });
+
+  it('closes the Vertex AI session when the browser disconnects', async () => {
+    await listen();
+    const client = await readyClient();
+
+    client.socket.terminate();
+    await until(() => (vertex?.stream.close.mock.calls.length ?? 0) > 0);
+
+    expect(vertex?.stream.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a connection from another origin', async () => {
+    await listen();
+    await expect(connect(port, 'https://attacker.example')).rejects.toThrow('403');
+  });
+
+  it('leaves other paths alone', async () => {
+    await listen();
+    await expect(connect(port, ORIGIN, '/api/other')).rejects.toThrow();
   });
 });
 
 describe('startTranscribeService', () => {
   let keyDir: string;
+  let server: http.Server | undefined;
 
   beforeEach(() => {
     keyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'transcribe-key-'));
@@ -302,55 +309,57 @@ describe('startTranscribeService', () => {
       }),
     );
     process.env.GOOGLE_SERVICE_KEY_FILE = keyFile;
+    process.env.GOOGLE_LOC = 'eu';
+    process.env.JWT_SECRET = 'synthetic-secret';
+    process.env.DOMAIN_CLIENT = `${ORIGIN}/`;
   });
 
-  afterEach(() => fs.rmSync(keyDir, { recursive: true, force: true }));
-
-  it('listens on the loopback port from the STT url', async () => {
-    process.env.GOOGLE_LOC = 'eu';
-    const port = await freePort();
-
-    const server = await startTranscribeService(
-      sttConfig(`http://127.0.0.1:${port}/v1/audio/transcriptions`),
-    );
-
-    try {
-      expect(server).not.toBeNull();
-      const res = await fetch(`http://127.0.0.1:${port}/v1/audio/transcriptions`, {
-        method: 'POST',
-      });
-      expect(res.status).toBe(401);
-    } finally {
-      await new Promise<void>((resolve) => server?.close(() => resolve()));
+  afterEach(async () => {
+    fs.rmSync(keyDir, { recursive: true, force: true });
+    closeSockets();
+    if (server) {
+      server.closeAllConnections();
+      await new Promise((resolve) => server?.close(resolve));
+      server = undefined;
     }
+  });
+
+  it('adds the endpoint to the server the app starts', async () => {
+    const app = express();
+    await expect(
+      startTranscribeService(app, sttConfig('http://127.0.0.1:3081/v1/audio/transcriptions')),
+    ).resolves.toBe(true);
+
+    server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server?.once('listening', resolve));
+    const client = await connect((server.address() as AddressInfo).port);
+    start(client, 'forged-token');
+
+    expect(await client.closed).toBe(1008);
+    expect(client.messages).toEqual([{ type: 'error', code: 'unauthorized' }]);
   });
 
   it('stays off when the STT url points elsewhere', async () => {
-    process.env.GOOGLE_LOC = 'eu';
+    const app = express();
+    const listen = app.listen;
+
     await expect(
-      startTranscribeService(sttConfig('https://api.openai.com/v1/audio/transcriptions')),
-    ).resolves.toBeNull();
-  });
-
-  it('stays off when the port is taken, so the api still starts', async () => {
-    process.env.GOOGLE_LOC = 'eu';
-    const taken = http.createServer();
-    const port = await listen(taken);
-
-    try {
-      await expect(
-        startTranscribeService(sttConfig(`http://127.0.0.1:${port}/v1/audio/transcriptions`)),
-      ).resolves.toBeNull();
-    } finally {
-      await new Promise<void>((resolve) => taken.close(() => resolve()));
-    }
+      startTranscribeService(app, sttConfig('https://api.openai.com/v1/audio/transcriptions')),
+    ).resolves.toBe(false);
+    expect(app.listen).toBe(listen);
   });
 
   it('stays off when GOOGLE_LOC is a single region, where the model is not served', async () => {
     process.env.GOOGLE_LOC = 'europe-west3';
-    const port = await freePort();
     await expect(
-      startTranscribeService(sttConfig(`http://127.0.0.1:${port}/v1/audio/transcriptions`)),
-    ).resolves.toBeNull();
+      startTranscribeService(express(), sttConfig('http://127.0.0.1:3081/v1/audio/transcriptions')),
+    ).resolves.toBe(false);
+  });
+
+  it('stays off without a JWT secret to check sessions against', async () => {
+    delete process.env.JWT_SECRET;
+    await expect(
+      startTranscribeService(express(), sttConfig('http://127.0.0.1:3081/v1/audio/transcriptions')),
+    ).resolves.toBe(false);
   });
 });

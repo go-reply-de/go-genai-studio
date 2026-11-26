@@ -1,11 +1,21 @@
 import React from 'react';
 import { RecoilRoot, useRecoilValue } from 'recoil';
 import { renderHook } from '@testing-library/react';
+import SpeechRecognition from 'react-speech-recognition';
 import type { TStartupConfig } from 'librechat-data-provider';
 import type { MutableSnapshot } from 'recoil';
 import { FAVICON_PLACEHOLDER } from '~/utils/faviconPlaceholder';
 import useHardening from '../useHardening';
 import store from '~/store';
+
+jest.mock('react-speech-recognition', () => ({
+  __esModule: true,
+  default: { applyPolyfill: jest.fn(), removePolyfill: jest.fn() },
+}));
+jest.mock('@librechat/client', () => ({
+  applyFontSize: () => undefined,
+  useToastContext: () => ({ showToast: () => undefined }),
+}));
 
 type Voice = Pick<SpeechSynthesisVoice, 'name' | 'lang' | 'localService'>;
 
@@ -108,14 +118,22 @@ describe('useHardening', () => {
     expect(synth.getVoices()).toHaveLength(2);
   });
 
-  it('sends dictation to Gemini Transcribe and locks the engine choice', () => {
+  it('streams dictation to Gemini Transcribe through the speech library and hides the engine', () => {
     const { result, unmount } = render({ ...baseConfig, speechTranscribe: true } as TStartupConfig);
 
-    expect(result.current.engineSTT).toBe('external');
+    expect(result.current.engineSTT).toBe('browser');
     expect(result.current.speechToText).toBe(true);
+    expect(SpeechRecognition.applyPolyfill).toHaveBeenCalledTimes(1);
+    expect(typeof jest.mocked(SpeechRecognition.applyPolyfill).mock.calls[0][0]).toBe('function');
     expect(document.documentElement.classList.contains('transcribe-speech-locked')).toBe(true);
 
     unmount();
+    expect(SpeechRecognition.removePolyfill).toHaveBeenCalledTimes(1);
     expect(document.documentElement.classList.contains('transcribe-speech-locked')).toBe(false);
+  });
+
+  it('leaves the speech library alone without the flag', () => {
+    render(baseConfig);
+    expect(SpeechRecognition.applyPolyfill).not.toHaveBeenCalled();
   });
 });

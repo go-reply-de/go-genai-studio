@@ -1,247 +1,319 @@
-import http from 'http';
 import path from 'path';
+import jwt from 'jsonwebtoken';
+import { WebSocketServer } from 'ws';
 import { GoogleAuth } from 'google-auth-library';
 import { logger } from '@librechat/data-schemas';
-import { extractEnvVariable } from 'librechat-data-provider';
 import type { AppConfig } from '@librechat/data-schemas';
+import type { Application } from 'express';
+import type { Duplex } from 'stream';
+import type { RawData } from 'ws';
+import type WebSocket from 'ws';
+import type http from 'http';
+import type { VertexLiveEvents, VertexLiveStream } from './vertexLive';
+import { VERTEX_HOSTS, openVertexLive } from './vertexLive';
 import { loadServiceKey } from '~/utils/key';
 
 /**
- * Speech-to-text through Gemini Transcribe. The STT config points LibreChat's OpenAI-style
- * upload at a listener on 127.0.0.1, which sends the audio to Vertex AI with the service key.
+ * Live dictation through Gemini Transcribe. The browser streams microphone PCM over a WebSocket
+ * on this path, and the api relays it to Vertex AI with its service key.
  */
-export interface TranscribeTarget {
-  port: number;
-  path: string;
-  apiKey: string;
+export const TRANSCRIBE_PATH = '/api/speech/transcribe';
+
+const LANGUAGE_TAG = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
+const PCM_BYTES_PER_SECOND = 32_000;
+
+export type TranscribeErrorCode = 'unauthorized' | 'busy' | 'unavailable' | 'bad_request';
+
+export interface TranscribeEndpointOptions {
+  openStream: (language: string | undefined, events: VertexLiveEvents) => Promise<VertexLiveStream>;
+  /** Returns the user id for a valid access token. */
+  verifyUser: (token: string) => string | null;
+  allowedOrigin?: string;
+  /** Under the load balancer's 300 s limit, so the browser hands over to a new session first. */
+  maxSessionMs?: number;
+  /** Two, so a session can finish while the browser's next one starts. */
+  maxSessionsPerUser?: number;
+  startTimeoutMs?: number;
+  stopTimeoutMs?: number;
 }
 
-export interface TranscribeRequest {
-  audio: Buffer;
-  mimeType: string;
-  model: string;
-  language?: string;
-}
-
-export interface VertexClient {
-  project: string;
-  location: string;
-  getToken: () => Promise<string>;
-  fetch?: (url: string, init: RequestInit) => Promise<Response>;
-}
-
-/** Gemini Transcribe is served only from these locations, not from single regions. */
-const VERTEX_HOSTS: Record<string, string> = {
-  eu: 'aiplatform.eu.rep.googleapis.com',
-  us: 'aiplatform.us.rep.googleapis.com',
-  global: 'aiplatform.googleapis.com',
-};
-
-const AUDIO_TYPES: Record<string, string> = {
-  webm: 'audio/webm',
-  wav: 'audio/wav',
-  mp4: 'audio/mp4',
-  m4a: 'audio/mp4',
-  ogg: 'audio/ogg',
-  mp3: 'audio/mpeg',
-};
-
-const DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
-const VERTEX_TIMEOUT_MS = 60_000;
-
-export function getTranscribeTarget(appConfig?: AppConfig): TranscribeTarget | null {
+/** Dictation goes to Gemini Transcribe when the STT url in the config points at 127.0.0.1. */
+export function getTranscribeModel(appConfig?: AppConfig): string | null {
   const openai = appConfig?.speech?.stt?.openai;
-  if (!openai?.url) {
+  if (!openai?.url || !openai.model) {
     return null;
   }
-  let url: URL;
   try {
-    url = new URL(openai.url);
+    return new URL(openai.url).hostname === '127.0.0.1' ? openai.model : null;
   } catch {
     return null;
   }
-  const apiKey = extractEnvVariable(openai.apiKey ?? '');
-  if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || !apiKey) {
-    return null;
+}
+
+function toBuffer(data: RawData): Buffer {
+  if (Array.isArray(data)) {
+    return Buffer.concat(data);
   }
-  return { port: Number(url.port), path: url.pathname, apiKey };
+  return Buffer.isBuffer(data) ? data : Buffer.from(data);
 }
 
-export async function transcribeWithGemini(
-  input: TranscribeRequest,
-  client: VertexClient,
-): Promise<string> {
-  const host = VERTEX_HOSTS[client.location];
-  const url = `https://${host}/v1/projects/${client.project}/locations/${client.location}/publishers/google/models/${input.model}:generateContent`;
-  const body = {
-    contents: [
-      {
-        role: 'user',
-        parts: [{ inlineData: { mimeType: input.mimeType, data: input.audio.toString('base64') } }],
-      },
-    ],
-    generationConfig: {
-      audioTranscriptionConfig: {
-        mode: 'VERBATIM',
-        ...(input.language && { languageCodes: [input.language] }),
-      },
-    },
-  };
+export function createTranscribeEndpoint(
+  options: TranscribeEndpointOptions,
+): (server: http.Server) => void {
+  const {
+    maxSessionMs = 290_000,
+    maxSessionsPerUser = 2,
+    startTimeoutMs = 5_000,
+    stopTimeoutMs = 5_000,
+  } = options;
+  const sessions = new Map<string, number>();
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 
-  const res = await (client.fetch ?? fetch)(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${await client.getToken()}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(VERTEX_TIMEOUT_MS),
-  });
-  if (!res.ok) {
-    throw new Error(`Vertex AI answered ${res.status}`);
-  }
-
-  const json = (await res.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-  const parts = json.candidates?.[0]?.content?.parts ?? [];
-  return parts
-    .map((part) => part.text ?? '')
-    .join('')
-    .trim();
-}
-
-/** The STT upload labels audio.webm as video/webm, which Transcribe answers with no text. */
-function audioType(file: File): string {
-  const type = file.type.split(';')[0];
-  if (type.startsWith('audio/')) {
-    return type;
-  }
-  const extension = path.extname(file.name).slice(1).toLowerCase();
-  return AUDIO_TYPES[extension] ?? 'audio/webm';
-}
-
-function send(res: http.ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(body));
-}
-
-async function readBody(req: http.IncomingMessage, maxBytes: number): Promise<Buffer | null> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length;
-    if (size > maxBytes) {
-      return null;
-    }
-    chunks.push(chunk as Buffer);
-  }
-  return Buffer.concat(chunks);
-}
-
-export function createTranscribeServer(
-  target: TranscribeTarget,
-  transcribe: (input: TranscribeRequest) => Promise<string>,
-  options: { maxBytes?: number } = {},
-): http.Server {
-  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
-
-  return http.createServer(async (req, res) => {
-    if (req.method !== 'POST' || req.url?.split('?')[0] !== target.path) {
-      send(res, 404, { error: { message: 'Not found' } });
-      return;
-    }
-    if (req.headers.authorization !== `Bearer ${target.apiKey}`) {
-      send(res, 401, { error: { message: 'Unauthorized' } });
-      return;
-    }
-
-    const raw = await readBody(req, maxBytes);
-    if (!raw) {
-      send(res, 413, { error: { message: 'Audio too large' } });
-      return;
-    }
-
-    let form: FormData;
-    try {
-      form = await new Request('http://127.0.0.1', {
-        method: 'POST',
-        headers: { 'Content-Type': req.headers['content-type'] ?? '' },
-        body: new Uint8Array(raw),
-      }).formData();
-    } catch {
-      send(res, 400, { error: { message: 'Expected a multipart upload' } });
-      return;
-    }
-
-    const file = form.get('file');
-    const model = form.get('model');
-    if (!(file instanceof File) || typeof model !== 'string') {
-      send(res, 400, { error: { message: 'Expected file and model fields' } });
-      return;
-    }
-    const language = form.get('language');
-
+  const handle = (socket: WebSocket) => {
+    let userId: string | null = null;
+    let stream: VertexLiveStream | undefined;
+    let begun = false;
+    let ready = false;
+    let speaking = false;
+    let stopping = false;
+    let finished = false;
+    let audioBytes = 0;
     const started = Date.now();
-    try {
-      const text = await transcribe({
-        audio: Buffer.from(await file.arrayBuffer()),
-        mimeType: audioType(file),
-        model,
-        ...(typeof language === 'string' && language && { language }),
-      });
-      logger.debug(`[transcribe] ${model} ${file.size} bytes in ${Date.now() - started} ms`);
-      send(res, 200, { text });
-    } catch (error) {
-      logger.error(`[transcribe] ${model} failed: ${(error as Error).message}`);
-      send(res, 502, { error: { message: 'Transcription failed' } });
-    }
-  });
+    const timers: NodeJS.Timeout[] = [];
+
+    const sendJson = (message: Record<string, string>) => {
+      if (socket.readyState === socket.OPEN) {
+        socket.send(JSON.stringify(message));
+      }
+    };
+
+    const cleanup = () => {
+      finished = true;
+      timers.forEach(clearTimeout);
+      stream?.close();
+      stream = undefined;
+      if (userId) {
+        const left = (sessions.get(userId) ?? 1) - 1;
+        if (left > 0) {
+          sessions.set(userId, left);
+        } else {
+          sessions.delete(userId);
+        }
+        userId = null;
+        logger.debug(
+          `[transcribe] ${(audioBytes / PCM_BYTES_PER_SECOND).toFixed(1)} s of audio in ${Date.now() - started} ms`,
+        );
+      }
+    };
+
+    const finish = (closeCode: number, message: Record<string, string>) => {
+      if (finished) {
+        return;
+      }
+      sendJson(message);
+      socket.close(closeCode);
+      cleanup();
+    };
+    const done = () => finish(1000, { type: 'done' });
+    const fail = (code: TranscribeErrorCode) =>
+      finish(code === 'unavailable' ? 1011 : 1008, { type: 'error', code });
+
+    /** The final text of an utterance arrives before Vertex AI reports the end of speech. */
+    const stop = () => {
+      if (stopping || finished) {
+        return;
+      }
+      stopping = true;
+      stream?.end();
+      if (ready && speaking) {
+        timers.push(setTimeout(done, stopTimeoutMs));
+      } else {
+        done();
+      }
+    };
+
+    const events: VertexLiveEvents = {
+      onReady: () => {
+        ready = true;
+        sendJson({ type: 'ready' });
+      },
+      onInterim: (text) => sendJson({ type: 'interim', text }),
+      onFinal: (text) => sendJson({ type: 'final', text }),
+      onSpeech: (value) => {
+        speaking = value;
+        if (stopping && !value) {
+          done();
+        }
+      },
+      onClose: (error) => {
+        if (!error) {
+          done();
+          return;
+        }
+        logger.warn(`[transcribe] ${error.message}`);
+        fail('unavailable');
+      },
+    };
+
+    const begin = async (token: unknown, language: unknown) => {
+      begun = true;
+      const user = typeof token === 'string' ? options.verifyUser(token) : null;
+      if (!user) {
+        fail('unauthorized');
+        return;
+      }
+      const active = sessions.get(user) ?? 0;
+      if (active >= maxSessionsPerUser) {
+        fail('busy');
+        return;
+      }
+      sessions.set(user, active + 1);
+      userId = user;
+      timers.push(setTimeout(stop, maxSessionMs));
+
+      const tag =
+        typeof language === 'string' && LANGUAGE_TAG.test(language) ? language : undefined;
+      try {
+        const opened = await options.openStream(tag, events);
+        if (finished) {
+          opened.close();
+          return;
+        }
+        stream = opened;
+      } catch (error) {
+        logger.warn(`[transcribe] Cannot open a Vertex AI session: ${(error as Error).message}`);
+        fail('unavailable');
+      }
+    };
+
+    timers.push(setTimeout(() => !begun && fail('bad_request'), startTimeoutMs));
+
+    socket.on('message', (data: RawData, isBinary: boolean) => {
+      if (finished) {
+        return;
+      }
+      if (isBinary) {
+        if (stream && ready && !stopping) {
+          const pcm = toBuffer(data);
+          audioBytes += pcm.length;
+          stream.send(pcm);
+        }
+        return;
+      }
+      let message: { type?: unknown; token?: unknown; language?: unknown };
+      try {
+        message = JSON.parse(data.toString());
+      } catch {
+        fail('bad_request');
+        return;
+      }
+      if (message.type === 'start' && !begun) {
+        void begin(message.token, message.language);
+      } else if (message.type === 'stop') {
+        stop();
+      }
+    });
+    socket.on('close', cleanup);
+    socket.on('error', cleanup);
+  };
+
+  return (server) => {
+    server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
+      const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
+      if (pathname !== TRANSCRIBE_PATH) {
+        if (server.listenerCount('upgrade') === 1) {
+          socket.destroy();
+        }
+        return;
+      }
+      if (options.allowedOrigin && req.headers.origin !== options.allowedOrigin) {
+        socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+        return;
+      }
+      wss.handleUpgrade(req, socket, head, handle);
+    });
+  };
 }
 
-/** Starts the listener when the STT url points at 127.0.0.1; returns null otherwise. */
-export async function startTranscribeService(appConfig?: AppConfig): Promise<http.Server | null> {
-  const target = getTranscribeTarget(appConfig);
-  if (!target) {
-    return null;
+function originOf(url?: string): string | undefined {
+  try {
+    return url ? new URL(url).origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Adds the dictation endpoint to the server the app starts, when the config turns it on.
+ * Returns whether it did.
+ */
+export async function startTranscribeService(
+  app: Application,
+  appConfig?: AppConfig,
+): Promise<boolean> {
+  const model = getTranscribeModel(appConfig);
+  if (!model) {
+    return false;
   }
   const location = process.env.GOOGLE_LOC ?? '';
   if (!VERTEX_HOSTS[location]) {
     logger.error(
-      `[transcribe] GOOGLE_LOC must be eu, us or global, not "${location}"; STT stays off`,
+      `[transcribe] GOOGLE_LOC must be eu, us or global, not "${location}"; dictation stays off`,
     );
-    return null;
+    return false;
+  }
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    logger.error('[transcribe] JWT_SECRET is not set; dictation stays off');
+    return false;
   }
   const keyPath =
     process.env.GOOGLE_SERVICE_KEY_FILE || path.join(process.cwd(), 'api', 'data', 'auth.json');
   const key = await loadServiceKey(keyPath);
   if (!key?.project_id) {
-    logger.error('[transcribe] No Google service key found; STT stays off');
-    return null;
+    logger.error('[transcribe] No Google service key found; dictation stays off');
+    return false;
   }
 
   const auth = new GoogleAuth({
     credentials: key,
     scopes: ['https://www.googleapis.com/auth/cloud-platform'],
   });
-  const client: VertexClient = {
-    project: key.project_id,
-    location,
-    getToken: async () => (await auth.getAccessToken()) ?? '',
-  };
-
-  const server = createTranscribeServer(target, (input) => transcribeWithGemini(input, client));
-  try {
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(target.port, '127.0.0.1', () => resolve());
-    });
-  } catch (error) {
-    logger.error(
-      `[transcribe] Cannot listen on 127.0.0.1:${target.port}: ${(error as Error).message}`,
-    );
-    return null;
+  const project = key.project_id;
+  const allowedOrigin = originOf(process.env.DOMAIN_CLIENT);
+  if (!allowedOrigin) {
+    logger.warn('[transcribe] DOMAIN_CLIENT is not set; dictation accepts any origin');
   }
-  logger.info(`[transcribe] Listening on 127.0.0.1:${target.port}${target.path} (${location})`);
-  return server;
+  const attach = createTranscribeEndpoint({
+    openStream: (language, events) =>
+      openVertexLive(
+        {
+          project,
+          location,
+          model,
+          language,
+          getToken: async () => (await auth.getAccessToken()) ?? '',
+        },
+        events,
+      ),
+    verifyUser: (token) => {
+      try {
+        const payload = jwt.verify(token, secret);
+        return typeof payload === 'object' && typeof payload.id === 'string' ? payload.id : null;
+      } catch {
+        return null;
+      }
+    },
+    allowedOrigin,
+  });
+
+  const listen = app.listen.bind(app) as (...args: unknown[]) => http.Server;
+  app.listen = ((...args: unknown[]) => {
+    const server = listen(...args);
+    attach(server);
+    return server;
+  }) as Application['listen'];
+
+  logger.info(`[transcribe] Dictation through ${model} on ${TRANSCRIBE_PATH} (${location})`);
+  return true;
 }
